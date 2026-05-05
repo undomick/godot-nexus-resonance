@@ -21,6 +21,7 @@ src/lib/steamaudio/
 build/
 *.o
 *.obj
+compile_commands.json
 # Transient OBJ+MTL staging for editor export (not C++ object files)
 **/_nexus_obj_staging/
 src/gen/
