@@ -60,7 +60,8 @@ static func build(
 	total: int,
 	static_asset,
 	get_bake_config_for_volume: Callable,
-	default_influence_radius: float
+	default_influence_radius: float,
+	is_headless_bake: bool = false
 ):
 	var ctx = _Self.new()
 	ctx.root = root
@@ -98,7 +99,11 @@ static func build(
 	var probe_data = vol.get_probe_data() if vol.has_method("get_probe_data") else null
 	if not probe_data:
 		probe_data = ClassDB.instantiate("ResonanceProbeData")
+		if is_headless_bake and "headless_baking_mode" in vol:
+			vol.headless_baking_mode = true
 		vol.set_probe_data(probe_data)
+		if "headless_baking_mode" in vol:
+			vol.headless_baking_mode = false
 	ctx.probe_data = probe_data
 	var ph = (
 		probe_data.get_pathing_params_hash()

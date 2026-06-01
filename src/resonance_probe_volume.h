@@ -50,6 +50,7 @@ class ResonanceProbeVolume : public Node3D {
     float bake_influence_radius = 10000.0f;
 
     bool update_pending = false;
+    bool headless_baking_mode = false;
     double debounce_timer = 0.0;
     double viz_retry_timer = 0.0;
 
@@ -119,6 +120,9 @@ class ResonanceProbeVolume : public Node3D {
 
     void set_viz_color_state(int p_state); // 0=gray, 1=blue, 2=red
     int get_viz_color_state() const;
+
+    void set_headless_baking_mode(bool p_mode);
+    bool is_headless_baking_mode() const;
 
     /// Called by ResonanceRuntime when runtime config affecting probe compatibility changes.
     void notify_runtime_config_changed(int p_runtime_refl, bool p_runtime_pathing);

@@ -168,6 +168,14 @@ void ResonanceProbeVolume::_runtime_load_probe_batch() {
     }
 }
 
+void ResonanceProbeVolume::set_headless_baking_mode(bool p_mode) {
+    headless_baking_mode = p_mode;
+}
+
+bool ResonanceProbeVolume::is_headless_baking_mode() const {
+    return headless_baking_mode;
+}
+
 void ResonanceProbeVolume::reload_probe_batch() {
     if (!_has_valid_resonance_config()) {
         UtilityFunctions::push_error("Nexus Resonance: ResonanceProbeVolume requires a ResonanceRuntime node with a valid ResonanceRuntimeConfig in the scene.");
@@ -180,7 +188,9 @@ void ResonanceProbeVolume::reload_probe_batch() {
         return;
     }
     if (!probe_data.is_valid() || probe_data->get_data().is_empty()) {
-        UtilityFunctions::push_warning("Nexus Resonance: reload_probe_batch skipped - probe_data is missing or empty.");
+        if (!headless_baking_mode) {
+            UtilityFunctions::push_warning("Nexus Resonance: reload_probe_batch skipped - probe_data is missing or empty.");
+        }
         return;
     }
     if (probe_batch_handle >= 0) {
@@ -776,6 +786,8 @@ void ResonanceProbeVolume::_bind_methods() {
     ClassDB::bind_method(D_METHOD("_runtime_load_probe_batch"), &ResonanceProbeVolume::_runtime_load_probe_batch);
     ClassDB::bind_method(D_METHOD("_reload_probe_batch_after_reinit"), &ResonanceProbeVolume::_reload_probe_batch_after_reinit);
     ClassDB::bind_method(D_METHOD("_check_probe_data_loaded"), &ResonanceProbeVolume::_check_probe_data_loaded);
+    ClassDB::bind_method(D_METHOD("set_headless_baking_mode", "p_mode"), &ResonanceProbeVolume::set_headless_baking_mode);
+    ClassDB::bind_method(D_METHOD("is_headless_baking_mode"), &ResonanceProbeVolume::is_headless_baking_mode);
 
     ADD_GROUP("Data", "");
     ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "probe_data", PROPERTY_HINT_RESOURCE_TYPE, "ResonanceProbeData"), "set_probe_data", "get_probe_data");
@@ -792,6 +804,7 @@ void ResonanceProbeVolume::_bind_methods() {
     ADD_PROPERTY(PropertyInfo(Variant::INT, "generation_type", PROPERTY_HINT_ENUM, "Centroid,Uniform Floor,Volume"), "set_generation_type", "get_generation_type");
     ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "spacing", PROPERTY_HINT_RANGE, "0.5, 20.0"), "set_spacing", "get_spacing");
     ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "height_above_floor", PROPERTY_HINT_RANGE, "0.1, 5.0"), "set_height_above_floor", "get_height_above_floor");
+    ADD_PROPERTY(PropertyInfo(Variant::BOOL, "headless_baking_mode", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), "set_headless_baking_mode", "is_headless_baking_mode");
 
     BIND_ENUM_CONSTANT(GEN_CENTROID);
     BIND_ENUM_CONSTANT(GEN_UNIFORM_FLOOR);

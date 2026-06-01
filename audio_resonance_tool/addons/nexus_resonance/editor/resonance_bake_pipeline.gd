@@ -1,7 +1,7 @@
 extends RefCounted
 class_name ResonanceBakePipeline
 
-## Main-thread and threaded bake steps for ResonanceProbeVolume. Owned by ResonanceBakeRunner.
+## Main-thread and threaded bake steps for [ResonanceProbeVolume]. Owned by [ResonanceBakeRunner].
 
 const ResonancePaths = preload("res://addons/nexus_resonance/scripts/resonance_paths.gd")
 const ResonanceFsPaths = preload("res://addons/nexus_resonance/scripts/resonance_fs_paths.gd")
@@ -73,6 +73,7 @@ func run_bake_pipeline_main_thread(volumes: Array[Node]) -> void:
 			_runner.call_deferred("_on_bake_pipeline_finished", false, null, volumes)
 			return
 		vol_index += 1
+		var is_headless = (_runner.get("editor_interface") == null) if _runner else false
 		var ctx = _VolumeCtx.build(
 			vol,
 			root,
@@ -80,7 +81,8 @@ func run_bake_pipeline_main_thread(volumes: Array[Node]) -> void:
 			volumes.size(),
 			static_asset,
 			Callable(_runner, "_get_bake_config_for_volume"),
-			DEFAULT_BAKE_INFLUENCE_RADIUS
+			DEFAULT_BAKE_INFLUENCE_RADIUS,
+			is_headless
 		)
 		var bc = _runner._get_bake_config_for_volume(vol)
 		if progress_ui:
