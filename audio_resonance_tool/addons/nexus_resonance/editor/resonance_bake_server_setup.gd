@@ -6,15 +6,19 @@ class_name ResonanceBakeServerSetup
 const ResonanceBakeConfig = preload("res://addons/nexus_resonance/scripts/resonance_bake_config.gd")
 const ResonanceRuntimeScript = preload("res://addons/nexus_resonance/scripts/resonance_runtime.gd")
 const _BakeDiscovery = preload("res://addons/nexus_resonance/editor/resonance_bake_discovery.gd")
-const ResonanceEditorDialogs = preload(
-	"res://addons/nexus_resonance/editor/resonance_editor_dialogs.gd"
-)
 const UIStrings = preload("res://addons/nexus_resonance/scripts/resonance_ui_strings.gd")
 
+var resonance_editor_dialogs
 var _runner: Object
 
 
 func _init(runner: Object) -> void:
+	# Conditionally initialize this variable to avoid crashes when running in headless mode.
+	if Engine.is_editor_hint():
+		resonance_editor_dialogs = load(
+			"res://addons/nexus_resonance/editor/resonance_editor_dialogs.gd"
+		)
+
 	_runner = runner
 
 
@@ -52,7 +56,7 @@ func log_and_show_error(
 
 	var ei = _runner.get("editor_interface") if _runner else null
 	if ei:
-		ResonanceEditorDialogs.show_error_dialog(
+		resonance_editor_dialogs.show_error_dialog(
 			ei, tr(UIStrings.DIALOG_BAKE_FAILED_TITLE), message, cause, solution
 		)
 	else:
@@ -94,7 +98,7 @@ func ensure_resonance_server_initialized(volumes: Array[Node]) -> bool:
 		var msg := tr(UIStrings.WARN_RUNTIME_REQUIRED_EDITOR)
 
 		if ei:
-			ResonanceEditorDialogs.show_warning(ei, msg)
+			resonance_editor_dialogs.show_warning(ei, msg)
 			if ei.has_method("get_editor_toaster"):
 				var toaster = ei.get_editor_toaster()
 				if toaster and toaster.has_method("push_toast"):

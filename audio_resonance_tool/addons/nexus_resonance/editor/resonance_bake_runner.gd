@@ -10,19 +10,16 @@ const ResonanceSceneUtils = preload("res://addons/nexus_resonance/scripts/resona
 const _BakeEstimates = preload("res://addons/nexus_resonance/editor/resonance_bake_estimates.gd")
 const _BakeHashes = preload("res://addons/nexus_resonance/editor/resonance_bake_hashes.gd")
 const _BakeDiscovery = preload("res://addons/nexus_resonance/editor/resonance_bake_discovery.gd")
-const _BakeValidation = preload("res://addons/nexus_resonance/editor/resonance_bake_validation.gd")
 const _BakeServerSetup = preload(
 	"res://addons/nexus_resonance/editor/resonance_bake_server_setup.gd"
 )
 const _BakePipeline = preload("res://addons/nexus_resonance/editor/resonance_bake_pipeline.gd")
-const ResonanceEditorDialogs = preload(
-	"res://addons/nexus_resonance/editor/resonance_editor_dialogs.gd"
-)
-const ResonanceBakeProgressUI = preload(
-	"res://addons/nexus_resonance/editor/resonance_bake_progress_ui.gd"
-)
-const ResonanceBakeBackup = preload("res://addons/nexus_resonance/editor/resonance_bake_backup.gd")
 const UIStrings = preload("res://addons/nexus_resonance/scripts/resonance_ui_strings.gd")
+
+var resonance_bake_progress_ui
+var _bake_validation
+var resonance_editor_dialogs
+var resonance_bake_backup
 
 const DEFAULT_BAKE_INFLUENCE_RADIUS := 10000.0
 
@@ -46,10 +43,21 @@ var _pipeline: RefCounted
 
 # Changed parameter to loosely typed to explicitly allow null instantiation at runtime
 func _init(p_editor_interface = null) -> void:
+	# Conditionally initialize these variables to avoid crashes when running in headless mode.
+	if Engine.is_editor_hint():
+		_bake_validation = load("res://addons/nexus_resonance/editor/resonance_bake_validation.gd")
+		resonance_editor_dialogs = load(
+			"res://addons/nexus_resonance/editor/resonance_editor_dialogs.gd"
+		)
+		resonance_bake_progress_ui = load(
+			"res://addons/nexus_resonance/editor/resonance_bake_progress_ui.gd"
+		)
+		resonance_bake_backup = load("res://addons/nexus_resonance/editor/resonance_bake_backup.gd")
+
 	if p_editor_interface:
 		editor_interface = p_editor_interface
-		_progress_ui = ResonanceBakeProgressUI.new(p_editor_interface)
-		_backup = ResonanceBakeBackup.new()
+		_progress_ui = resonance_bake_progress_ui.new(p_editor_interface)
+		_backup = resonance_bake_backup.new()
 
 	_server_setup = _BakeServerSetup.new(self)
 	_pipeline = _BakePipeline.new(self)
@@ -84,7 +92,12 @@ func run_bake(volumes: Array[Node], root: Node = null, save_results: bool = true
 	if root:
 		target_root = root
 
-	var actual_root = _get_edited_scene_root(volumes)
+	var actual_root
+	if not Engine.is_editor_hint():
+		actual_root = target_root
+	else:
+		actual_root = _get_edited_scene_root(volumes)
+
 	if not actual_root:
 		_log_and_show_error("No scene open", "Open a scene before baking.")
 		return
@@ -170,7 +183,8 @@ func _get_edited_scene_root(volumes: Array[Node]) -> Node:
 	if target_root:
 		return target_root
 	if editor_interface:
-		return _BakeValidation.get_edited_scene_root(volumes, editor_interface)
+		if Engine.is_editor_hint() and editor_interface:
+			return _bake_validation.get_edited_scene_root(volumes, editor_interface)
 	if volumes.size() > 0 and volumes[0].is_inside_tree():
 		return volumes[0].get_tree().root
 	return null
@@ -364,8 +378,8 @@ func _save_and_reload_probe_data(probe_data_ref: Resource, volumes: Array[Node])
 					"Failed to save probe data: %s" % err,
 					{"volume": vol_name, "step": "save", "error_code": err}
 				)
-			if editor_interface:
-				ResonanceEditorDialogs.show_error_dialog(
+			if Engine.is_editor_hint() and editor_interface:
+				resonance_editor_dialogs.show_error_dialog(
 					editor_interface,
 					tr(UIStrings.DIALOG_SAVE_FAILED_TITLE),
 					tr(UIStrings.ERR_FAILED_TO_SAVE) % err,
