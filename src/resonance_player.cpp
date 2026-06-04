@@ -982,9 +982,44 @@ void ResonancePlayer::set_player_config(const Ref<Resource>& p_config) {
     }
     if (player_config.is_valid() && !player_config->is_connected("changed", changed_cb))
         player_config->connect("changed", changed_cb);
+    // Toggling between plain and config-driven mode changes which inherited 3D knobs are inert,
+    // so refresh the inspector property list (see _validate_property).
+    if (had_config != player_config.is_valid())
+        notify_property_list_changed();
     _on_player_config_changed_refresh_gizmo();
 }
 Ref<Resource> ResonancePlayer::get_player_config() const { return player_config; }
+
+void ResonancePlayer::_validate_property(PropertyInfo& p_property) const {
+    // With a player_config the spatialization runs through Steam Audio: distance/attenuation come
+    // from the config and _ready forces ATTENUATION_DISABLED. The inherited AudioStreamPlayer3D
+    // distance/rolloff/filter knobs are then inert and only confuse the inspector, so hide them.
+    // Without a config the node behaves as a plain AudioStreamPlayer3D, so they stay visible.
+    if (!player_config.is_valid())
+        return;
+
+    static const StringName hidden[] = {
+        StringName("bus"),
+        StringName("attenuation_model"),
+        StringName("max_distance"),
+        StringName("unit_size"),
+        StringName("panning_strength"),
+        StringName("area_mask"),
+        StringName("doppler_tracking"),
+        StringName("emission_angle_enabled"),
+        StringName("emission_angle_degrees"),
+        StringName("emission_angle_filter_attenuation_db"),
+        StringName("attenuation_filter_cutoff_hz"),
+        StringName("attenuation_filter_db"),
+        StringName("playback_type"),
+    };
+    for (const StringName& name : hidden) {
+        if (p_property.name == name) {
+            p_property.usage &= ~PROPERTY_USAGE_EDITOR;
+            return;
+        }
+    }
+}
 
 void ResonancePlayer::set_show_directivity_gizmo(bool p_enable) {
     if (show_directivity_gizmo_ == p_enable)

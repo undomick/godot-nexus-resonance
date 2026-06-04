@@ -178,6 +178,9 @@ void ResonanceRuntime::reload_after_reinit() {
         return;
     }
     SceneTree* tree = get_tree();
+    if (tree == nullptr) {
+        return;
+    }
     reload_static_scenes_from_tree(tree->get_root());
     // Same frame: re-register probe batches after reinit so baked/parametric/hybrid/pathing outputs are valid.
     TypedArray<Node> volumes = tree->get_nodes_in_group("resonance_probe_volume");

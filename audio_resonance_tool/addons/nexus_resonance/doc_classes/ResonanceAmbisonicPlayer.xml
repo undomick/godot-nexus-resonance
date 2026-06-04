@@ -6,6 +6,7 @@
 	<description>
 		Assign a [ResonanceAmbisonicInternalStream] to [member stream] (other types log a warning). Channel layout and order come from the stream's [member ResonanceAmbisonicInternalStream.ambisonic_order] and [member ResonanceAmbisonicInternalStream.channel_streams].
 		Listener orientation comes from the active [Camera3D] when available. When [member rotation_enabled] is on and an HOA bed orientation is resolved ([member use_bed_scene_orientation], optional [member ambisonic_orientation_node], or the first [Node3D] parent), the decoder orientation is derived from the bed's world transform and the listener's world-to-local rotation so the sound field can follow that node while head-tracking still comes from the camera.
+		The output is always Steam Audio decoded stereo, so [code]mix_target[/code] and [code]playback_type[/code] are hidden in the inspector. [code]max_polyphony[/code] (inherited) controls how many overlapping [code]play()[/code] calls Godot keeps alive; each voice runs a full HOA decode. Usual [code]stream[/code], [code]bus[/code], [code]volume_db[/code], [code]pitch_scale[/code], and [code]autoplay[/code] remain effective.
 	</description>
 	<tutorials>
 	</tutorials>

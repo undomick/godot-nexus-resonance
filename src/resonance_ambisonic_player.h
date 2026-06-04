@@ -10,6 +10,7 @@
 #include <godot_cpp/classes/ref.hpp>
 #include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/node_path.hpp>
+#include <godot_cpp/variant/packed_vector2_array.hpp>
 #include <godot_cpp/variant/vector3.hpp>
 #include <phonon.h>
 #include <vector>
@@ -43,7 +44,6 @@ class ResonanceAmbisonicInternalPlayback : public AudioStreamPlayback {
     // Assignment implicitly deleted when copy ctor is deleted; explicit decl conflicts with Godot base.
 
   private:
-    static const int kMaxAmbisonicChannels = 16;         // 3rd Order max
     int frame_size_ = resonance::kGodotDefaultFrameSize; // Steam Audio block size from ResonanceServer
 
     // Playbacks for each Ambisonic channel (4 for 1st, 9 for 2nd, 16 for 3rd order)
@@ -75,6 +75,8 @@ class ResonanceAmbisonicInternalPlayback : public AudioStreamPlayback {
     // Temp buffers for batch read from output ring buffers (avoids per-sample memcpy)
     std::vector<float> temp_output_l;
     std::vector<float> temp_output_r;
+    // Reused per _mix: one PackedVector2Array per Ambisonic channel (no per-frame heap alloc).
+    std::vector<PackedVector2Array> channel_mix_bufs_;
 
     bool _has_pending_output() const;
 
@@ -83,6 +85,10 @@ class ResonanceAmbisonicInternalPlayback : public AudioStreamPlayback {
     void _ensure_ambisonic_processor(ResonanceServer* srv);
     void _process_steam_audio_block();
     void _sync_params();
+
+    int32_t pull_channel_samples(float rate_scale, int32_t frames, int num_channels);
+    void push_interleaved_input(int32_t samples_read, int num_channels);
+    void pull_stereo_output(AudioFrame* buffer, int32_t samples_read);
 
   public:
     ResonanceAmbisonicInternalPlayback();
@@ -148,6 +154,7 @@ class ResonanceAmbisonicPlayer : public AudioStreamPlayer {
 
   protected:
     static void _bind_methods();
+    void _validate_property(PropertyInfo& p_property) const;
 
   public:
     ResonanceAmbisonicPlayer() = default;

@@ -400,6 +400,7 @@ void ResonanceServer::_update_source_internal(IPLSource src, int32_t handle, con
 
     bool enable_reflections = (params.reflections_enabled_override == -1) ? true : (params.reflections_enabled_override != 0);
     enable_reflections = enable_reflections && (rm > 0.0f);
+    // Drop realtime reflections beyond cap so IPL does not raycast far sources.
     if (enable_reflections && params.baked_data_variation == -1 && realtime_reflection_max_distance_m > 0.0f) {
         const Vector3 lip = ResonanceUtils::to_godot_vector3(get_current_listener_coords().origin);
         if (params.position.distance_to(lip) > static_cast<real_t>(realtime_reflection_max_distance_m))
@@ -436,6 +437,7 @@ void ResonanceServer::_update_source_internal(IPLSource src, int32_t handle, con
     inputs.directivity.callback = nullptr;
     inputs.directivity.userData = nullptr;
 
+    // Callback userData must stay valid until iplSourceSetInputs; lookup under attenuation mutex.
     bool use_callback = false;
     AttenuationCallbackContext* callback_ctx = nullptr;
     {
@@ -491,6 +493,7 @@ void ResonanceServer::_update_source_internal(IPLSource src, int32_t handle, con
     inputs.hybridReverbTransitionTime = hybrid_reverb_transition_time;
     inputs.hybridReverbOverlapPercent = hybrid_reverb_overlap_percent;
 
+    // Retain pathing probe batch until after SetInputs; release queued on worker drain.
     IPLProbeBatch pathing_batch_retained = nullptr;
     if (enable_pathing && pathing_enabled) {
         IPLProbeBatch path_batch = _get_pathing_batch_for_source(params.pathing_probe_batch_handle);

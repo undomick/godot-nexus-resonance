@@ -418,6 +418,7 @@ void ResonanceServer::_worker_sync_fetch_caches(bool refresh_direct_outputs, boo
     const bool pathing_refresh = pathing_enabled && pathing_ran_this_tick.load(std::memory_order_acquire);
     const bool reflections_have_run = reflections_have_run_once_.load(std::memory_order_acquire);
 
+    // Bump epoch before fill so audio thread can detect stale slots after front flip.
     if (refresh_direct_outputs)
         bump_slot_epoch(occlusion_cache_epoch_[occ_back]);
     if (refresh_reflection_outputs && reflection_type == resonance::kReflectionParametric)
@@ -431,6 +432,7 @@ void ResonanceServer::_worker_sync_fetch_caches(bool refresh_direct_outputs, boo
     if (refresh_reflection_outputs)
         reverb_hint_batch.reserve(handles.size());
 
+    // Skip sources still pending attach to avoid fetch during lifecycle transition.
     for (int32_t handle : handles) {
         if (handle < 0 || handle >= kMaxCacheHandles)
             continue;
@@ -491,6 +493,7 @@ void ResonanceServer::_worker_sync_fetch_caches(bool refresh_direct_outputs, boo
             reverb_params_likely_available_[kv.first] = kv.second;
     }
 
+    // Publish back buffer only after all per-handle fetches for this tick complete.
     if (refresh_direct_outputs)
         occlusion_cache_front_.store(occ_back, std::memory_order_release);
     if (refresh_reflection_outputs && reflection_type == resonance::kReflectionParametric)

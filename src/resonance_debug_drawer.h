@@ -13,10 +13,9 @@
 
 namespace godot {
 
-// Pure Data Container for Debugging
 struct ResonanceDebugData {
-    Vector3 source_pos;   // Global Position
-    Vector3 listener_pos; // Global Position
+    Vector3 source_pos;
+    Vector3 listener_pos;
 
     float occlusion;
     float transmission[3];
@@ -28,7 +27,6 @@ struct ResonanceDebugData {
     bool air_abs_enabled;
     bool directivity_enabled;
 
-    // Signal levels for HUD: direct gain, reverb send, path wet output RMS (clamped 0..1), last block.
     float signal_direct = 0.0f;
     float signal_reverb = 0.0f;
     float signal_pathing = 0.0f;
@@ -36,9 +34,8 @@ struct ResonanceDebugData {
 
 class ResonanceDebugDrawer {
   private:
-    Node3D* parent_node = nullptr; // The owner (Player)
+    Node3D* parent_node = nullptr;
 
-    // Visual Resources (Owned by this class logic-wise, added to tree)
     MeshInstance3D* mesh_instance = nullptr;
     ImmediateMesh* immediate_mesh = nullptr;
     Label3D* label_instance = nullptr;
@@ -50,6 +47,10 @@ class ResonanceDebugDrawer {
     void _draw_line(const Vector3& from, const Vector3& to, float occlusion);
     void _update_label_text(const ResonanceDebugData& data, String node_name);
 
+    void set_debug_visuals_visible(bool visible);
+    void sync_occlusion_line(const ResonanceDebugData& data, bool show_occ);
+    void tick_debug_label(double delta, const ResonanceDebugData& data, const String& node_name);
+
   public:
     ResonanceDebugDrawer();
     ~ResonanceDebugDrawer();
@@ -59,11 +60,11 @@ class ResonanceDebugDrawer {
     ResonanceDebugDrawer(ResonanceDebugDrawer&&) = delete;
     ResonanceDebugDrawer& operator=(ResonanceDebugDrawer&&) = delete;
 
-    // Lifecycle
     void initialize(Node3D* p_parent);
     void cleanup();
 
-    // Main Loop. When hud_active is false, hides mesh and label even if show_occ/show_reverb are on (playback idle / grace expired).
+    /// Per-player debug HUD. show_occ draws the source->listener line; show_reverb enables the label only
+    /// (reflection rays use the global debug overlay). hud_active is false during idle or after grace expires.
     void process(double delta, const ResonanceDebugData& data, bool show_occ, bool show_reverb, String node_name, bool hud_active);
 };
 

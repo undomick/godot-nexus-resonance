@@ -4,10 +4,6 @@
 namespace resonance {
 namespace {
 
-IPLVector3 convert_vector(float x, float y, float z) {
-    return IPLVector3{x, y, -z};
-}
-
 IPLVector3 unit_vector(IPLVector3 v) {
     float len_sq = v.x * v.x + v.y * v.y + v.z * v.z;
     float len = std::sqrt(len_sq);
@@ -45,8 +41,8 @@ void ambisonics_decode_orientation_row_major(const float source_row_major4[16], 
     auto ambisonic_up_y = L[1] * source_up_u.x + L[5] * source_up_u.y + L[9] * source_up_u.z;
     auto ambisonic_up_z = L[2] * source_up_u.x + L[6] * source_up_u.y + L[10] * source_up_u.z;
 
-    auto ambisonic_ahead = unit_vector(convert_vector(ambisonic_ahead_x, ambisonic_ahead_y, ambisonic_ahead_z));
-    auto ambisonic_up = unit_vector(convert_vector(ambisonic_up_x, ambisonic_up_y, ambisonic_up_z));
+    auto ambisonic_ahead = unit_vector(ipl_dir_from_godot_world(ambisonic_ahead_x, ambisonic_ahead_y, ambisonic_ahead_z));
+    auto ambisonic_up = unit_vector(ipl_dir_from_godot_world(ambisonic_up_x, ambisonic_up_y, ambisonic_up_z));
     auto ambisonic_right = unit_vector(cross(ambisonic_ahead, ambisonic_up));
 
     IPLVector3 decode_ahead;

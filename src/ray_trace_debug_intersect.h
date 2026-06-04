@@ -5,6 +5,8 @@
 
 namespace resonance {
 
+constexpr float kRayDebugTriangleEpsilon = 1e-7f;
+
 /// Vertices and shading normal for debug ray-triangle tests (matches RayTraceDebugContext triangle layout).
 struct RayDebugTriangle {
     IPLVector3 v0;
@@ -13,7 +15,7 @@ struct RayDebugTriangle {
     IPLVector3 normal;
 };
 
-/// Möller–Trumbore-style ray vs triangle. `eps` is the parallel-ray threshold (same as RayTraceDebugContext::kRayTriangleEpsilon).
+/// Moeller-Trumbore-style ray vs triangle. `eps` is the parallel-ray threshold (default kRayDebugTriangleEpsilon).
 inline bool ray_debug_ray_triangle_intersect(const IPLRay& ray, float t_min, float t_max,
                                              const RayDebugTriangle& tri, float eps,
                                              float& out_t, IPLVector3& out_normal) {

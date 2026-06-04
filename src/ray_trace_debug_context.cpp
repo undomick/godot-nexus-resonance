@@ -1,21 +1,15 @@
 #include "ray_trace_debug_context.h"
 #include "ray_trace_debug_intersect.h"
-#include "resonance_debug_log.h"
-#include "resonance_utils.h"
-#include <algorithm>
 #include <cmath>
-#include <cstdio>
 #include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/string_name.hpp>
 #include <godot_cpp/variant/variant.hpp>
+#include <godot_cpp/variant/vector3.hpp>
 
 namespace godot {
 
-void RayTraceDebugContext::set_debug_log_path(const char* path) {
-    resonance::set_debug_log_path(path);
-}
-
 namespace {
+
 static inline IPLVector3 transform_point(const IPLMatrix4x4& m, const IPLVector3& p) {
     IPLVector3 out;
     out.x = m.elements[0][0] * p.x + m.elements[0][1] * p.y + m.elements[0][2] * p.z + m.elements[0][3];
@@ -31,6 +25,15 @@ static IPLMatrix4x4 identity_matrix() {
             m.elements[i][j] = (i == j) ? 1.0f : 0.0f;
     return m;
 }
+
+void append_ray_debug_segment(Array& out, const Vector3& from, const Vector3& to, int bounce) {
+    Dictionary d;
+    d[StringName("from")] = from;
+    d[StringName("to")] = to;
+    d[StringName("bounce")] = bounce;
+    out.push_back(d);
+}
+
 } // namespace
 
 RayTraceDebugContext::RayTraceDebugContext() {}
@@ -40,15 +43,10 @@ RayTraceDebugContext::~RayTraceDebugContext() {
 }
 
 void RayTraceDebugContext::clear() {
-    // Lock order: geometry_mutex_ first, then swap_mutex_ (see ray_trace_debug_context.h)
     std::lock_guard<std::mutex> lock(geometry_mutex_);
-    std::lock_guard<std::mutex> lock2(swap_mutex_);
     triangles_.clear();
     materials_.clear();
     mesh_id_to_mat_offset_.clear();
-    segment_buffers_[0].clear();
-    segment_buffers_[1].clear();
-    write_buffer_index_.store(0);
     next_mesh_id_ = 1;
 }
 
@@ -75,6 +73,7 @@ int RayTraceDebugContext::register_mesh(const std::vector<IPLVector3>& vertices,
     const int mesh_id = next_mesh_id_++;
     mesh_id_to_mat_offset_[mesh_id] = mat_offset;
 
+    triangles_.reserve(triangles_.size() + triangles.size());
     for (size_t i = 0; i < triangles.size(); i++) {
         const IPLTriangle& t = triangles[i];
         TriangleData td;
@@ -108,126 +107,28 @@ void RayTraceDebugContext::unregister_mesh(int mesh_id) {
     if (it == mesh_id_to_mat_offset_.end())
         return;
     mesh_id_to_mat_offset_.erase(it);
-    // Note: We don't remove triangles - that would require tracking which triangles
-    // belong to which mesh. For debug, clearing all and re-registering on scene change
-    // is simpler. Call clear() when scene is fully rebuilt.
+    // Triangles are not removed per mesh; call clear() when the debug scene is rebuilt.
 }
 
 bool RayTraceDebugContext::ray_triangle_intersect(const IPLRay& ray, float t_min, float t_max,
-                                                  const TriangleData& tri, float& out_t, IPLVector3& out_normal) {
+                                                  const TriangleData& tri, float& out_t, IPLVector3& out_normal) const {
     const resonance::RayDebugTriangle rt{tri.v0, tri.v1, tri.v2, tri.normal};
-    return resonance::ray_debug_ray_triangle_intersect(ray, t_min, t_max, rt, kRayTriangleEpsilon, out_t, out_normal);
+    return resonance::ray_debug_ray_triangle_intersect(ray, t_min, t_max, rt, resonance::kRayDebugTriangleEpsilon, out_t,
+                                                       out_normal);
 }
 
-void RayTraceDebugContext::trace_batch(IPLint32 num_rays, const IPLRay* rays,
-                                       const IPLfloat32* min_distances, const IPLfloat32* max_distances,
-                                       IPLHit* hits, int bounce_index) {
-    std::lock_guard<std::mutex> lock(geometry_mutex_);
-    for (IPLint32 i = 0; i < num_rays; i++) {
-        const IPLRay& ray = rays[i];
-        float t_min = min_distances ? min_distances[i] : 0.0f;
-        float t_max = max_distances ? max_distances[i] : kDefaultMaxRayDistance;
-
-        if (t_max <= t_min) {
-            hits[i].distance = INFINITY;
-            hits[i].triangleIndex = -1;
-            hits[i].objectIndex = -1;
-            hits[i].materialIndex = -1;
-            hits[i].normal = {0, 0, 1};
-            hits[i].material = nullptr;
-            continue;
-        }
-
-        float best_t = t_max + 1.0f;
-        int best_tri = -1;
-        IPLVector3 best_normal = {0, 0, 1};
-
-        for (size_t k = 0; k < triangles_.size(); k++) {
-            float t;
-            IPLVector3 n;
-            if (ray_triangle_intersect(ray, t_min, t_max, triangles_[k], t, n) && t < best_t) {
-                best_t = t;
-                best_tri = (int)k;
-                best_normal = n;
-            }
-        }
-
-        if (best_tri >= 0) {
-            int mat_idx = triangles_[best_tri].material_index;
-            hits[i].distance = best_t;
-            hits[i].triangleIndex = best_tri;
-            hits[i].objectIndex = 0;
-            hits[i].materialIndex = mat_idx;
-            hits[i].normal = best_normal;
-            hits[i].material = (mat_idx >= 0 && mat_idx < (int)materials_.size())
-                                   ? &materials_[mat_idx]
-                                   : (materials_.empty() ? nullptr : &materials_[0]);
-        } else {
-            hits[i].distance = INFINITY;
-            hits[i].triangleIndex = -1;
-            hits[i].objectIndex = -1;
-            hits[i].materialIndex = -1;
-            hits[i].normal = {0, 0, 1};
-            hits[i].material = nullptr;
-        }
+bool RayTraceDebugContext::closest_hit_along_ray(const IPLRay& ray, float t_min, float t_max, float& out_t) const {
+    float best_t = t_max + 1.0f;
+    for (const TriangleData& tri : triangles_) {
+        float t;
+        IPLVector3 n;
+        if (ray_triangle_intersect(ray, t_min, t_max, tri, t, n) && t < best_t)
+            best_t = t;
     }
-}
-
-void RayTraceDebugContext::push_rays_for_viz(IPLint32 num_rays, const IPLRay* rays,
-                                             const IPLHit* hits, int bounce_index) {
-    int idx = write_buffer_index_.load(std::memory_order_relaxed);
-    std::vector<RayDebugSegment>& buf = segment_buffers_[idx];
-    for (IPLint32 i = 0; i < num_rays; i++) {
-        if (buf.size() >= (size_t)resonance::kRayDebugMaxSegments)
-            break;
-
-        const IPLRay& ray = rays[i];
-        const IPLHit& hit = hits[i];
-
-        RayDebugSegment seg;
-        seg.from_x = ray.origin.x;
-        seg.from_y = ray.origin.y;
-        seg.from_z = ray.origin.z;
-        seg.bounce_index = bounce_index;
-
-        if (hit.distance < INFINITY && hit.distance > 0.0f) {
-            seg.to_x = ray.origin.x + ray.direction.x * hit.distance;
-            seg.to_y = ray.origin.y + ray.direction.y * hit.distance;
-            seg.to_z = ray.origin.z + ray.direction.z * hit.distance;
-        } else {
-            float far = resonance::kRayDebugDefaultMissRayLength;
-            seg.to_x = ray.origin.x + ray.direction.x * far;
-            seg.to_y = ray.origin.y + ray.direction.y * far;
-            seg.to_z = ray.origin.z + ray.direction.z * far;
-        }
-        buf.push_back(seg);
-    }
-}
-
-void RayTraceDebugContext::get_segments_for_godot(Array& out_segments) {
-    std::unique_lock<std::mutex> lock(swap_mutex_, std::try_to_lock);
-    if (!lock.owns_lock())
-        return;
-
-    int write_idx = write_buffer_index_.load(std::memory_order_relaxed);
-    int read_idx = 1 - write_idx;
-    std::vector<RayDebugSegment>& read_buf = segment_buffers_[read_idx];
-
-    auto is_finite_vec3 = [](float a, float b, float c) {
-        return std::isfinite(a) && std::isfinite(b) && std::isfinite(c);
-    };
-    out_segments.clear();
-    for (const RayDebugSegment& seg : read_buf) {
-        if (!is_finite_vec3(seg.from_x, seg.from_y, seg.from_z) || !is_finite_vec3(seg.to_x, seg.to_y, seg.to_z))
-            continue;
-        Dictionary d;
-        d[StringName("from")] = Vector3(seg.from_x, seg.from_y, seg.from_z);
-        d[StringName("to")] = Vector3(seg.to_x, seg.to_y, seg.to_z);
-        d[StringName("bounce")] = seg.bounce_index;
-        out_segments.push_back(d);
-    }
-    read_buf.clear();
-    write_buffer_index_.store(read_idx, std::memory_order_release);
+    if (best_t > t_max)
+        return false;
+    out_t = best_t;
+    return true;
 }
 
 void RayTraceDebugContext::trace_reflection_rays_for_viz(const IPLVector3& origin, int num_rays,
@@ -242,6 +143,8 @@ void RayTraceDebugContext::trace_reflection_rays_for_viz(const IPLVector3& origi
 
     static constexpr float kPi = 3.14159265f;
     const float n = static_cast<float>(num_rays);
+    const Vector3 from(origin.x, origin.y, origin.z);
+
     for (int i = 0; i < num_rays && (int)out_segments.size() < resonance::kRayDebugMaxSegments; i++) {
         // Uniform on sphere: z uniform in [-1,1], azimuth phi uniform in [0, 2pi).
         const float z = 1.0f - (2.0f * (static_cast<float>(i) + 0.5f) / n);
@@ -256,33 +159,19 @@ void RayTraceDebugContext::trace_reflection_rays_for_viz(const IPLVector3& origi
         } else {
             dir = IPLVector3{0.0f, 0.0f, 1.0f};
         }
+
         IPLRay ray = {origin, dir};
-        float t_min = kMinRayT;
-        float t_max = max_distance;
+        float hit_t = 0.0f;
+        if (!closest_hit_along_ray(ray, kMinRayT, max_distance, hit_t))
+            continue;
 
-        float best_t = t_max + 1.0f;
-        IPLVector3 best_normal = {0, 0, 1};
-        for (size_t k = 0; k < triangles_.size(); k++) {
-            float t;
-            IPLVector3 hit_normal;
-            if (ray_triangle_intersect(ray, t_min, t_max, triangles_[k], t, hit_normal) && t < best_t) {
-                best_t = t;
-                best_normal = hit_normal;
-            }
-        }
+        const float to_x = origin.x + dir.x * hit_t;
+        const float to_y = origin.y + dir.y * hit_t;
+        const float to_z = origin.z + dir.z * hit_t;
+        if (!std::isfinite(to_x) || !std::isfinite(to_y) || !std::isfinite(to_z))
+            continue;
 
-        if (best_t <= t_max) {
-            float to_x = origin.x + dir.x * best_t;
-            float to_y = origin.y + dir.y * best_t;
-            float to_z = origin.z + dir.z * best_t;
-            if (std::isfinite(to_x) && std::isfinite(to_y) && std::isfinite(to_z)) {
-                Dictionary d;
-                d[StringName("from")] = Vector3(origin.x, origin.y, origin.z);
-                d[StringName("to")] = Vector3(to_x, to_y, to_z);
-                d[StringName("bounce")] = 0;
-                out_segments.push_back(d);
-            }
-        }
+        append_ray_debug_segment(out_segments, from, Vector3(to_x, to_y, to_z), 0);
     }
 }
 

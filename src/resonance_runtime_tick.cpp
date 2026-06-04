@@ -37,6 +37,9 @@ void ResonanceRuntime::reset_viewport_sync_cache() {
 
 void ResonanceRuntime::refresh_group_caches_for_frame(bool use_physics_frame) {
     Engine* eng = Engine::get_singleton();
+    if (eng == nullptr) {
+        return;
+    }
     int64_t fid = use_physics_frame ? (int64_t)eng->get_physics_frames() : (int64_t)eng->get_process_frames();
     if (group_cache_frame == fid && group_cache_use_physics == use_physics_frame) {
         return;

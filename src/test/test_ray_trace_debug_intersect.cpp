@@ -5,8 +5,6 @@ using namespace resonance;
 
 namespace {
 
-constexpr float kEps = 1e-7f;
-
 RayDebugTriangle unit_xy_triangle() {
     RayDebugTriangle tri{};
     tri.v0 = {0.0f, 0.0f, 0.0f};
@@ -26,7 +24,7 @@ TEST_CASE("ray_debug_ray_triangle_intersect hits triangle interior", "[ray_debug
 
     float t = 0.0f;
     IPLVector3 n{};
-    REQUIRE(ray_debug_ray_triangle_intersect(ray, 0.0f, 100.0f, tri, kEps, t, n));
+    REQUIRE(ray_debug_ray_triangle_intersect(ray, 0.0f, 100.0f, tri, kRayDebugTriangleEpsilon, t, n));
     REQUIRE(t == Approx(1.0f));
     REQUIRE(n.x == Approx(0.0f));
     REQUIRE(n.y == Approx(0.0f));
@@ -41,7 +39,7 @@ TEST_CASE("ray_debug_ray_triangle_intersect miss outside triangle on plane", "[r
 
     float t = 0.0f;
     IPLVector3 n{};
-    REQUIRE_FALSE(ray_debug_ray_triangle_intersect(ray, 0.0f, 100.0f, tri, kEps, t, n));
+    REQUIRE_FALSE(ray_debug_ray_triangle_intersect(ray, 0.0f, 100.0f, tri, kRayDebugTriangleEpsilon, t, n));
 }
 
 TEST_CASE("ray_debug_ray_triangle_intersect parallel to triangle plane", "[ray_debug][intersect]") {
@@ -52,7 +50,7 @@ TEST_CASE("ray_debug_ray_triangle_intersect parallel to triangle plane", "[ray_d
 
     float t = 0.0f;
     IPLVector3 n{};
-    REQUIRE_FALSE(ray_debug_ray_triangle_intersect(ray, 0.0f, 100.0f, tri, kEps, t, n));
+    REQUIRE_FALSE(ray_debug_ray_triangle_intersect(ray, 0.0f, 100.0f, tri, kRayDebugTriangleEpsilon, t, n));
 }
 
 TEST_CASE("ray_debug_ray_triangle_intersect respects t_min t_max", "[ray_debug][intersect]") {
@@ -63,6 +61,6 @@ TEST_CASE("ray_debug_ray_triangle_intersect respects t_min t_max", "[ray_debug][
 
     float t = 0.0f;
     IPLVector3 n{};
-    REQUIRE_FALSE(ray_debug_ray_triangle_intersect(ray, 1.5f, 10.0f, tri, kEps, t, n));
-    REQUIRE_FALSE(ray_debug_ray_triangle_intersect(ray, 0.0f, 0.5f, tri, kEps, t, n));
+    REQUIRE_FALSE(ray_debug_ray_triangle_intersect(ray, 1.5f, 10.0f, tri, kRayDebugTriangleEpsilon, t, n));
+    REQUIRE_FALSE(ray_debug_ray_triangle_intersect(ray, 0.0f, 0.5f, tri, kRayDebugTriangleEpsilon, t, n));
 }

@@ -186,6 +186,7 @@ Dictionary ResonanceRuntime::get_activator_instrumentation() const {
 }
 
 void ResonanceRuntime::_bind_methods() {
+    // Runtime config, reinit, probes, and scene lifecycle.
     ClassDB::bind_method(D_METHOD("set_runtime", "config"), &ResonanceRuntime::set_runtime);
     ClassDB::bind_method(D_METHOD("get_runtime"), &ResonanceRuntime::get_runtime);
 
@@ -229,6 +230,7 @@ void ResonanceRuntime::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_fmod_bridge"), &ResonanceRuntime::get_fmod_bridge);
     ClassDB::bind_method(D_METHOD("get_coda_bridge"), &ResonanceRuntime::get_coda_bridge);
 
+    // Optional FMOD/Coda bridges and Steam Audio context (restart-required).
     ClassDB::bind_method(D_METHOD("set_fmod_bridge_enabled", "enabled"), &ResonanceRuntime::set_fmod_bridge_enabled);
     ClassDB::bind_method(D_METHOD("is_fmod_bridge_enabled"), &ResonanceRuntime::is_fmod_bridge_enabled);
     ClassDB::bind_method(D_METHOD("set_coda_bridge_enabled", "enabled"), &ResonanceRuntime::set_coda_bridge_enabled);
@@ -261,6 +263,7 @@ void ResonanceRuntime::_bind_methods() {
     ClassDB::bind_method(
         D_METHOD("get_player_overlay_toggle_key"), &ResonanceRuntime::get_player_overlay_toggle_key);
 
+    // Inspector groups mirror editor resource layout.
     ADD_PROPERTY(
         PropertyInfo(Variant::OBJECT, "runtime", PROPERTY_HINT_RESOURCE_TYPE, "ResonanceRuntimeConfig"),
         "set_runtime",

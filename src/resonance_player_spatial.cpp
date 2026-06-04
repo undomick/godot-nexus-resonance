@@ -646,8 +646,10 @@ void ResonancePlayer::_apply_playback_params_from_simulation(ResonanceServer* sr
         tx_mid = 1.0f;
         tx_high = 1.0f;
     }
+    // Sim occlusion/transmission off: force unity so wet path is not damped by stale worker values.
     float directivity_val = (c.directivity_input == 1) ? CLAMP(c.directivity_value, 0.0f, 1.0f) : occ_data.directivity;
 
+    // Low-pass sim occ/tx only when not manually overridden (playback_coeff_smoothing_time).
     const float tau = c.playback_coeff_smoothing_time;
     const bool smooth_occ = (tau > 0.0f) && (c.occlusion_input == 0);
     const bool smooth_tx = (tau > 0.0f) && (c.transmission_input == 0);
@@ -688,6 +690,7 @@ void ResonancePlayer::_apply_playback_params_from_simulation(ResonanceServer* sr
         coeff_smooth_initialized_ = false;
     }
 
+    // Peek first to avoid fetch cost; fetch only when worker cache has no reverb hint yet.
     IPLReflectionEffectParams ignored_params{};
     bool has_reverb = srv->peek_reverb_params_likely_available(source_handle);
     if (!has_reverb)

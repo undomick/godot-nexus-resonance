@@ -25,8 +25,8 @@ inline bool ambisonic_needs_rotation_effect(const AmbisonicPlaybackParameters& p
     return !p.combined_matrix_decode && p.rotation_enabled;
 }
 
-Vector3 godot_world_dir_to_decoder_row_axis(const Vector3& v_world) {
-    return Vector3(v_world.x, v_world.y, -v_world.z);
+IPLVector3 to_decoder_axis(const Vector3& v_world) {
+    return resonance::ipl_dir_from_godot_world((float)v_world.x, (float)v_world.y, (float)v_world.z);
 }
 
 void fill_ambisonics_bed_local_to_world_row16(const Transform3D& src_world, float matrix_row_major[16]) {
@@ -35,9 +35,9 @@ void fill_ambisonics_bed_local_to_world_row16(const Transform3D& src_world, floa
     Vector3 up_w = b.get_column(1).normalized();
     Vector3 right_w = fwd_w.cross(up_w).normalized();
     up_w = right_w.cross(fwd_w).normalized();
-    Vector3 ru = godot_world_dir_to_decoder_row_axis(right_w);
-    Vector3 uu = godot_world_dir_to_decoder_row_axis(up_w);
-    Vector3 fu = godot_world_dir_to_decoder_row_axis(fwd_w);
+    IPLVector3 ru = to_decoder_axis(right_w);
+    IPLVector3 uu = to_decoder_axis(up_w);
+    IPLVector3 fu = to_decoder_axis(fwd_w);
     std::memset(matrix_row_major, 0, 16 * sizeof(float));
     matrix_row_major[0] = ru.x;
     matrix_row_major[1] = ru.y;
@@ -48,7 +48,7 @@ void fill_ambisonics_bed_local_to_world_row16(const Transform3D& src_world, floa
     matrix_row_major[8] = fu.x;
     matrix_row_major[9] = fu.y;
     matrix_row_major[10] = fu.z;
-    Vector3 ou = godot_world_dir_to_decoder_row_axis(src_world.get_origin());
+    IPLVector3 ou = to_decoder_axis(src_world.get_origin());
     matrix_row_major[12] = ou.x;
     matrix_row_major[13] = ou.y;
     matrix_row_major[14] = ou.z;
@@ -70,7 +70,7 @@ void fill_ambisonics_listener_world_to_listener_row16(const Transform3D& listene
     Basis conjugated = flip * listener_world_inverse.get_basis() * flip;
     std::memset(L, 0, 16 * sizeof(float));
     basis_to_ambisonics_listener_rotation_row16(conjugated, L);
-    Vector3 t = godot_world_dir_to_decoder_row_axis(listener_world_inverse.get_origin());
+    IPLVector3 t = to_decoder_axis(listener_world_inverse.get_origin());
     L[12] = t.x;
     L[13] = t.y;
     L[14] = t.z;
@@ -92,11 +92,51 @@ Node3D* resolve_ambisonic_bed_orientation_node(ResonanceAmbisonicPlayer* player)
     return nullptr;
 }
 
-} // namespace
+AmbisonicPlaybackParameters build_ambisonic_params_from_player(ResonanceAmbisonicPlayer* player) {
+    AmbisonicPlaybackParameters params{};
+    IPLCoordinateSpace3 listener_orient{};
+    listener_orient.origin = {0.0f, 0.0f, 0.0f};
 
-// ============================================================================
-// PLAYBACK
-// ============================================================================
+    Transform3D listener_world_inverse{};
+    Viewport* vp = player->get_viewport();
+    Camera3D* cam = vp ? vp->get_camera_3d() : nullptr;
+    const bool have_camera = cam != nullptr;
+    if (have_camera) {
+        Transform3D cam_xform = cam->get_global_transform();
+        listener_world_inverse = cam_xform.affine_inverse();
+
+        Vector3 forward = -cam_xform.basis.get_column(2);
+        Vector3 up = cam_xform.basis.get_column(1);
+        Vector3 right = cam_xform.basis.get_column(0);
+        listener_orient.ahead = {forward.x, forward.y, forward.z};
+        listener_orient.up = {up.x, up.y, up.z};
+        listener_orient.right = {right.x, right.y, right.z};
+    } else {
+        listener_orient.ahead = {0.0f, 0.0f, -1.0f};
+        listener_orient.up = {0.0f, 1.0f, 0.0f};
+        listener_orient.right = {1.0f, 0.0f, 0.0f};
+    }
+
+    params.listener_orientation = listener_orient;
+    params.rotation_enabled = player->is_rotation_enabled();
+    params.apply_hrtf = player->get_apply_hrtf();
+    params.input_is_sn3d = player->get_input_is_sn3d();
+    params.apply_output_gain = player->get_apply_output_gain();
+
+    Node3D* bed = resolve_ambisonic_bed_orientation_node(player);
+    const bool use_combined_bed_listener_matrices = player->is_rotation_enabled() && bed != nullptr && have_camera;
+    params.combined_matrix_decode = use_combined_bed_listener_matrices;
+    if (use_combined_bed_listener_matrices) {
+        float S[16]{};
+        float L[16]{};
+        fill_ambisonics_bed_local_to_world_row16(bed->get_global_transform(), S);
+        fill_ambisonics_listener_world_to_listener_row16(listener_world_inverse, L);
+        resonance::ambisonics_decode_orientation_row_major(S, L, &params.combined_decode_orientation);
+    }
+    return params;
+}
+
+} // namespace
 
 ResonanceAmbisonicInternalPlayback::ResonanceAmbisonicInternalPlayback() {
     params_next.listener_orientation.ahead = {0, 0, -1};
@@ -128,6 +168,7 @@ void ResonanceAmbisonicInternalPlayback::set_channel_playbacks(const Array& play
             pb = playbacks[i];
         channel_playbacks.push_back(pb);
     }
+    channel_mix_bufs_.resize(num_channels);
 
     // Resize buffers
     size_t in_capacity = resonance::kRingBufferCapacity * num_channels;
@@ -236,7 +277,6 @@ void ResonanceAmbisonicInternalPlayback::_process_steam_audio_block() {
     int num_channels = resonance::ambisonic_num_channels_for_order(ambisonic_order);
     size_t block_samples = static_cast<size_t>(frame_size_) * static_cast<size_t>(num_channels);
 
-    // 1. Read interleaved data from ring buffer
     input_ring.read(temp_interleaved_input.data(), block_samples);
 
     ResonanceServer* srv = ResonanceServer::get_singleton();
@@ -250,9 +290,66 @@ void ResonanceAmbisonicInternalPlayback::_process_steam_audio_block() {
                           params_current.listener_orientation, params_current.combined_decode_orientation, hrtf);
     }
 
-    // 3. Write de-interleaved stereo output to rings
     output_ring_l.write(sa_out_buffer.data[0], frame_size_);
     output_ring_r.write(sa_out_buffer.data[1], frame_size_);
+}
+
+int32_t ResonanceAmbisonicInternalPlayback::pull_channel_samples(float rate_scale, int32_t frames, int num_channels) {
+    // Channel 0 (W) drives the sample count; mix it once and bail if the source produced nothing.
+    channel_mix_bufs_[0] = channel_playbacks[0]->mix_audio(rate_scale, frames);
+    const int32_t samples_read = channel_mix_bufs_[0].size();
+    if (samples_read == 0)
+        return 0;
+
+    for (int c = 1; c < num_channels; c++) {
+        if (c < (int)channel_playbacks.size() && channel_playbacks[c].is_valid())
+            channel_mix_bufs_[c] = channel_playbacks[c]->mix_audio(rate_scale, frames);
+        else
+            channel_mix_bufs_[c].clear();
+    }
+    return samples_read;
+}
+
+void ResonanceAmbisonicInternalPlayback::push_interleaved_input(int32_t samples_read, int num_channels) {
+    const size_t interleaved_count = static_cast<size_t>(samples_read) * static_cast<size_t>(num_channels);
+    if (temp_interleaved_input.size() < interleaved_count)
+        temp_interleaved_input.resize(interleaved_count);
+
+    for (int i = 0; i < samples_read; i++) {
+        for (int c = 0; c < num_channels; c++) {
+            float sample = (c < (int)channel_mix_bufs_.size() && (int)channel_mix_bufs_[c].size() > i)
+                               ? channel_mix_bufs_[c][i].x
+                               : 0.0f;
+            temp_interleaved_input[static_cast<size_t>(i) * static_cast<size_t>(num_channels) + static_cast<size_t>(c)] = sample;
+        }
+    }
+    const size_t to_write = std::min(interleaved_count, input_ring.get_available_write());
+    if (to_write > 0)
+        input_ring.write(temp_interleaved_input.data(), to_write);
+}
+
+void ResonanceAmbisonicInternalPlayback::pull_stereo_output(AudioFrame* buffer, int32_t samples_read) {
+    const int available = (int)output_ring_l.get_available_read();
+    const int valid_copy = (samples_read < available) ? samples_read : available;
+
+    if (valid_copy > 0) {
+        const size_t copy_size = static_cast<size_t>(valid_copy);
+        if (temp_output_l.size() < copy_size)
+            temp_output_l.resize(copy_size);
+        if (temp_output_r.size() < copy_size)
+            temp_output_r.resize(copy_size);
+        output_ring_l.read(temp_output_l.data(), copy_size);
+        output_ring_r.read(temp_output_r.data(), copy_size);
+        for (int i = 0; i < valid_copy; i++) {
+            buffer[i].left = temp_output_l[i];
+            buffer[i].right = temp_output_r[i];
+        }
+    }
+
+    for (int i = valid_copy; i < samples_read; i++) {
+        buffer[i].left = 0.0f;
+        buffer[i].right = 0.0f;
+    }
 }
 
 int32_t ResonanceAmbisonicInternalPlayback::_mix(AudioFrame* buffer, float rate_scale, int32_t frames) {
@@ -275,37 +372,25 @@ int32_t ResonanceAmbisonicInternalPlayback::_mix(AudioFrame* buffer, float rate_
     int num_channels = resonance::ambisonic_num_channels_for_order(ambisonic_order);
     size_t block_samples = static_cast<size_t>(frame_size_) * static_cast<size_t>(num_channels);
 
-    int32_t samples_read = 0;
+    int32_t samples_read;
     const bool stopping = stop_requested.load(std::memory_order_acquire);
-    if (!stopping) {
-        // 1. Mix first stream to get sample count
-        PackedVector2Array buf_0 = channel_playbacks[0]->mix_audio(rate_scale, frames);
-        samples_read = buf_0.size();
-        if (samples_read == 0)
-            return 0;
-    } else {
+    if (stopping) {
         // Keep mixer alive while input/output rings drain after stop().
         samples_read = frames;
+        for (PackedVector2Array& buf : channel_mix_bufs_)
+            buf.clear();
+    } else {
+        samples_read = pull_channel_samples(rate_scale, frames, num_channels);
+        if (samples_read == 0)
+            return 0;
     }
 
-    // 2. Collect all channel data (pad missing with 0)
-    std::vector<PackedVector2Array> channel_bufs;
-    channel_bufs.resize(num_channels);
-    if (!stopping) {
-        for (int c = 0; c < num_channels; c++) {
-            if (c < (int)channel_playbacks.size() && channel_playbacks[c].is_valid()) {
-                channel_bufs[c] = channel_playbacks[c]->mix_audio(rate_scale, frames);
-            }
-        }
-    }
-
-    // Lazy Init
     if (!is_initialized) {
         _lazy_init_steam_audio();
         if (!is_initialized) {
             for (int i = 0; i < samples_read; i++) {
-                float w = (!channel_bufs[0].is_empty() && channel_bufs[0].size() > (unsigned)i)
-                              ? channel_bufs[0][i].x
+                float w = (!channel_mix_bufs_[0].is_empty() && channel_mix_bufs_[0].size() > (unsigned)i)
+                              ? channel_mix_bufs_[0][i].x
                               : 0.0f;
                 buffer[i].left = w;
                 buffer[i].right = w;
@@ -314,27 +399,9 @@ int32_t ResonanceAmbisonicInternalPlayback::_mix(AudioFrame* buffer, float rate_
         }
     }
 
-    // 3. Interleave all channels and push to Input Ring (batch write for efficiency)
-    if (!stopping) {
-        size_t interleaved_count = static_cast<size_t>(samples_read) * static_cast<size_t>(num_channels);
-        if (temp_interleaved_input.size() < interleaved_count) {
-            temp_interleaved_input.resize(interleaved_count);
-        }
-        for (int i = 0; i < samples_read; i++) {
-            for (int c = 0; c < num_channels; c++) {
-                float sample = (c < (int)channel_bufs.size() && (int)channel_bufs[c].size() > i)
-                                   ? channel_bufs[c][i].x
-                                   : 0.0f;
-                temp_interleaved_input[static_cast<size_t>(i) * static_cast<size_t>(num_channels) + static_cast<size_t>(c)] = sample;
-            }
-        }
-        size_t to_write = std::min(interleaved_count, input_ring.get_available_write());
-        if (to_write > 0) {
-            input_ring.write(temp_interleaved_input.data(), to_write);
-        }
-    }
+    if (!stopping)
+        push_interleaved_input(samples_read, num_channels);
 
-    // 4. Process Steam Audio Blocks
     while (input_ring.get_available_read() >= block_samples) {
         if (output_ring_l.get_available_write() >= frame_size_) {
             _process_steam_audio_block();
@@ -343,28 +410,7 @@ int32_t ResonanceAmbisonicInternalPlayback::_mix(AudioFrame* buffer, float rate_
         }
     }
 
-    // 5. Output (batch read instead of per-sample for efficiency)
-    int available = (int)output_ring_l.get_available_read();
-    int valid_copy = (samples_read < available) ? samples_read : available;
-
-    if (valid_copy > 0) {
-        size_t copy_size = static_cast<size_t>(valid_copy);
-        if (temp_output_l.size() < copy_size)
-            temp_output_l.resize(copy_size);
-        if (temp_output_r.size() < copy_size)
-            temp_output_r.resize(copy_size);
-        output_ring_l.read(temp_output_l.data(), copy_size);
-        output_ring_r.read(temp_output_r.data(), copy_size);
-        for (int i = 0; i < valid_copy; i++) {
-            buffer[i].left = temp_output_l[i];
-            buffer[i].right = temp_output_r[i];
-        }
-    }
-
-    for (int i = valid_copy; i < samples_read; i++) {
-        buffer[i].left = 0.0f;
-        buffer[i].right = 0.0f;
-    }
+    pull_stereo_output(buffer, samples_read);
 
     if (stopping && !_has_pending_output()) {
         stop_requested.store(false, std::memory_order_release);
@@ -404,10 +450,6 @@ void ResonanceAmbisonicInternalPlayback::_seek(double position) {
             channel_playbacks[i]->seek(position);
     }
 }
-
-// ============================================================================
-// STREAM & PLAYER
-// ============================================================================
 
 void ResonanceAmbisonicInternalStream::sync_channel_streams_size_to_order() {
     const int n = resonance::ambisonic_num_channels_for_order(ambisonic_order);
@@ -512,49 +554,7 @@ void ResonanceAmbisonicPlayer::_process(double delta) {
     if (!is_playing())
         return;
 
-    AmbisonicPlaybackParameters params{};
-    IPLCoordinateSpace3 listener_orient{};
-
-    Viewport* vp = get_viewport();
-    Transform3D listener_world_inverse{};
-    bool have_camera = false;
-    if (vp && vp->get_camera_3d()) {
-        Camera3D* cam = vp->get_camera_3d();
-        have_camera = true;
-        Transform3D cam_xform = cam->get_global_transform();
-        listener_world_inverse = cam_xform.affine_inverse();
-
-        Vector3 forward = -cam_xform.basis.get_column(2);
-        Vector3 up = cam_xform.basis.get_column(1);
-        Vector3 right = cam_xform.basis.get_column(0);
-
-        listener_orient.origin = {0.0f, 0.0f, 0.0f};
-        listener_orient.ahead = {forward.x, forward.y, forward.z};
-        listener_orient.up = {up.x, up.y, up.z};
-        listener_orient.right = {right.x, right.y, right.z};
-    } else {
-        listener_orient.origin = {0.0f, 0.0f, 0.0f};
-        listener_orient.ahead = {0.0f, 0.0f, -1.0f};
-        listener_orient.up = {0.0f, 1.0f, 0.0f};
-        listener_orient.right = {1.0f, 0.0f, 0.0f};
-    }
-
-    params.listener_orientation = listener_orient;
-    params.rotation_enabled = rotation_enabled;
-    params.apply_hrtf = apply_hrtf;
-    params.input_is_sn3d = input_is_sn3d;
-    params.apply_output_gain = apply_output_gain;
-
-    Node3D* bed = resolve_ambisonic_bed_orientation_node(this);
-    const bool use_combined_bed_listener_matrices = rotation_enabled && bed != nullptr && have_camera;
-    params.combined_matrix_decode = use_combined_bed_listener_matrices;
-    if (use_combined_bed_listener_matrices) {
-        float S[16]{};
-        float L[16]{};
-        fill_ambisonics_bed_local_to_world_row16(bed->get_global_transform(), S);
-        fill_ambisonics_listener_world_to_listener_row16(listener_world_inverse, L);
-        resonance::ambisonics_decode_orientation_row_major(S, L, &params.combined_decode_orientation);
-    }
+    AmbisonicPlaybackParameters params = build_ambisonic_params_from_player(this);
 
     Ref<AudioStreamPlayback> pb = get_stream_playback();
     if (pb.is_valid()) {
@@ -586,6 +586,14 @@ void ResonanceAmbisonicPlayer::set_input_is_sn3d(bool p_sn3d) {
 
 void ResonanceAmbisonicPlayer::set_apply_output_gain(bool p_enabled) {
     apply_output_gain = p_enabled;
+}
+
+void ResonanceAmbisonicPlayer::_validate_property(PropertyInfo& p_property) const {
+    const StringName& name = p_property.name;
+    // IPL decode is always stereo; sample playback and mix_target routing do not apply.
+    if (name == StringName("mix_target") || name == StringName("playback_type")) {
+        p_property.usage &= ~PROPERTY_USAGE_EDITOR;
+    }
 }
 
 void ResonanceAmbisonicPlayer::_bind_methods() {
