@@ -145,7 +145,7 @@ void ResonanceProbeVolume::_ready() {
 }
 
 void ResonanceProbeVolume::_check_probe_data_loaded() {
-    if (probe_data.is_valid() && !probe_data->get_data().is_empty()) {
+    if (probe_data.is_valid() && probe_data->get_size() > 0) {
         _queue_update();
     }
 }
@@ -187,7 +187,7 @@ void ResonanceProbeVolume::reload_probe_batch() {
             "Nexus Resonance: reload_probe_batch skipped - ResonanceServer is not initialized (probe data may have changed on disk only).");
         return;
     }
-    if (!probe_data.is_valid() || probe_data->get_data().is_empty()) {
+    if (!probe_data.is_valid() || probe_data->get_size() <= 0) {
         if (!headless_baking_mode) {
             UtilityFunctions::push_warning("Nexus Resonance: reload_probe_batch skipped - probe_data is missing or empty.");
         }
@@ -313,7 +313,7 @@ uint32_t ResonanceProbeVolume::_get_bake_params_hash() const {
 }
 
 bool ResonanceProbeVolume::_compute_is_probe_dirty() const {
-    if (!probe_data.is_valid() || probe_data->get_data().is_empty())
+    if (!probe_data.is_valid() || probe_data->get_size() <= 0)
         return true;
     uint32_t stored = static_cast<uint32_t>(probe_data->get_bake_params_hash() & 0xFFFFFFFF);
     // Probe data without a recorded params hash predates incremental detection. We are pre-release
@@ -703,7 +703,7 @@ void ResonanceProbeVolume::notify_runtime_config_changed(int p_runtime_refl, boo
         return;
 
     int baked_refl = probe_data.is_valid() ? probe_data->get_baked_reflection_type() : -1;
-    bool has_data = probe_data.is_valid() && !probe_data->get_data().is_empty();
+    bool has_data = probe_data.is_valid() && probe_data->get_size() > 0;
 
     bool wants_path = false;
     bool want_ss = false;

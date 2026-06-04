@@ -61,7 +61,8 @@ void ResonanceServer::fill_reflection_mixer_apply_params(IPLReflectionEffectPara
         p->tanSlot = 0;
     } else {
         p->type = IPL_REFLECTIONEFFECTTYPE_CONVOLUTION;
-        p->irSize = static_cast<IPLint32>(resonance::reverb_ir_size_samples(get_sample_rate(), max_reverb_duration));
+        // Unity's mixer-return path sets only (type, numChannels, tanDevice) before iplReflectionMixerApply.
+        // Passing irSize here is unnecessary and can change behavior across Steam Audio versions.
     }
 }
 
@@ -140,6 +141,9 @@ void ResonanceServer::update_listener(Vector3 pos, Vector3 dir, Vector3 up) {
     // FMOD Bridge: keep reverb IPLSource in sync with listener. Use try_update_source so the main thread
     // never blocks on simulation_mutex while the worker holds it during RunReflections/RunPathing.
     if (fmod_reverb_source_handle_ >= 0) {
-        try_update_source(fmod_reverb_source_handle_, pos, 1.0f);
+        SourceUpdateParams params;
+        params.position = pos;
+        params.radius = 1.0f;
+        try_update_source(fmod_reverb_source_handle_, params);
     }
 }

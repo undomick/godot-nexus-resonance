@@ -1,11 +1,12 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <class name="ResonanceProbeData" inherits="Resource" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../class.xsd">
 	<brief_description>
-		Resource storing baked probe data for reverb and pathing.
+		Resource storing baked Steam Audio probe batch data.
 	</brief_description>
 	<description>
-		ResonanceProbeData holds the baked probe batch from Steam Audio. Assigned to [ResonanceProbeVolume]'s [member probe_data] property. Created automatically when baking probes; save the scene after baking to persist. Default external path pattern is [code]&lt;scene&gt;_&lt;node_path&gt;_batch.tres[/code] or [code].res[/code] (Project Settings → Nexus → Resonance → Export → Probe data format).
-		Contains reflection data (Convolution/Parametric/Hybrid), optional pathing data, and optional static source/listener data. The baked reflection type must match [url=#ResonanceRuntimeConfig]ResonanceRuntimeConfig[/url] [member ResonanceRuntimeConfig.reflection_type] at runtime.
+		Holds the serialized probe batch from a bake (reflections, optional pathing, optional static layers). Assign to [member ResonanceProbeVolume.probe_data]. Created and updated by the bake pipeline; save the scene or external resource after baking.
+		Default external path pattern: [code]&lt;scene&gt;_&lt;node_path&gt;_batch.tres[/code] or [code].res[/code] (Project Settings -> Nexus -> Resonance -> Export -> Probe data format).
+		[member baked_reflection_type] must be compatible with [member ResonanceRuntimeConfig.reflection_type] at runtime. When runtime pathing is on, [member pathing_params_hash] must be non-zero.
 	</description>
 	<tutorials>
 	</tutorials>
@@ -13,25 +14,34 @@
 		<method name="get_bake_layer_info">
 			<return type="Dictionary" />
 			<description>
-				Returns bake layer statistics for debug/editor. Dictionary with keys: "total_size" (int), "layers" (Array of layer info).
+				Editor/debug summary of baked layers. Keys include [code]total_size[/code] (int) and [code]layers[/code] (array of per-layer info).
 			</description>
 		</method>
 	</methods>
 	<members>
 		<member name="data" type="PackedByteArray" setter="set_data" getter="get_data">
-			Serialized probe batch data. Set automatically during bake.
+			Serialized Phonon probe batch bytes. Written by the bake pipeline; do not edit manually.
 		</member>
 		<member name="probe_positions" type="PackedVector3Array" setter="set_probe_positions" getter="get_probe_positions">
-			Probe positions for visualization. Stored at bake time.
+			World-space probe positions stored at bake time for editor visualization.
 		</member>
 		<member name="bake_params_hash" type="int" setter="set_bake_params_hash" getter="get_bake_params_hash">
-			Hash of bake parameters. Used for compatibility checks.
+			Hash of volume layout and reflection bake parameters. Compared with [method ResonanceProbeVolume.get_bake_params_hash] to detect outdated reflection data.
 		</member>
 		<member name="pathing_params_hash" type="int" setter="set_pathing_params_hash" getter="get_pathing_params_hash">
-			Hash of pathing parameters. 0 if pathing not baked.
+			Hash of pathing bake parameters. 0 when pathing was not baked.
+		</member>
+		<member name="static_scene_params_hash" type="int" setter="set_static_scene_params_hash" getter="get_static_scene_params_hash">
+			Hash of the static scene used for the last bake. 0 when not recorded.
+		</member>
+		<member name="static_source_params_hash" type="int" setter="set_static_source_params_hash" getter="get_static_source_params_hash">
+			Hash of static source bake inputs ([member ResonanceProbeVolume.bake_sources], config). 0 when no static source layer.
+		</member>
+		<member name="static_listener_params_hash" type="int" setter="set_static_listener_params_hash" getter="get_static_listener_params_hash">
+			Hash of static listener bake inputs ([member ResonanceProbeVolume.bake_listeners], config). 0 when no static listener layer.
 		</member>
 		<member name="baked_reflection_type" type="int" setter="set_baked_reflection_type" getter="get_baked_reflection_type">
-			Baked reverb algorithm: Convolution (0), Parametric (1), Hybrid (2). -1 = legacy.
+			Baked reverb algorithm: Convolution (0), Parametric (1), Hybrid (2). -1 = legacy (compatible with any runtime reflection type).
 		</member>
 	</members>
 </class>

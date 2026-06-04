@@ -18,7 +18,8 @@ bool ResonanceProbeBatchRegistry::is_reflection_type_compatible(int baked_type, 
 }
 
 int32_t ResonanceProbeBatchRegistry::load_batch(IPLContext ctx, IPLSimulator sim, std::mutex* sim_mutex,
-                                                Ref<ResonanceProbeData> data, uint64_t data_hash) {
+                                                Ref<ResonanceProbeData> data, uint64_t data_hash,
+                                                const uint8_t* probe_bytes, int64_t probe_byte_size) {
     {
         std::lock_guard<std::mutex> lock(mutex_);
         auto it = hash_to_handle_.find(data_hash);
@@ -32,14 +33,13 @@ int32_t ResonanceProbeBatchRegistry::load_batch(IPLContext ctx, IPLSimulator sim
         }
     }
 
-    PackedByteArray pba = data->get_data();
-    if (pba.is_empty()) {
+    if (probe_byte_size <= 0 || probe_bytes == nullptr) {
         ResonanceLog::error("ResonanceProbeBatchRegistry: Probe data is empty.");
         return -1;
     }
     IPLSerializedObjectSettings sSettings{};
-    sSettings.data = (IPLbyte*)pba.ptr();
-    sSettings.size = pba.size();
+    sSettings.data = const_cast<IPLbyte*>(probe_bytes);
+    sSettings.size = static_cast<IPLsize>(probe_byte_size);
     IPLSerializedObject sObj = nullptr;
     if (iplSerializedObjectCreate(ctx, &sSettings, &sObj) != IPL_STATUS_SUCCESS) {
         ResonanceLog::error("ResonanceProbeBatchRegistry: iplSerializedObjectCreate failed.");
@@ -83,6 +83,7 @@ int32_t ResonanceProbeBatchRegistry::load_batch(IPLContext ctx, IPLSimulator sim
         refcount_[handle] = 1;
         handle_has_pathing_[handle] = (data->get_pathing_params_hash() > 0);
         handle_baked_refl_[handle] = data->get_baked_reflection_type();
+        handle_to_probe_data_[handle] = data;
         {
             if (sim_mutex) {
                 std::lock_guard<std::mutex> sim_lock(*sim_mutex);
@@ -113,6 +114,7 @@ void ResonanceProbeBatchRegistry::remove_batch(int32_t handle, IPLSimulator sim,
         refcount_.erase(ref_it);
         handle_has_pathing_.erase(handle);
         handle_baked_refl_.erase(handle);
+        handle_to_probe_data_.erase(handle);
         auto hash_it = handle_to_hash_.find(handle);
         if (hash_it != handle_to_hash_.end()) {
             hash_to_handle_.erase(hash_it->second);
@@ -143,6 +145,7 @@ void ResonanceProbeBatchRegistry::clear_batches(IPLSimulator sim, std::mutex* si
         refcount_.clear();
         handle_has_pathing_.clear();
         handle_baked_refl_.clear();
+        handle_to_probe_data_.clear();
         probe_batch_manager_.get_all_batches(batches);
     }
     if (batches.empty())
@@ -233,7 +236,26 @@ void ResonanceProbeBatchRegistry::get_all_batches_for_shutdown(std::vector<IPLPr
     refcount_.clear();
     handle_has_pathing_.clear();
     handle_baked_refl_.clear();
+    handle_to_probe_data_.clear();
     probe_batch_manager_.get_all_batches(out);
+}
+
+Ref<ResonanceProbeData> ResonanceProbeBatchRegistry::get_probe_data_for_handle(int32_t handle) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = handle_to_probe_data_.find(handle);
+    if (it == handle_to_probe_data_.end())
+        return Ref<ResonanceProbeData>();
+    return it->second;
+}
+
+void ResonanceProbeBatchRegistry::for_each_probe_data(const std::function<void(int32_t handle, const Ref<ResonanceProbeData>& data)>& fn) const {
+    if (!fn)
+        return;
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (const auto& kv : handle_to_probe_data_) {
+        if (kv.second.is_valid())
+            fn(kv.first, kv.second);
+    }
 }
 
 } // namespace godot

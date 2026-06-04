@@ -145,7 +145,7 @@ if build_tests:
     env_test = env.Clone()
     env_test.Replace(LIBS=[], LIBPATH=[])
     env_test.Append(CPPPATH=["src", "src/lib/catch2/single_include/catch2", "src/lib/steamaudio/include"])
-    test_sources = ["src/test/test_main.cpp", "src/test/test_ring_buffer.cpp", "src/test/test_volume_ramp.cpp", "src/test/test_resonance_math_more.cpp", "src/test/test_resonance_hash.cpp", "src/test/test_bake_ambisonics_order.cpp", "src/test/test_handle_manager.cpp", "src/test/test_ipl_guard.cpp", "src/test/test_custom_scene_invariants.cpp", "src/test/test_constants_helpers.cpp", "src/test/test_ray_trace_debug_intersect.cpp", "src/test/test_physics_ray_batch.cpp", "src/test/test_baked_reflection_occlusion.cpp", "src/test/test_wet_distance_attenuation.cpp", "src/test/test_air_absorption_wet_gating.cpp", "src/test/test_baked_reverb_listener_probe.cpp"]
+    test_sources = ["src/test/test_main.cpp", "src/test/test_ring_buffer.cpp", "src/test/test_volume_ramp.cpp", "src/test/test_resonance_math_more.cpp", "src/test/test_resonance_hash.cpp", "src/test/test_bake_ambisonics_order.cpp", "src/test/test_handle_manager.cpp", "src/test/test_ipl_guard.cpp", "src/test/test_custom_scene_invariants.cpp", "src/test/test_constants_helpers.cpp", "src/test/test_ray_trace_debug_intersect.cpp", "src/test/test_physics_ray_batch.cpp", "src/test/test_baked_reflection_occlusion.cpp", "src/test/test_air_absorption_wet_gating.cpp", "src/test/test_baked_reverb_listener_probe.cpp", "src/test/test_reflection_last_good_ir.cpp", "src/test/test_reflection_ir_fingerprint.cpp", "src/test/test_reflection_ir_fingerprint_stub.cpp"]
     test_dir = "build/tests"
     test_exe = env_test.Program(os.path.join(test_dir, "nexus_resonance_tests"), test_sources)
     env.Alias("test", test_exe)

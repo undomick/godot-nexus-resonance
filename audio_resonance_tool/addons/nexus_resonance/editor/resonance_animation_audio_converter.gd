@@ -7,6 +7,38 @@ extends RefCounted
 const _METHOD := &"play_animation_audio_clip"
 
 
+static func scene_has_resonance_audio_tracks(root: Node) -> bool:
+	if root == null:
+		return false
+	var stack: Array[Node] = [root]
+	while not stack.is_empty():
+		var n: Node = stack.pop_back()
+		if n is AnimationPlayer and _player_has_resonance_audio_track(n as AnimationPlayer):
+			return true
+		for c in n.get_children():
+			stack.push_back(c)
+	return false
+
+
+static func _player_has_resonance_audio_track(ap: AnimationPlayer) -> bool:
+	for lib_key in ap.get_animation_library_list():
+		var lib: AnimationLibrary = ap.get_animation_library(lib_key)
+		if lib == null:
+			continue
+		for anim_name in lib.get_animation_list():
+			var anim: Animation = lib.get_animation(anim_name)
+			if anim == null:
+				continue
+			for t in anim.get_track_count():
+				if anim.track_get_type(t) != Animation.TYPE_AUDIO:
+					continue
+				var path: NodePath = anim.track_get_path(t)
+				var target: Node = _resolve_track_node(ap, path)
+				if target != null and target.get_class() == "ResonancePlayer":
+					return true
+	return false
+
+
 static func convert_all_animation_players(root: Node) -> Dictionary:
 	var result := {
 		"animation_players": 0,

@@ -4,7 +4,16 @@ class_name ResonanceProbeDataSaver
 
 ## Text [.tres] saver for ResonanceProbeData (VC-friendly). [.res] defers to the default saver.
 ## [.bak] saves are rejected (backups are file copies; saving here caused take_over_path → .bak chains).
-## Writes via tmp + rename; avoid concurrent saves to the same .tres path.
+## Writes via tmp + rename. Per-path Mutex serializes concurrent saves to the same file.
+
+
+static var _path_mutexes: Dictionary = {}
+
+
+static func _mutex_for_path(target_path: String) -> Mutex:
+	if not _path_mutexes.has(target_path):
+		_path_mutexes[target_path] = Mutex.new()
+	return _path_mutexes[target_path]
 
 
 func _recognize(resource: Resource) -> bool:
@@ -52,6 +61,8 @@ func _save(resource: Resource, path: String, _flags: int) -> Error:
 		resource.get("static_scene_params_hash") if "static_scene_params_hash" in resource else 0
 	)
 	var target_path: String = path if path.ends_with(".tres") else path.get_basename() + ".tres"
+	var save_mutex: Mutex = _mutex_for_path(target_path)
+	save_mutex.lock()
 	var tmp_path := target_path + ".tmp"
 	var data_str := var_to_str(data)
 	var probe_pos_str := var_to_str(probe_positions)
@@ -70,6 +81,7 @@ func _save(resource: Resource, path: String, _flags: int) -> Error:
 	)
 	var f := FileAccess.open(tmp_path, FileAccess.WRITE)
 	if f == null:
+		save_mutex.unlock()
 		return FileAccess.get_open_error()
 	f.store_string(content)
 	f.close()
@@ -83,6 +95,8 @@ func _save(resource: Resource, path: String, _flags: int) -> Error:
 				% rename_err
 			)
 		)
+		save_mutex.unlock()
 		return rename_err
 	resource.take_over_path(target_path)
+	save_mutex.unlock()
 	return OK

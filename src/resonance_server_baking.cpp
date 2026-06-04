@@ -2,6 +2,7 @@
 #include "resonance_geometry_asset.h"
 #include "resonance_ipl_guard.h"
 #include "resonance_log.h"
+#include "resonance_reflection_ir_fingerprint.h"
 #include "resonance_server.h"
 #include "resonance_utils.h"
 #include <cstdint>
@@ -17,6 +18,15 @@ namespace {
 void bake_progress_callback(float p, void* ud) {
     static_cast<godot::ResonanceServer*>(ud)->emit_bake_progress(p);
 }
+
+void release_bake_temp_scene(IPLStaticMesh temp_mesh, IPLScene temp_scene) {
+    if (temp_mesh && temp_scene) {
+        iplStaticMeshRemove(temp_mesh, temp_scene);
+        iplStaticMeshRelease(&temp_mesh);
+    }
+    if (temp_scene)
+        iplSceneRelease(&temp_scene);
+}
 } // namespace
 
 PackedVector3Array ResonanceServer::generate_manual_grid(const Transform3D& tr, Vector3 extents, float spacing,
@@ -31,25 +41,25 @@ PackedVector3Array ResonanceServer::generate_probes_scene_aware(const Transform3
         return out;
     if (generation_type != ResonanceBaker::GEN_CENTROID && generation_type != ResonanceBaker::GEN_UNIFORM_FLOOR)
         return out;
-    std::lock_guard<std::mutex> lock(simulation_mutex);
-    if (scene_dirty) {
-        iplSceneCommit(scene);
-        scene_dirty = false;
-    }
     IPLScene temp_scene = nullptr;
     IPLStaticMesh temp_mesh = nullptr;
-    IPLScene bake_scene = _prepare_bake_scene(&temp_scene, &temp_mesh);
+    IPLScene bake_scene = nullptr;
+    bool bake_uses_live_scene = false;
+    {
+        std::lock_guard<std::mutex> lock(simulation_mutex);
+        if (scene_dirty) {
+            iplSceneCommit(scene);
+            scene_dirty = false;
+        }
+        bake_scene = _prepare_bake_scene(&temp_scene, &temp_mesh);
+        bake_uses_live_scene = (temp_scene == nullptr && bake_scene == scene);
+    }
     if (!bake_scene)
         return out;
     IPLProbeArray probeArray = nullptr;
     if (iplProbeArrayCreate(_ctx(), &probeArray) != IPL_STATUS_SUCCESS) {
         ResonanceLog::error("ResonanceServer: iplProbeArrayCreate failed (generate_probes_scene_aware).");
-        if (temp_mesh) {
-            iplStaticMeshRemove(temp_mesh, temp_scene);
-            iplStaticMeshRelease(&temp_mesh);
-        }
-        if (temp_scene)
-            iplSceneRelease(&temp_scene);
+        release_bake_temp_scene(temp_mesh, temp_scene);
         return out;
     }
     IPLProbeGenerationParams genParams{};
@@ -57,20 +67,19 @@ PackedVector3Array ResonanceServer::generate_probes_scene_aware(const Transform3
     genParams.spacing = spacing;
     genParams.height = height_above_floor;
     genParams.transform = ResonanceUtils::create_volume_transform_rotated(volume_transform, extents);
-    // Phonon API: iplProbeArrayGenerateProbes is void (no IPLerror); failures surface as zero probes or invalid data.
-    iplProbeArrayGenerateProbes(probeArray, bake_scene, &genParams);
+    if (bake_uses_live_scene) {
+        std::lock_guard<std::mutex> lock(simulation_mutex);
+        iplProbeArrayGenerateProbes(probeArray, bake_scene, &genParams);
+    } else {
+        iplProbeArrayGenerateProbes(probeArray, bake_scene, &genParams);
+    }
     int num_probes = iplProbeArrayGetNumProbes(probeArray);
     for (int i = 0; i < num_probes; i++) {
         IPLSphere sphere = iplProbeArrayGetProbe(probeArray, i);
         out.push_back(ResonanceUtils::to_godot_vector3(sphere.center));
     }
     iplProbeArrayRelease(&probeArray);
-    if (temp_mesh) {
-        iplStaticMeshRemove(temp_mesh, temp_scene);
-        iplStaticMeshRelease(&temp_mesh);
-    }
-    if (temp_scene)
-        iplSceneRelease(&temp_scene);
+    release_bake_temp_scene(temp_mesh, temp_scene);
     return out;
 }
 
@@ -257,21 +266,29 @@ IPLScene ResonanceServer::_prepare_bake_scene(IPLScene* out_temp_scene, IPLStati
 }
 
 bool ResonanceServer::_with_bake_scene(std::function<bool(IPLScene)> bake_fn) {
-    std::lock_guard<std::mutex> lock(simulation_mutex);
-    if (scene_dirty) {
-        iplSceneCommit(scene);
-        scene_dirty = false;
-    }
     IPLScene temp_scene = nullptr;
     IPLStaticMesh temp_mesh = nullptr;
-    IPLScene bake_scene = _prepare_bake_scene(&temp_scene, &temp_mesh);
-    bool ok = bake_fn(bake_scene);
-    if (temp_mesh) {
-        iplStaticMeshRemove(temp_mesh, temp_scene);
-        iplStaticMeshRelease(&temp_mesh);
+    IPLScene bake_scene = nullptr;
+    bool bake_uses_live_scene = false;
+    {
+        std::lock_guard<std::mutex> lock(simulation_mutex);
+        if (scene_dirty) {
+            iplSceneCommit(scene);
+            scene_dirty = false;
+        }
+        bake_scene = _prepare_bake_scene(&temp_scene, &temp_mesh);
+        bake_uses_live_scene = (temp_scene == nullptr && bake_scene == scene);
     }
-    if (temp_scene)
-        iplSceneRelease(&temp_scene);
+    if (!bake_scene)
+        return false;
+    bool ok = false;
+    if (bake_uses_live_scene) {
+        std::lock_guard<std::mutex> lock(simulation_mutex);
+        ok = bake_fn(bake_scene);
+    } else {
+        ok = bake_fn(bake_scene);
+    }
+    release_bake_temp_scene(temp_mesh, temp_scene);
     return ok;
 }
 
@@ -281,7 +298,7 @@ bool ResonanceServer::bake_manual_grid(const PackedVector3Array& points, Ref<Res
         return false;
     }
     if (!_bake_static_scene_asset.is_valid() || !_bake_static_scene_asset->is_valid()) {
-        if (global_triangle_count <= 0) {
+        if (global_triangle_count.load(std::memory_order_acquire) <= 0) {
             UtilityFunctions::push_error("Nexus Resonance Bake: Scene not exported. Use Tools > Nexus Resonance > Export Static Scene before baking.");
             return false;
         }
@@ -303,7 +320,7 @@ bool ResonanceServer::bake_probes_for_volume(const Transform3D& volume_transform
         return false;
     }
     if (!_bake_static_scene_asset.is_valid() || !_bake_static_scene_asset->is_valid()) {
-        if (global_triangle_count <= 0) {
+        if (global_triangle_count.load(std::memory_order_acquire) <= 0) {
             UtilityFunctions::push_error("Nexus Resonance Bake: Scene not exported. Use Tools > Nexus Resonance > Export Static Scene before baking.");
             return false;
         }
@@ -387,8 +404,13 @@ int32_t ResonanceServer::load_probe_batch(Ref<ResonanceProbeData> data) {
         UtilityFunctions::push_warning("Nexus Resonance: load_probe_batch skipped (no context or null data)");
         return -1;
     }
-    PackedByteArray pba = data->get_data();
-    if (pba.is_empty()) {
+    const int64_t probe_size = data->get_size();
+    if (probe_size <= 0) {
+        UtilityFunctions::push_warning("Nexus Resonance: load_probe_batch skipped - probe_data.data is empty! Re-bake the probes.");
+        return -1;
+    }
+    const uint8_t* probe_ptr = data->get_data_ptr();
+    if (probe_ptr == nullptr) {
         UtilityFunctions::push_warning("Nexus Resonance: load_probe_batch skipped - probe_data.data is empty! Re-bake the probes.");
         return -1;
     }
@@ -438,8 +460,10 @@ int32_t ResonanceServer::load_probe_batch(Ref<ResonanceProbeData> data) {
         return -1;
     }
 
-    uint64_t data_hash = _hash_probe_data(pba);
-    int32_t handle = probe_batch_registry_.load_batch(_ctx(), simulator, &simulation_mutex, data, data_hash);
+    const size_t probe_size_u = static_cast<size_t>(probe_size);
+    uint64_t data_hash = _hash_probe_data(probe_ptr, probe_size_u);
+    int32_t handle = probe_batch_registry_.load_batch(_ctx(), simulator, &simulation_mutex, data, data_hash,
+                                                      probe_ptr, probe_size);
     // Baked-only (max_rays==0): tick() only arms reflection heavy when batches exist. After reinit or first load,
     // without this the worker can skip RunReflections until the next interval, leaving reflections_have_run_once
     // false and fetch_reverb_params failing for parametric/hybrid (no wet). Request heavy immediately.
@@ -470,6 +494,10 @@ void ResonanceServer::_clear_all_param_caches() {
     reverb_param_cache_front_.store(reverb_back, std::memory_order_release);
     reflection_param_cache_front_.store(refl_back, std::memory_order_release);
     pathing_param_cache_front_.store(path_back, std::memory_order_release);
+    for (size_t i = 0; i < kMaxCacheHandles; ++i) {
+        reflection_baked_energy_last_[i] = 0.0f;
+        last_good_reflection_valid_[i].store(0, std::memory_order_relaxed);
+    }
 }
 
 void ResonanceServer::remove_probe_batch(int32_t handle) {
@@ -534,4 +562,30 @@ bool ResonanceServer::editor_probe_data_remove_baked_layer(Ref<ResonanceProbeDat
     if (!_ctx() || data.is_null())
         return false;
     return baker.probe_data_remove_baked_data_layer(_ctx(), data, baked_data_type, variation, endpoint, influence_radius);
+}
+
+float ResonanceServer::probe_data_static_source_energy_at(Ref<ResonanceProbeData> data, Vector3 endpoint, Vector3 listener,
+                                                          float influence_radius, float neighbor_radius) {
+    if (!_ctx() || data.is_null())
+        return 0.0f;
+    if (neighbor_radius <= 0.0f)
+        neighbor_radius = resonance::kStaticSourceProbeNeighborRadiusM;
+    int with_data = 0;
+    int missing = 0;
+    const float energy = baker.probe_data_static_source_interpolated_energy(_ctx(), data, endpoint, influence_radius, listener,
+                                                                            neighbor_radius, &with_data, &missing);
+    if (missing > 0 && with_data == 0) {
+        UtilityFunctions::push_warning(
+            "Nexus Resonance: STATICSOURCE audit at listener " + listener.operator String() +
+            " found " + String::num_int64(missing) +
+            " neighboring probes without baked energy for endpoint " + endpoint.operator String() +
+            ". Re-bake static source pass (ResonanceBakeRunner.run_bake).");
+    }
+    return energy;
+}
+
+uint16_t ResonanceServer::get_reflection_baked_energy_q16(int32_t handle) const {
+    if (handle < 0 || handle >= kMaxCacheHandles)
+        return 0;
+    return reflection_baked_energy_to_q16(reflection_baked_energy_last_[static_cast<size_t>(handle)]);
 }

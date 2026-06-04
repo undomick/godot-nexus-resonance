@@ -12,6 +12,10 @@ on:
       - 'audio_resonance_tool/addons/nexus_resonance/**/*.gd'
       - 'audio_resonance_tool/test/**/*.gd'
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   lint:
     name: GDScript format & lint

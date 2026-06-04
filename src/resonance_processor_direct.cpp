@@ -353,7 +353,7 @@ void ResonanceDirectProcessor::apply_spatialization(const IPLVector3& dir, const
     if (use_ambi_path && ambisonics_encode_effect && ambisonics_binaural_effect && internal_ambi_buffer.data && use_binaural && hrtf_handle) {
         // AmbisonicsBinauralEffect has no spatialBlend; blend with iplBinauralEffectApply (same as non-HOA path) so
         // spatial_blend crossfades from standard binaural (weight 1-sb) to HOA (weight sb). At sb=0: binaural only; at
-        // sb=1: HOA only. Mid values differ from a single BinauralEffect(sb) call — unavoidable without Steam exposing
+        // sb=1: HOA only. Mid values differ from a single BinauralEffect(sb) call - unavoidable without Steam exposing
         // spatialBlend on AmbisonicsBinauralEffect.
         float sb = spatial_blend;
         if (sb < 0.0f)

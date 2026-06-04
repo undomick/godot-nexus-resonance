@@ -1,45 +1,52 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <class name="ResonanceGeometry" inherits="Node3D" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../class.xsd">
 	<brief_description>
-		Marks mesh surfaces for Steam Audio simulation. Add as child of MeshInstance3D, or of any Node3D when using geometry_override.
+		Base node that marks mesh surfaces for Steam Audio simulation.
 	</brief_description>
 	<description>
-		ResonanceGeometry exposes mesh triangles to Steam Audio for occlusion, transmission, and reverb. Normally must be a direct child of a MeshInstance3D. When [member geometry_override] is set, a MeshInstance3D parent is not required—a child of any Node3D suffices; override mesh vertices are in this node's local space (use this node's transform). Assign a ResonanceMaterial to control absorption, scattering, and transmission per surface. All ResonanceGeometry in the scene is used when baking probes.
-		Performance: for [member dynamic] objects on Embree/Default/Radeon, prefer a low-poly [member mesh_asset] from [method export_dynamic_mesh_to_asset] or [member geometry_override] over the full render mesh—each scene commit cost scales with total static scene size. When [member ResonanceRuntimeConfig.scene_type] is Custom (Godot Physics), [ResonanceGeometry] is not uploaded to Phonon; use colliders for dynamic occlusion instead. See [member ResonanceRuntimeConfig.dynamic_scene_commit_min_interval] and worker timing [method ResonanceServer.get_simulation_worker_timing] ([code]us_simulator_commit[/code], [code]main_us_dynamic_transform_enqueue[/code]).
+		Exposes mesh triangles to [ResonanceServer] for occlusion, transmission, and reverb. Normally must be a direct child of a [MeshInstance3D]. When [member geometry_override] is set, a [MeshInstance3D] parent is not required; a child of any [Node3D] suffices. Override mesh vertices are in this node's local space (use this node's transform).
+		Assign a [ResonanceMaterial] per surface. All [ResonanceGeometry] nodes in the scene contribute to probe baking. Prefer [ResonanceStaticGeometry] for fixed world meshes and [ResonanceDynamicGeometry] for movers.
+		For [member dynamic] objects on Embree, Default, or Radeon tracers, prefer a low-poly [member mesh_asset] from [method export_dynamic_mesh_to_asset] or [member geometry_override] over the full render mesh; scene commit cost scales with total mesh size. When [member ResonanceRuntimeConfig.scene_type] is Custom (Godot Physics), geometry is not uploaded to Phonon; use physics colliders for dynamic occlusion instead. See [member ResonanceRuntimeConfig.dynamic_scene_commit_min_interval] and [method ResonanceServer.get_simulation_worker_timing] ([code]us_simulator_commit[/code], [code]main_us_dynamic_transform_enqueue[/code]).
 	</description>
 	<tutorials>
 	</tutorials>
 	<members>
 		<member name="material" type="ResonanceMaterial" setter="set_material" getter="get_material">
-			Acoustic material for this surface. Controls absorption (low/mid/high), scattering, and transmission. Use presets from addons/nexus_resonance/materials/ (e.g. concrete, glass, wood).
+			Acoustic material for this surface. Controls absorption (low, mid, high), scattering, and transmission. Use presets under addons/nexus_resonance/materials/ (e.g. concrete, glass, wood).
 		</member>
 		<member name="mesh_asset" type="ResonanceGeometryAsset" setter="set_mesh_asset" getter="get_mesh_asset">
-			Pre-exported mesh data for dynamic geometry. When set and dynamic=true, loads via iplStaticMeshLoad for better stability and faster runtime. Assigned automatically when using Export Dynamic Mesh.
+			Pre-exported mesh bytes for dynamic geometry. When set and [member dynamic] is true, loads via iplStaticMeshLoad for faster runtime and better stability. Assigned automatically by Export Dynamic Mesh on [ResonanceDynamicGeometry].
 		</member>
 		<member name="geometry_override" type="Mesh" setter="set_geometry_override" getter="get_geometry_override">
-			Optional simplified mesh for Steam Audio. When set, used instead of the parent MeshInstance3D's mesh for export and runtime. Use e.g. BoxMesh for complex geometry to reduce polygon count. When geometry_override is set, a MeshInstance3D parent is not required—the node can be a child of any Node3D.
+			Optional simplified mesh for Steam Audio. When set, used instead of the parent [MeshInstance3D] mesh for export and runtime (e.g. BoxMesh to cut polygon count). A [MeshInstance3D] parent is not required when this is set.
 		</member>
 		<member name="show_geometry_override_in_viewport" type="bool" setter="set_show_geometry_override_in_viewport" getter="is_show_geometry_override_in_viewport" default="false">
-			When true and geometry_override is set, shows the override mesh as a semi-transparent green overlay in the editor viewport. Disable to reduce clutter.
+			When true and [member geometry_override] is set, draws the override mesh as a semi-transparent green overlay in the editor viewport only.
 		</member>
 		<member name="export_all_children" type="bool" setter="set_export_all_children" getter="get_export_all_children" default="false">
-			When enabled, geometry of all child nodes (with MeshInstance3D or geometry_override) is exported as acoustic geometry. Same as Steam Audio "Export All Children".
+			When true, exports acoustic geometry from all child nodes that have a [MeshInstance3D] or [member geometry_override]. Same idea as Steam Audio Export All Children. Hidden on dynamic geometry nodes.
 		</member>
 		<member name="dynamic" type="bool" setter="set_dynamic" getter="is_dynamic" default="false">
-			When true, geometry is updated for moving/rotating objects. Enable path validation (runtime default or per-source **Enabled**) when using dynamic geometry that can block baked paths.
+			When true, geometry is instanced and updated for moving objects. Enable path validation ([member ResonanceRuntimeConfig.path_validation_enabled] or [member ResonancePlayerConfig.path_validation_override] Enabled) when movers can block baked paths. [ResonanceStaticGeometry] and [ResonanceDynamicGeometry] fix this flag and hide it in the inspector.
 		</member>
 	</members>
 	<methods>
 		<method name="get_mesh_bake_transform">
 			<return type="Transform3D" />
 			<description>
-				World transform from mesh vertex space to global space: this node's global transform when [member geometry_override] is set, otherwise the parent [MeshInstance3D]'s global transform (or this node's global if there is no MeshInstance parent). Matches static scene export and runtime acoustic registration.
+				World transform from mesh vertex space to global space: this node's global transform when [member geometry_override] is set, otherwise the parent [MeshInstance3D] global transform (or this node's global transform if there is no mesh parent). Matches static scene export and runtime acoustic registration.
 			</description>
 		</method>
 		<method name="export_dynamic_mesh_to_asset">
 			<return type="Error" />
 			<param index="0" name="p_path" type="String" />
-			<description>Export mesh (parent MeshInstance3D or geometry_override if set) to a ResonanceGeometryAsset file. Works in Editor without running the scene. Saves to p_path (.tres) and assigns mesh_asset. Requires a Node3D parent; MeshInstance3D is only needed when geometry_override is unset.
+			<description>
+				Exports the mesh (parent [MeshInstance3D] or [member geometry_override] when set) to a [ResonanceGeometryAsset] at [param p_path] (.tres) and assigns [member mesh_asset]. Works in the editor without running the scene. Requires a [Node3D] parent; [MeshInstance3D] is only required when [member geometry_override] is unset.
+			</description>
+		</method>
+		<method name="refresh_geometry">
+			<description>
+				Recreates Steam Audio meshes from the current mesh source. Prefer [method sync_reflection_debug_viz] when only toggling reflection debug visualization. Use after changing [member material], [member geometry_override], or the parent mesh at runtime.
 			</description>
 		</method>
 		<method name="sync_reflection_debug_viz">
@@ -49,7 +56,7 @@
 		</method>
 		<method name="flush_dynamic_acoustic_transform">
 			<description>
-				For [member dynamic] geometry with an instanced mesh: applies the current transform on the simulation thread path immediately (under [code]simulation_mutex[/code]), clears any queued worker update for this mesh, and marks the scene for commit. Call when an animation or tween finishes (or after killing a tween) so dynamic occlusion and path validation match the final pose—especially when using [member ResonanceRuntimeConfig.dynamic_scene_commit_min_interval] &gt; 0.
+				For [member dynamic] geometry with an instanced mesh: applies the current transform on the simulation thread path immediately (under [code]simulation_mutex[/code]), clears any queued worker update for this mesh, and marks the scene for commit. Call when an animation or tween finishes so dynamic occlusion and path validation match the final pose, especially when [member ResonanceRuntimeConfig.dynamic_scene_commit_min_interval] is greater than 0.
 			</description>
 		</method>
 	</methods>

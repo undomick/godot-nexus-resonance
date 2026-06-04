@@ -43,9 +43,9 @@ class ResonanceReflectionProcessor {
     /// 0 = no cap. Clamp applied IR length (convolution/hybrid/tan) to at most this and effect allocation.
     int convolution_ir_max_samples_ = 0;
     int effect_max_ir_samples_ = 0;
-    /// Cached previous-block air absorption for ramping (avoid 3-band coefficient jumps producing zipper noise).
-    float prev_air_absorption_[3] = {1.0f, 1.0f, 1.0f};
-    bool prev_air_absorption_valid_ = false;
+    /// Last wet air-absorption targets (for IIR reset on bypass); not used for manual block ramping.
+    resonance::AudioBands3 last_air_absorption_{1.0f, 1.0f, 1.0f};
+    bool air_absorption_iir_active_ = false;
 
   public:
     ResonanceReflectionProcessor() = default;
@@ -62,7 +62,7 @@ class ResonanceReflectionProcessor {
     void cleanup();
 
     /// Downmix, ramp `reflections_mix_level` on mono (prev = -1: no ramp on first block), then `wet_extra_gain` (no cross-fade between blocks).
-    /// When `apply_air_absorption` is true, run the mono tap through the air-absorption pre-EQ before Apply; coefficients are ramped block-to-block.
+    /// When `apply_air_absorption` is true, run the mono tap through the air-absorption pre-EQ before Apply (per-block IPL targets).
     /// Returns false if convolution/hybrid IR is null so the caller’s ramp state stays aligned.
     bool process_mix(const IPLAudioBuffer& in_buffer,
                      const IPLReflectionEffectParams& reverb_params,
@@ -71,13 +71,14 @@ class ResonanceReflectionProcessor {
                      float reflections_mix_level,
                      float wet_extra_gain,
                      bool apply_air_absorption,
-                     const float air_absorption[3]);
+                     const resonance::AudioBands3& air_absorption);
 
-    /// Mixer bypass: Apply with `mixer=null`, HOA (or parametric) in `sa_temp_out_buffer` until the next call—caller decodes/routes wet.
+    /// Mixer bypass: Apply with `mixer=null`, HOA (or parametric) in `sa_temp_out_buffer` until the next call.
+    /// Parametric callers typically start `prev_reflections_mix_level` at 0 (ramp from silence); convolution uses `process_mix` with prev=-1.
     bool process_mix_direct(const IPLAudioBuffer& in_buffer, const IPLReflectionEffectParams& reverb_params,
                             float prev_reflections_mix_level, float reflections_mix_level,
                             bool apply_air_absorption,
-                            const float air_absorption[3]);
+                            const resonance::AudioBands3& air_absorption);
     IPLAudioBuffer* get_direct_output_buffer() { return &sa_temp_out_buffer; }
     bool is_parametric() const { return reflection_type == resonance::kReflectionParametric; }
 
@@ -91,8 +92,8 @@ class ResonanceReflectionProcessor {
   private:
     void sanitize_reflection_params(IPLReflectionEffectParams* params) const;
     /// Run the mono tap through the air-absorption pre-EQ in place. No-op if the effect is not initialized.
-    /// Coefficients are ramped from `prev_air_absorption_` to `target` across the block to avoid zipper noise.
-    void apply_air_absorption_in_place(const float target[3]);
+    void apply_air_absorption_in_place(const resonance::AudioBands3& target);
+    IPLAudioEffectState tail_apply(IPLReflectionEffectParams* params, IPLReflectionMixer mixer);
 };
 
 } // namespace godot

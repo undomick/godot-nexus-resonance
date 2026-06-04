@@ -2,6 +2,7 @@
 #include "resonance_constants.h"
 #include "resonance_ipl_guard.h"
 #include "resonance_log.h"
+#include "resonance_reflection_ir_fingerprint.h"
 #include <atomic>
 #include <cmath>
 #include <godot_cpp/classes/dir_access.hpp>
@@ -11,6 +12,7 @@
 #include <godot_cpp/classes/resource_saver.hpp>
 #include <godot_cpp/classes/resource_uid.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
+#include <vector>
 
 using namespace godot;
 
@@ -525,7 +527,7 @@ bool ResonanceBaker::bake_pathing(IPLContext context, IPLScene scene, Ref<Resona
     memcpy(newPba.ptrw(), data, size);
     probe_data_res->set_data(newPba);
 
-    // Persist hash here (matches GDScript `_compute_pathing_hash`) — thread/async may drop return status.
+    // Persist hash here (matches GDScript `_compute_pathing_hash`) - thread/async may drop return status.
     {
         Dictionary d;
         d["vis_range"] = vis_range;
@@ -737,4 +739,81 @@ bool ResonanceBaker::probe_data_remove_baked_data_layer(IPLContext context, Ref<
             "[color=cyan]Nexus Resonance:[/color] Removed baked data layer. Call reload_probe_batch on volumes using this resource.");
     }
     return true;
+}
+
+float ResonanceBaker::probe_data_static_source_interpolated_energy(IPLContext context, Ref<ResonanceProbeData> probe_data_res,
+                                                                   Vector3 endpoint_position, float influence_radius,
+                                                                   Vector3 listener_position, float neighbor_radius_m,
+                                                                   int* out_probes_with_data, int* out_probes_missing) const {
+    if (out_probes_with_data)
+        *out_probes_with_data = 0;
+    if (out_probes_missing)
+        *out_probes_missing = 0;
+    if (!context || probe_data_res.is_null() || probe_data_res->get_data().is_empty())
+        return 0.0f;
+    if (influence_radius <= 0.0f)
+        influence_radius = resonance::kBakerStaticEndpointInfluenceFallback;
+    if (neighbor_radius_m <= 0.0f)
+        neighbor_radius_m = resonance::kStaticSourceProbeNeighborRadiusM;
+
+    IPLProbeBatch batch = _load_probe_batch_from_resource(context, probe_data_res);
+    if (!batch)
+        return 0.0f;
+    IPLScopedRelease<IPLProbeBatch> batch_guard(batch, iplProbeBatchRelease);
+
+    IPLBakedDataIdentifier id{};
+    id.type = IPL_BAKEDDATATYPE_REFLECTIONS;
+    id.variation = IPL_BAKEDDATAVARIATION_STATICSOURCE;
+    id.endpointInfluence.center = ResonanceUtils::to_ipl_vector3(endpoint_position);
+    id.endpointInfluence.radius = influence_radius;
+
+    IPLEnergyFieldSettings ef_settings{};
+    ef_settings.duration = resonance::kBakerSimulatedDuration;
+    ef_settings.order = resonance::clamp_bake_ambisonics_order(resonance::kBakeDefaultAmbisonicsOrder);
+    IPLEnergyField temp_field = nullptr;
+    if (iplEnergyFieldCreate(context, &ef_settings, &temp_field) != IPL_STATUS_SUCCESS)
+        return 0.0f;
+    IPLScopedRelease<IPLEnergyField> field_guard(temp_field, iplEnergyFieldRelease);
+
+    const PackedVector3Array probe_positions = probe_data_res->get_probe_positions();
+    const int32_t batch_probe_count = iplProbeBatchGetNumProbes(batch);
+    const int32_t count = static_cast<int32_t>(std::min(probe_positions.size(), static_cast<int64_t>(batch_probe_count)));
+
+    struct Neighbor {
+        int32_t index;
+        float weight;
+    };
+    std::vector<Neighbor> neighbors;
+    neighbors.reserve(16);
+    float weight_sum = 0.0f;
+    for (int32_t i = 0; i < count; ++i) {
+        const float dist = probe_positions[i].distance_to(listener_position);
+        if (dist > neighbor_radius_m)
+            continue;
+        const float w = 1.0f / std::max(dist, 0.1f);
+        neighbors.push_back({i, w * w});
+        weight_sum += neighbors.back().weight;
+    }
+    if (weight_sum <= 1e-8f || neighbors.empty())
+        return 0.0f;
+
+    double weighted_energy = 0.0;
+    int with_data = 0;
+    int missing = 0;
+    for (const Neighbor& n : neighbors) {
+        iplEnergyFieldReset(temp_field);
+        iplProbeBatchGetEnergyField(batch, &id, n.index, temp_field);
+        const float probe_energy = reflection_energy_field_total(temp_field);
+        if (probe_energy > 1e-9f)
+            with_data++;
+        else
+            missing++;
+        weighted_energy += static_cast<double>(n.weight) * static_cast<double>(probe_energy);
+    }
+    weighted_energy /= static_cast<double>(weight_sum);
+    if (out_probes_with_data)
+        *out_probes_with_data = with_data;
+    if (out_probes_missing)
+        *out_probes_missing = missing;
+    return static_cast<float>(weighted_energy);
 }

@@ -29,6 +29,9 @@ var vol_info: String
 var static_asset = null  # Packed static geometry for the server bake
 
 
+## Bake STATICSOURCE/STATICLISTENER probe influence. Runtime always queries layers with
+## kBakedEndpointRadius (10000 m in C++). Keep bake_influence_radius at default unless you
+## accept probes outside the bake sphere having no static layer at runtime.
 static func _influence_radius(vol: Node, default_influence_radius: float) -> float:
 	return (
 		vol.get("bake_influence_radius")

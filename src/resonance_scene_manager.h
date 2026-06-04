@@ -24,12 +24,12 @@ struct RuntimeSceneState {
     std::vector<IPLStaticMesh>& meshes;
     int& tri_count;
     std::vector<int>& debug_ids;
-    int* global_triangle_count;
+    std::atomic<int>* global_triangle_count;
     std::atomic<bool>* scene_dirty;
     std::vector<IPLScene>& sub_scenes;
     std::vector<IPLInstancedMesh>& instanced_meshes;
 
-    RuntimeSceneState(std::vector<IPLStaticMesh>& m, int& tc, std::vector<int>& di, int* gtc, std::atomic<bool>* sd,
+    RuntimeSceneState(std::vector<IPLStaticMesh>& m, int& tc, std::vector<int>& di, std::atomic<int>* gtc, std::atomic<bool>* sd,
                       std::vector<IPLScene>& ss, std::vector<IPLInstancedMesh>& im)
         : meshes(m), tri_count(tc), debug_ids(di), global_triangle_count(gtc), scene_dirty(sd), sub_scenes(ss), instanced_meshes(im) {}
 };
@@ -51,7 +51,7 @@ class ResonanceSceneManager {
     /// @return true if a new scene handle was installed and the simulator was updated.
     bool load_scene_data(IPLContext ctx, IPLScene* out_scene, IPLSimulator sim,
                          IPLSceneType scene_type, IPLEmbreeDevice embree, IPLRadeonRaysDevice radeon,
-                         const String& filename, int* out_global_triangle_count);
+                         const String& filename, std::atomic<int>* out_global_triangle_count);
 
     void add_static_scene_from_asset(IPLContext ctx, IPLScene scene, const Ref<ResonanceGeometryAsset>& asset,
                                      RayTraceDebugContext* debug_ctx, bool wants_debug_viz, RuntimeSceneState& state,

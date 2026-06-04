@@ -1,18 +1,19 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <class name="ResonanceListener" inherits="Node3D" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../class.xsd">
 	<brief_description>
-		Audio listener for Nexus Resonance. Attach to a Camera3D to drive listener position and orientation.
+		Native audio listener node for Nexus Resonance.
 	</brief_description>
 	<description>
-		Reports listener transform to ResonanceServer each frame.
-		On Windows, pathing is protected by an SEH safety net: if the listener flies through walls (e.g. ghost games, noclip), crashes are caught and pathing skips that frame. No need to set [member listener_valid] for such games.
-		Set [member listener_valid] to false only when you explicitly want to disable pathing (e.g. debug camera in geometry) to save CPU.
+		Reports listener position and orientation to [ResonanceServer] each frame from this node's global transform (forward = -Z, up = Y). Attach as a child of a [Camera3D] so the listener follows the camera.
+		Only the listener under the active viewport camera drives the server; other listeners stay inactive so they do not overwrite the active pose. When no ResonanceListener is in the scene, [ResonanceRuntime] falls back to the active camera transform.
+		Draws reflection debug rays from this node's origin when [member ResonanceRuntimeConfig.realtime_rays] is greater than 0 on [member ResonanceRuntime.runtime] and the player overlay is active on [ResonanceRuntime] ([member ResonanceRuntime.enable_debug] plus the overlay toggle key).
+		On Windows, pathing is protected by an SEH safety net when the listener moves through solid geometry; you do not need to disable [member listener_valid] for those cases.
 	</description>
-	<members>
-		<member name="listener_valid" type="bool" setter="set_listener_valid" getter="is_listener_valid" default="true">
-			When true, path validation runs. When false, pathing is skipped entirely (saves CPU). On Windows, pathing is also crash-protected when listener is unreachable—ghost games work without changing this.
-		</member>
-	</members>
 	<tutorials>
 	</tutorials>
+	<members>
+		<member name="listener_valid" type="bool" setter="set_listener_valid" getter="is_listener_valid" default="true">
+			When true, the server runs path validation for pathing. When false, pathing is skipped entirely (saves CPU). Set to false when you explicitly want to disable pathing, such as a debug camera inside geometry.
+		</member>
+	</members>
 </class>

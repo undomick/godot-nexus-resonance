@@ -19,10 +19,6 @@ func _can_handle(object: Object) -> bool:
 func _parse_begin(object: Object) -> void:
 	if not editor_interface:
 		return
-	if bake_runner:
-		var volumes: Array[Node] = []
-		volumes.append(object)
-		bake_runner.ensure_resonance_server_for_volumes(volumes)
 
 	var base: Control = editor_interface.get_base_control() if editor_interface else null
 
@@ -276,6 +272,9 @@ func _on_bake_pressed(obj: Object) -> void:
 	if bake_runner:
 		var volumes: Array[Node] = []
 		volumes.append(obj)
+		if bake_runner.has_method("ensure_resonance_server_for_volumes"):
+			if not bake_runner.ensure_resonance_server_for_volumes(volumes):
+				return
 		bake_runner.run_bake(volumes)
 	else:
 		ResonanceEditorDialogs.show_warning(

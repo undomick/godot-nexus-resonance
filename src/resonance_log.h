@@ -10,6 +10,12 @@ namespace godot {
 /// Always deferred to the main thread (safe from audio / worker threads).
 void resonance_logger_log(const char* category, const char* message, Dictionary data);
 
+/// Call once from the Godot main thread (e.g. first ResonanceServer::tick).
+void resonance_log_bind_main_thread();
+
+/// Drain lock-free log posts from audio/worker threads; call from main thread only.
+void resonance_log_drain_pending();
+
 class ResonanceLog {
   public:
     enum LogLevel {

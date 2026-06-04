@@ -378,7 +378,7 @@ void ResonanceSceneManager::save_scene_data(IPLContext ctx, IPLScene scene, cons
 
 bool ResonanceSceneManager::load_scene_data(IPLContext ctx, IPLScene* out_scene, IPLSimulator sim,
                                             IPLSceneType scene_type, IPLEmbreeDevice embree, IPLRadeonRaysDevice radeon,
-                                            const String& filename, int* out_global_triangle_count) {
+                                            const String& filename, std::atomic<int>* out_global_triangle_count) {
     const String path = globalize_scene_file_path(filename);
     if (!out_scene) {
         ResonanceLog::error("ResonanceSceneManager: out_scene is null (load_scene_data).");
@@ -439,7 +439,7 @@ bool ResonanceSceneManager::load_scene_data(IPLContext ctx, IPLScene* out_scene,
         iplSimulatorCommit(sim);
         // IPL API does not expose triangle count when loading from serialized file. Use 1 as "scene loaded" marker for is_simulating() (global_triangle_count > 0).
         if (out_global_triangle_count)
-            *out_global_triangle_count = 1;
+            out_global_triangle_count->store(1, std::memory_order_release);
         UtilityFunctions::print_rich("[color=cyan]Nexus Resonance:[/color] Scene loaded successfully from " + path);
         return true;
     }
@@ -453,7 +453,7 @@ bool ResonanceSceneManager::load_scene_data(IPLContext ctx, IPLScene* out_scene,
     iplSimulatorSetScene(sim, *out_scene);
     iplSimulatorCommit(sim);
     if (out_global_triangle_count)
-        *out_global_triangle_count = 0;
+        out_global_triangle_count->store(0, std::memory_order_release);
     return true;
 }
 
@@ -535,7 +535,7 @@ void ResonanceSceneManager::add_static_scene_from_asset(IPLContext ctx, IPLScene
 
     state.tri_count += tri;
     if (tri > 0 && state.global_triangle_count)
-        *state.global_triangle_count += tri;
+        state.global_triangle_count->fetch_add(tri, std::memory_order_release);
     if (state.scene_dirty)
         state.scene_dirty->store(true);
     if (wants_debug_viz && debug_ctx) {
@@ -585,9 +585,10 @@ void ResonanceSceneManager::clear_static_scenes(IPLScene scene, RayTraceDebugCon
     }
     state.sub_scenes.clear();
     if (state.tri_count > 0 && state.global_triangle_count) {
-        *state.global_triangle_count -= state.tri_count;
-        if (*state.global_triangle_count < 0)
-            *state.global_triangle_count = 0;
+        const int sub = state.tri_count;
+        const int prev = state.global_triangle_count->fetch_sub(sub, std::memory_order_release);
+        if (prev < sub)
+            state.global_triangle_count->store(0, std::memory_order_release);
     }
     state.tri_count = 0;
     if (state.scene_dirty)

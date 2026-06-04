@@ -4,7 +4,6 @@ class_name ResonanceBakeServerSetup
 ## Initializes ResonanceServer for editor bakes and surfaces init / config errors.
 
 const ResonanceBakeConfig = preload("res://addons/nexus_resonance/scripts/resonance_bake_config.gd")
-const ResonanceRuntimeScript = preload("res://addons/nexus_resonance/scripts/resonance_runtime.gd")
 const _BakeDiscovery = preload("res://addons/nexus_resonance/editor/resonance_bake_discovery.gd")
 const UIStrings = preload("res://addons/nexus_resonance/scripts/resonance_ui_strings.gd")
 
@@ -83,9 +82,7 @@ func ensure_resonance_server_initialized(volumes: Array[Node]) -> bool:
 	if _runner and _runner.has_method("_get_edited_scene_root"):
 		root = _runner._get_edited_scene_root(volumes)
 
-	var cfg_node := (
-		_BakeDiscovery.find_resonance_runtime(root, ResonanceRuntimeScript) if root else null
-	)
+	var cfg_node := _BakeDiscovery.find_resonance_runtime(root) if root else null
 	var config := _runtime_config_from_node(cfg_node)
 	if config.is_empty():
 		var data := {"error": true}

@@ -60,7 +60,9 @@ var fmod_handle = bridge.add_fmod_source(handle)
 
 ## ResonanceFmodEventEmitter
 
-A helper script `resonance_fmod_event_emitter.gd` can be attached as a child of `FmodEventEmitter3D`. It creates a Resonance source and registers it with the bridge. You must still pass the returned FMOD handle to the event's Steam Audio Spatializer "Simulation Outputs Handle" parameter via FMOD API when available.
+Add a **ResonanceFmodEventEmitter** node (GDExtension, under **Node3D** in Create Node) as a child of `FmodEventEmitter3D`. It creates a Resonance source and registers it with the bridge when `auto_play` is on and `ResonanceRuntime.fmod_bridge_enabled` is set. Position is synced each frame via `ResonanceServer.update_source`.
+
+You must still pass the returned FMOD handle to the event's Steam Audio Spatializer "Simulation Outputs Handle" parameter via FMOD API when available (not wired in the emitter yet).
 
 ## Cooperation with fmod-gdextension
 

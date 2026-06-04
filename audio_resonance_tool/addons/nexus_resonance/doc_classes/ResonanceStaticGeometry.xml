@@ -4,8 +4,9 @@
 		Static acoustic geometry for walls, floors, and other non-moving objects.
 	</brief_description>
 	<description>
-		ResonanceStaticGeometry is a subclass of [ResonanceGeometry] for static geometry. It is included in the baked static scene export (Tools → Nexus Resonance → Export Static Scene). At runtime, the static scene is loaded from [ResonanceStaticScene]; individual static geometry nodes do not add themselves when a valid asset is present.
-		Use for walls, floors, ceilings, and other objects that never move. For moving objects (doors, platforms), use [ResonanceDynamicGeometry] instead.
+		Subclass of [ResonanceGeometry] with [member dynamic] fixed to false. Included in the baked static scene export (Project -> Tools -> Nexus Resonance -> Export Active Scene). At runtime, geometry comes from [ResonanceStaticScene] when a valid static scene asset is loaded; individual static geometry nodes do not register themselves in that case.
+		Use for walls, floors, ceilings, and other objects that never move. For doors, platforms, and other animated objects, use [ResonanceDynamicGeometry] instead.
+		Inspector note: [member dynamic] and [member mesh_asset] are hidden on this type. [member export_all_children] is available for subtree export.
 	</description>
 	<tutorials>
 	</tutorials>

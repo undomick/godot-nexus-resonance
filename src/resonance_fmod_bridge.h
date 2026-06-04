@@ -7,10 +7,7 @@
 
 namespace godot {
 
-/// Optional bridge between Nexus Resonance (Steam Audio) and FMOD Studio.
-/// Dynamically loads the Steam Audio FMOD plugin (phonon_fmod.dll/so/dylib)
-/// and calls iplFMODInitialize, iplFMODSetHRTF, etc. with ResonanceServer's state.
-/// No FMOD SDK dependency when disabled; fails gracefully if plugin not found.
+// Steam Audio FMOD plugin loader; wires ResonanceServer context into phonon_fmod.
 class ResonanceFMODBridge : public Object {
     GDCLASS(ResonanceFMODBridge, Object)
 
@@ -21,22 +18,11 @@ class ResonanceFMODBridge : public Object {
     ResonanceFMODBridge(const ResonanceFMODBridge&) = delete;
     ResonanceFMODBridge(ResonanceFMODBridge&&) = delete;
 
-    /// Initialize the FMOD bridge: load plugin DLL and call iplFMODInitialize etc.
-    /// Requires ResonanceServer to be initialized. Returns true on success.
     bool init_bridge();
-
-    /// Shutdown: call iplFMODTerminate and unload plugin.
     void shutdown_bridge();
-
-    /// Whether the bridge is currently initialized and the plugin is loaded.
     bool is_bridge_loaded() const { return plugin_handle_ != nullptr; }
 
-    /// Add an IPLSource for an FMOD 3D event.
-    /// Returns handle (>= 0) for IPL_SPATIALIZE_SIMULATION_OUTPUTS_HANDLE, or -1 on failure.
-    /// Use ResonanceServer.create_source_handle for the source, then pass via add_fmod_source.
     int32_t add_fmod_source(int32_t resonance_source_handle);
-
-    /// Remove an FMOD source. Call when the FMOD event stops.
     void remove_fmod_source(int32_t fmod_handle);
 
   private:

@@ -34,7 +34,7 @@ void ResonanceListener::_process(double delta) {
     Camera3D* cam = vp ? vp->get_camera_3d() : nullptr;
     const bool drives_server = cam && cam->is_ancestor_of(this);
     if (!drives_server) {
-        // Do not call update_listener when inactive — it would overwrite the active listener pose
+        // Do not call update_listener when inactive - it would overwrite the active listener pose
         // (camera-driven fallback in ResonanceRuntime, or another listener under the active camera).
         // Clear validity so pathing does not run against stale pending_listener_valid state.
         server->set_listener_valid(false);

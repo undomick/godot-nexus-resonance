@@ -1,12 +1,102 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <class name="ResonanceRuntime" inherits="Node" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../class.xsd">
 	<brief_description>
-		Scene node that initializes [ResonanceServer], applies [ResonanceRuntimeConfig], and ticks the Steam Audio simulation.
+		Native runtime orchestrator for Nexus Resonance.
 	</brief_description>
 	<description>
-		Add one ResonanceRuntime to your scene and assign a [ResonanceRuntimeConfig]. It initializes the native server in play mode, sets bake params, and calls [method ResonanceServer.tick] each frame.
-		[b]Static geometry:[/b] Every [ResonanceStaticScene] under the scene tree root with a valid [member ResonanceStaticScene.static_scene_asset] is loaded additively when the server exposes [code]clear_static_scenes[/code] and [code]add_static_scene_from_asset[/code]. After [method ResonanceServer.reinit_audio_engine] (for example after [ResonanceRuntimeConfig] frame size or reflection type changes while the game runs), the same multi-scene reload runs so occlusion, transmission, and pathing still see the full combined static mesh.
+		Runtime node that initializes [ResonanceServer], applies a [url=#ResonanceRuntimeConfig]ResonanceRuntimeConfig[/url], drives the listener-centric Steam Audio tick, and owns the optional debug overlays. Engine init uses [method get_config_dict]. Bus wiring, the reverb activator and the FMOD/Coda bridges are GDScript helpers driven from this node. Use one ResonanceRuntime per running game.
 	</description>
 	<tutorials>
 	</tutorials>
+	<methods>
+		<method name="apply_bus_to_players">
+			<description>
+				Re-applies the effective bus routing to all [ResonancePlayer] nodes that follow the global default. Call after changing bus names on the [member runtime] config at runtime.
+			</description>
+		</method>
+		<method name="get_bus_effective" qualifiers="const">
+			<return type="StringName" />
+			<description>
+				Effective Godot bus for the direct and pathing (player) output. Falls back to Master when the config has no bus set.
+			</description>
+		</method>
+		<method name="get_coda_bridge" qualifiers="const">
+			<return type="RefCounted" />
+			<description>
+				Returns the active Coda bridge helper, or null when [member coda_bridge_enabled] is off or no Coda autoload was found at init.
+			</description>
+		</method>
+		<method name="get_config_dict" qualifiers="const">
+			<return type="Dictionary" />
+			<description>
+				Returns the config dict passed to [method ResonanceServer.init_audio_engine]: [method ResonanceRuntimeConfig.get_config] merged with runtime-only fields ([member context_simd_level], [member context_validation], and the player-ray [code]debug_occlusion[/code] flag).
+			</description>
+		</method>
+		<method name="get_fmod_bridge" qualifiers="const">
+			<return type="RefCounted" />
+			<description>
+				Returns the active FMOD bridge helper, or null when [member fmod_bridge_enabled] is off. [ResonanceFmodEventEmitter] nodes use this to feed Steam Audio.
+			</description>
+		</method>
+		<method name="get_frame_timings" qualifiers="const">
+			<return type="Dictionary" />
+			<description>
+				Per-frame timing snapshot of the main-thread tick (last tick, activator and reinit microseconds). Detailed per-phase entries are only filled when [member performance_custom_monitors] is Full.
+			</description>
+		</method>
+		<method name="get_reverb_bus_name" qualifiers="const">
+			<return type="StringName" />
+			<description>
+				Effective bus name that hosts the reverb effect and the activator. Falls back to ResonanceReverb when the config has no name set.
+			</description>
+		</method>
+		<method name="get_reverb_bus_send" qualifiers="const">
+			<return type="StringName" />
+			<description>
+				Target bus the reverb bus sends to (same as [method get_bus_effective]).
+			</description>
+		</method>
+		<method name="refresh_player_bus_routing">
+			<description>
+				Recomputes and re-applies bus routing for the reverb bus and all players. Call after changing bus configuration at runtime.
+			</description>
+		</method>
+		<method name="request_static_scene_reload">
+			<description>
+				Queues a deferred reload of all [ResonanceStaticScene] geometry under this node into the server. Use after changing static geometry at runtime.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="runtime" type="ResonanceRuntimeConfig" setter="set_runtime" getter="get_runtime">
+			[url=#ResonanceRuntimeConfig]ResonanceRuntimeConfig[/url] resource for Steam Audio simulation and Godot bus names. Engine init reads it through [method get_config_dict]. If empty, a default config is created at runtime.
+		</member>
+		<member name="fmod_bridge_enabled" type="bool" setter="set_fmod_bridge_enabled" getter="is_fmod_bridge_enabled" default="false">
+			Creates the FMOD bridge helper at init so [ResonanceFmodEventEmitter] nodes can feed Steam Audio. Requires the FMOD Godot integration; see docs/FMOD_BRIDGE.md.
+		</member>
+		<member name="coda_bridge_enabled" type="bool" setter="set_coda_bridge_enabled" getter="is_coda_bridge_enabled" default="false">
+			Creates the Coda bridge helper at init so [ResonanceCodaEventEmitter] nodes sync spatial audio. Requires a CodaRuntime autoload named Coda.
+		</member>
+		<member name="context_simd_level" type="int" setter="set_context_simd_level" getter="get_context_simd_level" default="-1">
+			SIMD instruction set for the Steam Audio context: Default, AVX-512, AVX2, AVX, SSE4 or SSE2. Default (-1) lets Steam Audio pick the best level for the CPU. Changing after init may require restarting the audio engine.
+		</member>
+		<member name="context_validation" type="bool" setter="set_context_validation" getter="get_context_validation" default="false">
+			Enables Steam Audio API validation in the context. For debugging API misuse only; adds overhead. Changing after init may require restarting the audio engine.
+		</member>
+		<member name="enable_debug" type="bool" setter="set_enable_debug" getter="is_enable_debug" default="false">
+			Master switch for the runtime debug overlays. When true, the overlay toggle keys work at runtime; when false, keys are ignored and any active overlay is hidden. Keys are always ignored in the editor.
+		</member>
+		<member name="debug_overlay_toggle_key" type="int" setter="set_debug_overlay_toggle_key" getter="get_debug_overlay_toggle_key" default="4194332">
+			Key that toggles the debug overlay (server status, log) while [member enable_debug] is true. Default F1.
+		</member>
+		<member name="performance_overlay_toggle_key" type="int" setter="set_performance_overlay_toggle_key" getter="get_performance_overlay_toggle_key" default="4194333">
+			Key that toggles the performance overlay (FPS, frame time) while [member enable_debug] is true. Default F2.
+		</member>
+		<member name="player_overlay_toggle_key" type="int" setter="set_player_overlay_toggle_key" getter="get_player_overlay_toggle_key" default="4194334">
+			Key that toggles the player overlay (source/occlusion and reflection rays) while [member enable_debug] is true. Default F3.
+		</member>
+		<member name="performance_custom_monitors" type="int" setter="set_performance_custom_monitors" getter="get_performance_custom_monitors" default="2">
+			Custom Performance monitors registered in the Godot debugger: Off, Core, Standard (default) or Full. Full also enables the per-phase frame timings in [method get_frame_timings]. Applies while the game runs; the overlays still require [member enable_debug].
+		</member>
+	</members>
 </class>

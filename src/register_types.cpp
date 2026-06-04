@@ -1,8 +1,10 @@
 #include "register_types.h"
 #include "resonance_ambisonic_player.h"
 #include "resonance_audio_effect.h"
+#include "resonance_coda_event_emitter.h"
 #include "resonance_dynamic_geometry.h"
 #include "resonance_fmod_bridge.h"
+#include "resonance_fmod_event_emitter.h"
 #include "resonance_geometry.h"
 #include "resonance_geometry_asset.h"
 #include "resonance_listener.h"
@@ -10,6 +12,7 @@
 #include "resonance_player.h"
 #include "resonance_probe_data.h"
 #include "resonance_probe_volume.h"
+#include "resonance_runtime.h"
 #include "resonance_server.h"
 #include "resonance_sofa_asset.h"
 #include "resonance_static_geometry.h"
@@ -37,6 +40,8 @@ void initialize_nexus_resonance_module(godot::ModuleInitializationLevel p_level)
         ClassDB::register_class<ResonanceDynamicGeometry>();
         ClassDB::register_class<ResonanceStaticScene>();
         ClassDB::register_class<ResonanceListener>();
+        ClassDB::register_class<ResonanceFmodEventEmitter>();
+        ClassDB::register_class<ResonanceCodaEventEmitter>();
         ClassDB::register_class<ResonanceProbeData>();
 
         // Audio Effect Registration
@@ -57,6 +62,9 @@ void initialize_nexus_resonance_module(godot::ModuleInitializationLevel p_level)
 
         // Probes
         ClassDB::register_class<ResonanceProbeVolume>();
+
+        // Runtime orchestrator (native port of the runtime node)
+        ClassDB::register_class<ResonanceRuntime>();
 
         _resonance_server = memnew(ResonanceServer);
         Engine::get_singleton()->register_singleton("ResonanceServer", ResonanceServer::get_singleton());

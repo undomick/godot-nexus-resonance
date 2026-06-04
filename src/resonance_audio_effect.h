@@ -34,6 +34,9 @@ class ResonanceAudioEffectInstance : public AudioEffectInstance {
 
     void set_effect(const Ref<ResonanceAudioEffect>& p_effect) { effect_ref = p_effect; }
 
+    /// Main-thread IPL setup when ResonanceServer is ready (avoids alloc in first bus _process).
+    bool try_prewarm_processor();
+
     /// Called by ResonanceServer before iplContextRelease (userdata = this).
     static void ipl_context_reinit_cleanup(void* userdata);
 
@@ -49,8 +52,8 @@ class ResonanceAudioEffect : public AudioEffect {
 
   private:
     // Future: Add Binaural Toggle, Gain, etc. here
-    // Default -4 dB to compensate for Convolution IR bass buildup and match Parametric balance
-    float gain_db = -4.0f;
+    // Default -10 dB to keep the reverb bus from routinely clipping on hot IRs at gain_db=0.
+    float gain_db = -10.0f;
 
   public:
     ResonanceAudioEffect();

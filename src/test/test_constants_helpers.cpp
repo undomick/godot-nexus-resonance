@@ -35,3 +35,11 @@ TEST_CASE("ambisonic and path EQ constants match documented values", "[constants
     REQUIRE(kPathEQCoeffMin == Approx(1e-6f));
     REQUIRE(kPathEQCoeffMax == Approx(1.0f));
 }
+
+TEST_CASE("spatial_audio_geometry_gate_allows_output warmup and commit", "[constants]") {
+    REQUIRE_FALSE(spatial_audio_geometry_gate_allows_output(1, 100, true));
+    REQUIRE_FALSE(spatial_audio_geometry_gate_allows_output(0, 100, false));
+    REQUIRE(spatial_audio_geometry_gate_allows_output(0, 0, false));
+    REQUIRE(spatial_audio_geometry_gate_allows_output(0, 100, true));
+    REQUIRE(kSpatialAudioWarmupWorkerPasses > 0);
+}

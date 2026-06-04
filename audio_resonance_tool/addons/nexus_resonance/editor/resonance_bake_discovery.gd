@@ -37,15 +37,13 @@ static func _resolve_nodepath(vol: Node, root: Node, path: NodePath) -> Node:
 	return n
 
 
-static func find_resonance_runtime(node: Node, resonance_runtime_script: GDScript) -> Node:
+static func find_resonance_runtime(node: Node) -> Node:
 	if not node:
 		return null
-	if node.get_script() == resonance_runtime_script:
-		return node
 	if node.is_class("ResonanceRuntime"):
 		return node
 	for c in node.get_children():
-		var found = find_resonance_runtime(c, resonance_runtime_script)
+		var found = find_resonance_runtime(c)
 		if found:
 			return found
 	return null

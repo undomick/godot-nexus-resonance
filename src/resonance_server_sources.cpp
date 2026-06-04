@@ -10,6 +10,51 @@
 
 using namespace godot;
 
+namespace {
+
+void fill_source_coordinate_space(IPLCoordinateSpace3& source, Vector3 pos, Vector3 source_forward, Vector3 source_up) {
+    source.origin = ResonanceUtils::to_ipl_vector3(pos);
+    const Vector3 ahead_n = ResonanceUtils::safe_unit_vector(source_forward, Vector3(0, 0, -1));
+    const Vector3 up_raw = ResonanceUtils::safe_unit_vector(source_up, Vector3(0, 1, 0));
+    const Vector3 right_n = ResonanceUtils::safe_unit_vector(ahead_n.cross(up_raw), Vector3(1, 0, 0));
+    const Vector3 up_n = ResonanceUtils::safe_unit_vector(right_n.cross(ahead_n), Vector3(0, 1, 0));
+    source.ahead = ResonanceUtils::to_ipl_vector3(ahead_n);
+    source.up = ResonanceUtils::to_ipl_vector3(up_n);
+    source.right = ResonanceUtils::to_ipl_vector3(right_n);
+}
+
+// baked_data_variation: -1 realtime, 0 REVERB, 1 STATICSOURCE, 2 STATICLISTENER
+void fill_baked_reflection_identifier(IPLSimulationInputs& inputs, int baked_data_variation, Vector3 baked_endpoint_center,
+                                      float baked_endpoint_radius, float reverb_influence_radius) {
+    if (baked_data_variation == -1) {
+        inputs.baked = IPL_FALSE;
+        inputs.bakedDataIdentifier.type = IPL_BAKEDDATATYPE_REFLECTIONS;
+        inputs.bakedDataIdentifier.variation = IPL_BAKEDDATAVARIATION_REVERB;
+        inputs.bakedDataIdentifier.endpointInfluence.center = {0.0f, 0.0f, 0.0f};
+        inputs.bakedDataIdentifier.endpointInfluence.radius = 0.0f;
+        return;
+    }
+    inputs.baked = IPL_TRUE;
+    inputs.bakedDataIdentifier.type = IPL_BAKEDDATATYPE_REFLECTIONS;
+    if (baked_data_variation == 1) {
+        inputs.bakedDataIdentifier.variation = IPL_BAKEDDATAVARIATION_STATICSOURCE;
+        inputs.bakedDataIdentifier.endpointInfluence.center = ResonanceUtils::to_ipl_vector3(baked_endpoint_center);
+        inputs.bakedDataIdentifier.endpointInfluence.radius =
+            (baked_endpoint_radius > 0.0f) ? baked_endpoint_radius : reverb_influence_radius;
+    } else if (baked_data_variation == 2) {
+        inputs.bakedDataIdentifier.variation = IPL_BAKEDDATAVARIATION_STATICLISTENER;
+        inputs.bakedDataIdentifier.endpointInfluence.center = ResonanceUtils::to_ipl_vector3(baked_endpoint_center);
+        inputs.bakedDataIdentifier.endpointInfluence.radius =
+            (baked_endpoint_radius > 0.0f) ? baked_endpoint_radius : reverb_influence_radius;
+    } else {
+        inputs.bakedDataIdentifier.variation = IPL_BAKEDDATAVARIATION_REVERB;
+        inputs.bakedDataIdentifier.endpointInfluence.center = {0.0f, 0.0f, 0.0f};
+        inputs.bakedDataIdentifier.endpointInfluence.radius = 0.0f;
+    }
+}
+
+} // namespace
+
 // IPL source handles: main-thread create/destroy queue real Add/Remove/Commit on the worker. Updates batch here and flush
 // from ResonanceRuntime; try_update_source can bypass the queue when simulation_mutex is available.
 
@@ -46,6 +91,8 @@ int32_t ResonanceServer::create_source_handle(Vector3 pos, float radius) {
         source_outputs_pathing_[static_cast<size_t>(handle)].store(pathing_enabled ? 1 : 0, std::memory_order_release);
         // Reset listener-probe override to "use global flag" for recycled handle IDs.
         _source_baked_reverb_listener_probe_override_[static_cast<size_t>(handle)].store(-1, std::memory_order_release);
+        last_good_reflection_valid_[static_cast<size_t>(handle)].store(0, std::memory_order_relaxed);
+        reflection_baked_energy_last_[static_cast<size_t>(handle)] = 0.0f;
     }
     {
         std::lock_guard<std::mutex> lock(pending_attach_handles_mutex_);
@@ -54,31 +101,9 @@ int32_t ResonanceServer::create_source_handle(Vector3 pos, float radius) {
     {
         PendingSourceAdd pa{};
         pa.handle = handle;
+        pa.initial = _default_new_source_params();
         pa.initial.position = pos;
         pa.initial.radius = radius;
-        pa.initial.source_forward = Vector3(0, 0, -1);
-        pa.initial.source_up = Vector3(0, 1, 0);
-        pa.initial.directivity_weight = 0.0f;
-        pa.initial.directivity_power = 1.0f;
-        pa.initial.air_absorption_enabled = true;
-        pa.initial.use_sim_distance_attenuation = false;
-        pa.initial.min_distance = 1.0f;
-        pa.initial.path_validation_enabled = false;
-        pa.initial.find_alternate_paths = false;
-        pa.initial.occlusion_samples = resonance::kDefaultOcclusionSamples;
-        pa.initial.num_transmission_rays = max_transmission_surfaces;
-        pa.initial.baked_data_variation = 0;
-        pa.initial.baked_endpoint_center = Vector3(0, 0, 0);
-        pa.initial.baked_endpoint_radius = 0.0f;
-        pa.initial.pathing_probe_batch_handle = -1;
-        pa.initial.reflections_enabled_override = -1;
-        pa.initial.pathing_enabled_override = -1;
-        pa.initial.occlusion_type_override = -1;
-        pa.initial.simulation_occlusion_enabled = true;
-        pa.initial.simulation_transmission_enabled = true;
-        pa.initial.direct_mix_level = 1.0f;
-        pa.initial.reflections_mix_level = 1.0f;
-        pa.initial.pathing_mix_level = 1.0f;
         std::lock_guard<std::mutex> lock(pending_source_lifecycle_mutex_);
         pending_source_adds_.push_back(pa);
     }
@@ -171,158 +196,57 @@ void ResonanceServer::destroy_source_handle(int32_t handle) {
     worker_cv.notify_one();
 }
 
-void ResonanceServer::update_source(int32_t handle, Vector3 pos, float radius,
-                                    Vector3 source_forward, Vector3 source_up,
-                                    float directivity_weight, float directivity_power, bool air_absorption_enabled,
-                                    bool use_sim_distance_attenuation, float min_distance,
-                                    bool path_validation_enabled, bool find_alternate_paths,
-                                    int occlusion_samples, int num_transmission_rays,
-                                    int baked_data_variation, Vector3 baked_endpoint_center, float baked_endpoint_radius,
-                                    int32_t pathing_probe_batch_handle,
-                                    int reflections_enabled_override,
-                                    int pathing_enabled_override,
-                                    int occlusion_type_override,
-                                    bool simulation_occlusion_enabled,
-                                    bool simulation_transmission_enabled,
-                                    float direct_mix_level,
-                                    float reflections_mix_level,
-                                    float pathing_mix_level) {
-    // Default path: coalesce into source_update_batch_; ResonanceRuntime calls flush_pending_source_updates each frame.
-    enqueue_source_update(handle, pos, radius, source_forward, source_up,
-                          directivity_weight, directivity_power, air_absorption_enabled,
-                          use_sim_distance_attenuation, min_distance,
-                          path_validation_enabled, find_alternate_paths,
-                          occlusion_samples, num_transmission_rays,
-                          baked_data_variation, baked_endpoint_center, baked_endpoint_radius,
-                          pathing_probe_batch_handle, reflections_enabled_override, pathing_enabled_override,
-                          occlusion_type_override, simulation_occlusion_enabled, simulation_transmission_enabled,
-                          direct_mix_level, reflections_mix_level, pathing_mix_level);
+void ResonanceServer::update_source(int32_t handle, const SourceUpdateParams& params) {
+    enqueue_source_update(handle, params);
 }
 
-bool ResonanceServer::try_update_source(int32_t handle, Vector3 pos, float radius,
-                                        Vector3 source_forward, Vector3 source_up,
-                                        float directivity_weight, float directivity_power, bool air_absorption_enabled,
-                                        bool use_sim_distance_attenuation, float min_distance,
-                                        bool path_validation_enabled, bool find_alternate_paths,
-                                        int occlusion_samples, int num_transmission_rays,
-                                        int baked_data_variation, Vector3 baked_endpoint_center, float baked_endpoint_radius,
-                                        int32_t pathing_probe_batch_handle,
-                                        int reflections_enabled_override,
-                                        int pathing_enabled_override,
-                                        int occlusion_type_override,
-                                        bool simulation_occlusion_enabled,
-                                        bool simulation_transmission_enabled,
-                                        float direct_mix_level,
-                                        float reflections_mix_level,
-                                        float pathing_mix_level) {
+bool ResonanceServer::try_update_source(int32_t handle, const SourceUpdateParams& params) {
     if (handle < 0)
         return false;
-    // Immediate apply when simulation_mutex is uncontended (avoids batch latency; used from tools/editor paths).
     std::unique_lock<std::mutex> lock(simulation_mutex, std::defer_lock);
     if (!lock.try_lock())
         return false;
     IPLSource src = source_manager.get_source(handle);
     if (!src)
         return false;
-    _update_source_internal(src, handle, pos, radius, source_forward, source_up,
-                            directivity_weight, directivity_power, air_absorption_enabled,
-                            use_sim_distance_attenuation, min_distance,
-                            path_validation_enabled, find_alternate_paths,
-                            occlusion_samples, num_transmission_rays,
-                            baked_data_variation, baked_endpoint_center, baked_endpoint_radius,
-                            pathing_probe_batch_handle, reflections_enabled_override, pathing_enabled_override,
-                            occlusion_type_override, simulation_occlusion_enabled, simulation_transmission_enabled,
-                            direct_mix_level, reflections_mix_level, pathing_mix_level);
+    _update_source_internal(src, handle, params);
     iplSourceRelease(&src);
     return true;
 }
 
-void ResonanceServer::enqueue_source_update(int32_t handle, Vector3 pos, float radius,
-                                            Vector3 source_forward, Vector3 source_up,
-                                            float directivity_weight, float directivity_power, bool air_absorption_enabled,
-                                            bool use_sim_distance_attenuation, float min_distance,
-                                            bool path_validation_enabled, bool find_alternate_paths,
-                                            int occlusion_samples, int num_transmission_rays,
-                                            int baked_data_variation, Vector3 baked_endpoint_center, float baked_endpoint_radius,
-                                            int32_t pathing_probe_batch_handle,
-                                            int reflections_enabled_override,
-                                            int pathing_enabled_override,
-                                            int occlusion_type_override,
-                                            bool simulation_occlusion_enabled,
-                                            bool simulation_transmission_enabled,
-                                            float direct_mix_level,
-                                            float reflections_mix_level,
-                                            float pathing_mix_level) {
+void ResonanceServer::enqueue_source_update(int32_t handle, const SourceUpdateParams& params) {
     if (handle < 0)
         return;
-    PendingSourceUpdate u{};
-    u.position = pos;
-    u.radius = radius;
-    u.source_forward = source_forward;
-    u.source_up = source_up;
-    u.directivity_weight = directivity_weight;
-    u.directivity_power = directivity_power;
-    u.air_absorption_enabled = air_absorption_enabled;
-    u.use_sim_distance_attenuation = use_sim_distance_attenuation;
-    u.min_distance = min_distance;
-    u.path_validation_enabled = path_validation_enabled;
-    u.find_alternate_paths = find_alternate_paths;
-    u.occlusion_samples = occlusion_samples;
-    u.num_transmission_rays = num_transmission_rays;
-    u.baked_data_variation = baked_data_variation;
-    u.baked_endpoint_center = baked_endpoint_center;
-    u.baked_endpoint_radius = baked_endpoint_radius;
-    u.pathing_probe_batch_handle = pathing_probe_batch_handle;
-    u.reflections_enabled_override = reflections_enabled_override;
-    u.pathing_enabled_override = pathing_enabled_override;
-    u.occlusion_type_override = occlusion_type_override;
-    u.simulation_occlusion_enabled = simulation_occlusion_enabled;
-    u.simulation_transmission_enabled = simulation_transmission_enabled;
-    u.direct_mix_level = direct_mix_level;
-    u.reflections_mix_level = reflections_mix_level;
-    u.pathing_mix_level = pathing_mix_level;
     std::lock_guard<std::mutex> lock(source_update_batch_mutex_);
-    source_update_batch_[handle] = u;
+    source_update_batch_[handle] = params;
 }
 
 void ResonanceServer::flush_pending_source_updates() {
-    // If the worker holds simulation_mutex, put the batch back (merge) and retry next frame—never block the main thread.
-    std::vector<std::pair<int32_t, PendingSourceUpdate>> batch;
+    // If the worker holds simulation_mutex, merge back only handles not updated while flushing - never block main.
+    std::vector<std::pair<int32_t, SourceUpdateParams>> batch;
     {
         std::lock_guard<std::mutex> lock(source_update_batch_mutex_);
         if (source_update_batch_.empty())
             return;
         batch.reserve(source_update_batch_.size());
-        for (const auto& kv : source_update_batch_) {
+        for (const auto& kv : source_update_batch_)
             batch.push_back(kv);
-        }
         source_update_batch_.clear();
     }
     std::unique_lock<std::mutex> sim_lock(simulation_mutex, std::defer_lock);
     if (!sim_lock.try_lock()) {
         std::lock_guard<std::mutex> lock(source_update_batch_mutex_);
         for (const auto& kv : batch) {
-            if (source_update_batch_.find(kv.first) == source_update_batch_.end()) {
+            if (source_update_batch_.find(kv.first) == source_update_batch_.end())
                 source_update_batch_.emplace(kv.first, kv.second);
-            }
         }
         return;
     }
     for (const auto& kv : batch) {
-        const int32_t handle = kv.first;
-        const PendingSourceUpdate& u = kv.second;
-        IPLSource src = source_manager.get_source(handle);
+        IPLSource src = source_manager.get_source(kv.first);
         if (!src)
             continue;
-        _update_source_internal(src, handle, u.position, u.radius, u.source_forward, u.source_up,
-                                u.directivity_weight, u.directivity_power, u.air_absorption_enabled,
-                                u.use_sim_distance_attenuation, u.min_distance,
-                                u.path_validation_enabled, u.find_alternate_paths,
-                                u.occlusion_samples, u.num_transmission_rays,
-                                u.baked_data_variation, u.baked_endpoint_center, u.baked_endpoint_radius,
-                                u.pathing_probe_batch_handle, u.reflections_enabled_override, u.pathing_enabled_override,
-                                u.occlusion_type_override, u.simulation_occlusion_enabled, u.simulation_transmission_enabled,
-                                u.direct_mix_level, u.reflections_mix_level, u.pathing_mix_level);
+        _update_source_internal(src, kv.first, kv.second);
         iplSourceRelease(&src);
     }
 }
@@ -373,13 +297,7 @@ void ResonanceServer::clear_source_attenuation_callback_data(int32_t handle) {
         iplSourceRelease(&src);
         return;
     }
-    const SourceUpdateSnapshot& p = snap_it->second;
-    _update_source_internal(src, handle, p.position, p.radius, p.source_forward, p.source_up, p.directivity_weight, p.directivity_power,
-                            p.air_absorption_enabled, p.use_sim_distance_attenuation, p.min_distance, p.path_validation_enabled, p.find_alternate_paths,
-                            p.occlusion_samples, p.num_transmission_rays, p.baked_data_variation, p.baked_endpoint_center, p.baked_endpoint_radius,
-                            p.pathing_probe_batch_handle, p.reflections_enabled_override, p.pathing_enabled_override,
-                            p.occlusion_type_override, p.simulation_occlusion_enabled, p.simulation_transmission_enabled,
-                            p.direct_mix_level, p.reflections_mix_level, p.pathing_mix_level);
+    _update_source_internal(src, handle, snap_it->second.params);
     iplSourceRelease(&src);
 }
 
@@ -412,97 +330,91 @@ static float IPLCALL distance_attenuation_callback(IPLfloat32 distance, void* us
     return resonance::sanitize_audio_float(1.0f - t);
 }
 
-void ResonanceServer::_update_source_internal(IPLSource src, int32_t handle, Vector3 pos, float radius,
-                                              Vector3 source_forward, Vector3 source_up,
-                                              float directivity_weight, float directivity_power, bool air_absorption_enabled,
-                                              bool use_sim_distance_attenuation, float min_distance,
-                                              bool path_validation_enabled, bool find_alternate_paths,
-                                              int occlusion_samples, int num_transmission_rays,
-                                              int baked_data_variation, Vector3 baked_endpoint_center, float baked_endpoint_radius,
-                                              int32_t pathing_probe_batch_handle,
-                                              int reflections_enabled_override,
-                                              int pathing_enabled_override,
-                                              int occlusion_type_override,
-                                              bool simulation_occlusion_enabled,
-                                              bool simulation_transmission_enabled,
-                                              float direct_mix_level,
-                                              float reflections_mix_level,
-                                              float pathing_mix_level) {
+ResonanceServer::SourceUpdateParams ResonanceServer::_default_new_source_params() const {
+    SourceUpdateParams p;
+    p.occlusion_samples = resonance::kDefaultOcclusionSamples;
+    p.num_transmission_rays = max_transmission_surfaces;
+    return p;
+}
+
+void ResonanceServer::_maybe_apply_baked_reverb_listener_reflection_inputs(IPLSource src, int32_t handle, const IPLSimulationInputs& inputs,
+                                                                           const SourceUpdateParams& params, IPLSimulationFlags sim_flags,
+                                                                           bool enable_reflections) {
+    bool use_listener_probe = baked_reverb_use_listener_probe;
+    if (handle >= 0 && handle < kMaxCacheHandles) {
+        const int8_t ov = _source_baked_reverb_listener_probe_override_[static_cast<size_t>(handle)].load(std::memory_order_acquire);
+        if (ov >= 0)
+            use_listener_probe = (ov != 0);
+    }
+    if (!use_listener_probe || params.baked_data_variation != 0 || !enable_reflections)
+        return;
+    if ((sim_flags & IPL_SIMULATIONFLAGS_REFLECTIONS) == 0)
+        return;
+    if (!pending_listener_valid.load(std::memory_order_acquire))
+        return;
+
+    const IPLCoordinateSpace3 listener_cs = _read_listener_coords_seqlock();
+    IPLSimulationInputs reflections_inputs = inputs;
+    reflections_inputs.flags = static_cast<IPLSimulationFlags>(IPL_SIMULATIONFLAGS_REFLECTIONS);
+    reflections_inputs.source.origin = listener_cs.origin;
+    reflections_inputs.source.ahead = listener_cs.ahead;
+    reflections_inputs.source.up = listener_cs.up;
+    reflections_inputs.source.right = listener_cs.right;
+    iplSourceSetInputs(src, IPL_SIMULATIONFLAGS_REFLECTIONS, &reflections_inputs);
+}
+
+void ResonanceServer::_update_source_internal(IPLSource src, int32_t handle, const SourceUpdateParams& params) {
     if (!src || !_ctx())
         return;
-    SourceUpdateSnapshot& snap = _source_update_snapshot_[handle];
-    snap.position = pos;
-    snap.radius = radius;
-    snap.source_forward = source_forward;
-    snap.source_up = source_up;
-    snap.directivity_weight = directivity_weight;
-    snap.directivity_power = directivity_power;
-    snap.air_absorption_enabled = air_absorption_enabled;
-    snap.use_sim_distance_attenuation = use_sim_distance_attenuation;
-    snap.min_distance = min_distance;
-    snap.path_validation_enabled = path_validation_enabled;
-    snap.find_alternate_paths = find_alternate_paths;
-    snap.occlusion_samples = occlusion_samples;
-    snap.num_transmission_rays = num_transmission_rays;
-    snap.baked_data_variation = baked_data_variation;
-    snap.baked_endpoint_center = baked_endpoint_center;
-    snap.baked_endpoint_radius = baked_endpoint_radius;
-    snap.pathing_probe_batch_handle = pathing_probe_batch_handle;
-    snap.reflections_enabled_override = reflections_enabled_override;
-    snap.pathing_enabled_override = pathing_enabled_override;
-    snap.occlusion_type_override = occlusion_type_override;
-    snap.simulation_occlusion_enabled = simulation_occlusion_enabled;
-    snap.simulation_transmission_enabled = simulation_transmission_enabled;
-    snap.direct_mix_level = direct_mix_level;
-    snap.reflections_mix_level = reflections_mix_level;
-    snap.pathing_mix_level = pathing_mix_level;
+
+    SourceUpdateRecord& snap = _source_update_snapshot_[handle];
+    snap.params = params;
     snap.valid = true;
+
     IPLSimulationInputs inputs{};
-    const float dm = resonance::sanitize_audio_float(direct_mix_level);
-    const float rm = resonance::sanitize_audio_float(reflections_mix_level);
-    const float pm = resonance::sanitize_audio_float(pathing_mix_level);
-    // Per-path mix zeros disable that band for both simulation and audio-thread fetch skip logic.
+    const float dm = resonance::sanitize_audio_float(params.direct_mix_level);
+    const float rm = resonance::sanitize_audio_float(params.reflections_mix_level);
+    const float pm = resonance::sanitize_audio_float(params.pathing_mix_level);
     const bool any_mix = (dm > 0.0f) || (rm > 0.0f) || (pm > 0.0f);
-    bool enable_reflections = (reflections_enabled_override == -1) ? true : (reflections_enabled_override != 0);
+
+    bool enable_reflections = (params.reflections_enabled_override == -1) ? true : (params.reflections_enabled_override != 0);
     enable_reflections = enable_reflections && (rm > 0.0f);
-    if (enable_reflections && baked_data_variation == -1 && realtime_reflection_max_distance_m > 0.0f) {
-        Vector3 lip = ResonanceUtils::to_godot_vector3(get_current_listener_coords().origin);
-        if (pos.distance_to(lip) > static_cast<real_t>(realtime_reflection_max_distance_m))
+    if (enable_reflections && params.baked_data_variation == -1 && realtime_reflection_max_distance_m > 0.0f) {
+        const Vector3 lip = ResonanceUtils::to_godot_vector3(get_current_listener_coords().origin);
+        if (params.position.distance_to(lip) > static_cast<real_t>(realtime_reflection_max_distance_m))
             enable_reflections = false;
     }
-    bool enable_pathing = (pathing_enabled_override == -1) ? pathing_enabled : (pathing_enabled_override != 0);
+
+    bool enable_pathing = (params.pathing_enabled_override == -1) ? pathing_enabled : (params.pathing_enabled_override != 0);
     enable_pathing = enable_pathing && (pm > 0.0f);
+
     IPLSimulationFlags sim_flags = static_cast<IPLSimulationFlags>(0);
     if (any_mix) {
         sim_flags = static_cast<IPLSimulationFlags>(IPL_SIMULATIONFLAGS_DIRECT);
         if (enable_reflections)
             sim_flags = static_cast<IPLSimulationFlags>(sim_flags | IPL_SIMULATIONFLAGS_REFLECTIONS);
     }
+
     IPLDirectSimulationFlags dflags = (IPLDirectSimulationFlags)0;
-    if (simulation_occlusion_enabled)
+    if (params.simulation_occlusion_enabled)
         dflags = (IPLDirectSimulationFlags)(dflags | IPL_DIRECTSIMULATIONFLAGS_OCCLUSION);
-    if (simulation_transmission_enabled)
+    if (params.simulation_transmission_enabled)
         dflags = (IPLDirectSimulationFlags)(dflags | IPL_DIRECTSIMULATIONFLAGS_TRANSMISSION);
     inputs.directFlags = dflags;
-    if (use_sim_distance_attenuation)
+    if (params.use_sim_distance_attenuation)
         inputs.directFlags = (IPLDirectSimulationFlags)(inputs.directFlags | IPL_DIRECTSIMULATIONFLAGS_DISTANCEATTENUATION);
-    if (air_absorption_enabled)
+    if (params.air_absorption_enabled)
         inputs.directFlags = (IPLDirectSimulationFlags)(inputs.directFlags | IPL_DIRECTSIMULATIONFLAGS_AIRABSORPTION);
-    if (directivity_weight != 0.0f || directivity_power != 1.0f)
+    if (params.directivity_weight != 0.0f || params.directivity_power != 1.0f)
         inputs.directFlags = (IPLDirectSimulationFlags)(inputs.directFlags | IPL_DIRECTSIMULATIONFLAGS_DIRECTIVITY);
-    inputs.source.origin = ResonanceUtils::to_ipl_vector3(pos);
-    Vector3 ahead_n = ResonanceUtils::safe_unit_vector(source_forward, Vector3(0, 0, -1));
-    Vector3 up_raw = ResonanceUtils::safe_unit_vector(source_up, Vector3(0, 1, 0));
-    Vector3 right_n = ResonanceUtils::safe_unit_vector(ahead_n.cross(up_raw), Vector3(1, 0, 0));
-    Vector3 up_n = ResonanceUtils::safe_unit_vector(right_n.cross(ahead_n), Vector3(0, 1, 0));
-    inputs.source.ahead = ResonanceUtils::to_ipl_vector3(ahead_n);
-    inputs.source.up = ResonanceUtils::to_ipl_vector3(up_n);
-    inputs.source.right = ResonanceUtils::to_ipl_vector3(right_n);
+
+    fill_source_coordinate_space(inputs.source, params.position, params.source_forward, params.source_up);
     inputs.airAbsorptionModel.type = IPL_AIRABSORPTIONTYPE_DEFAULT;
-    inputs.directivity.dipoleWeight = directivity_weight;
-    inputs.directivity.dipolePower = directivity_power;
+    inputs.directivity.dipoleWeight = params.directivity_weight;
+    inputs.directivity.dipolePower = params.directivity_power;
     inputs.directivity.callback = nullptr;
     inputs.directivity.userData = nullptr;
+
     bool use_callback = false;
     AttenuationCallbackContext* callback_ctx = nullptr;
     {
@@ -519,7 +431,7 @@ void ResonanceServer::_update_source_internal(IPLSource src, int32_t handle, Vec
             }
         }
     }
-    if (use_sim_distance_attenuation) {
+    if (params.use_sim_distance_attenuation) {
         if (use_callback && callback_ctx) {
             inputs.distanceAttenuationModel.type = IPL_DISTANCEATTENUATIONTYPE_CALLBACK;
             inputs.distanceAttenuationModel.minDistance = callback_ctx->data->min_distance;
@@ -528,7 +440,7 @@ void ResonanceServer::_update_source_internal(IPLSource src, int32_t handle, Vec
             inputs.distanceAttenuationModel.dirty = IPL_FALSE;
         } else {
             inputs.distanceAttenuationModel.type = IPL_DISTANCEATTENUATIONTYPE_INVERSEDISTANCE;
-            inputs.distanceAttenuationModel.minDistance = min_distance;
+            inputs.distanceAttenuationModel.minDistance = params.min_distance;
             inputs.distanceAttenuationModel.callback = nullptr;
             inputs.distanceAttenuationModel.userData = nullptr;
         }
@@ -537,42 +449,20 @@ void ResonanceServer::_update_source_internal(IPLSource src, int32_t handle, Vec
         inputs.distanceAttenuationModel.callback = nullptr;
         inputs.distanceAttenuationModel.userData = nullptr;
     }
-    int eff_occlusion_type = occlusion_type;
-    if (occlusion_type_override == 0 || occlusion_type_override == 1)
-        eff_occlusion_type = occlusion_type_override;
-    inputs.occlusionType = (eff_occlusion_type == 0) ? IPL_OCCLUSIONTYPE_RAYCAST : IPL_OCCLUSIONTYPE_VOLUMETRIC;
-    inputs.occlusionRadius = radius;
-    inputs.numOcclusionSamples = CLAMP(occlusion_samples, 1, simulation_settings.maxNumOcclusionSamples);
-    inputs.numTransmissionRays = CLAMP(num_transmission_rays, 1, resonance::kMaxTransmissionRays);
 
-    // Reflections: baked_data_variation -1=Realtime, 0=REVERB, 1=STATICSOURCE, 2=STATICLISTENER
-    if (baked_data_variation == -1) {
-        if (realtime_reflection_log_once_handles_.insert(handle).second) {
-            String src_msg = "Source " + String::num_int64(handle) + " first realtime reflections update (baked=FALSE). Rays: " + String::num_int64(max_rays);
-            UtilityFunctions::print_rich("[color=cyan]Nexus Resonance:[/color] " + src_msg);
-        }
-        inputs.baked = IPL_FALSE;
-        inputs.bakedDataIdentifier.type = IPL_BAKEDDATATYPE_REFLECTIONS;
-        inputs.bakedDataIdentifier.variation = IPL_BAKEDDATAVARIATION_REVERB;
-        inputs.bakedDataIdentifier.endpointInfluence.center = {0.0f, 0.0f, 0.0f};
-        inputs.bakedDataIdentifier.endpointInfluence.radius = 0.0f;
-    } else {
-        inputs.baked = IPL_TRUE;
-        inputs.bakedDataIdentifier.type = IPL_BAKEDDATATYPE_REFLECTIONS;
-        if (baked_data_variation == 1) {
-            inputs.bakedDataIdentifier.variation = IPL_BAKEDDATAVARIATION_STATICSOURCE;
-            inputs.bakedDataIdentifier.endpointInfluence.center = ResonanceUtils::to_ipl_vector3(baked_endpoint_center);
-            inputs.bakedDataIdentifier.endpointInfluence.radius = (baked_endpoint_radius > 0.0f) ? baked_endpoint_radius : reverb_influence_radius;
-        } else if (baked_data_variation == 2) {
-            inputs.bakedDataIdentifier.variation = IPL_BAKEDDATAVARIATION_STATICLISTENER;
-            inputs.bakedDataIdentifier.endpointInfluence.center = ResonanceUtils::to_ipl_vector3(baked_endpoint_center);
-            inputs.bakedDataIdentifier.endpointInfluence.radius = (baked_endpoint_radius > 0.0f) ? baked_endpoint_radius : reverb_influence_radius;
-        } else {
-            inputs.bakedDataIdentifier.variation = IPL_BAKEDDATAVARIATION_REVERB;
-            inputs.bakedDataIdentifier.endpointInfluence.center = {0.0f, 0.0f, 0.0f};
-            inputs.bakedDataIdentifier.endpointInfluence.radius = 0.0f;
-        }
+    int eff_occlusion_type = occlusion_type;
+    if (params.occlusion_type_override == 0 || params.occlusion_type_override == 1)
+        eff_occlusion_type = params.occlusion_type_override;
+    inputs.occlusionType = (eff_occlusion_type == 0) ? IPL_OCCLUSIONTYPE_RAYCAST : IPL_OCCLUSIONTYPE_VOLUMETRIC;
+    inputs.occlusionRadius = params.radius;
+    inputs.numOcclusionSamples = CLAMP(params.occlusion_samples, 1, simulation_settings.maxNumOcclusionSamples);
+    inputs.numTransmissionRays = CLAMP(params.num_transmission_rays, 1, resonance::kMaxTransmissionRays);
+
+    if (params.baked_data_variation == -1 && realtime_reflection_log_once_handles_.insert(handle).second) {
+        const String src_msg = "Source " + String::num_int64(handle) + " first realtime reflections update (baked=FALSE). Rays: " + String::num_int64(max_rays);
+        UtilityFunctions::print_rich("[color=cyan]Nexus Resonance:[/color] " + src_msg);
     }
+    fill_baked_reflection_identifier(inputs, params.baked_data_variation, params.baked_endpoint_center, params.baked_endpoint_radius, reverb_influence_radius);
 
     inputs.reverbScale[0] = 1.0f;
     inputs.reverbScale[1] = 1.0f;
@@ -580,28 +470,26 @@ void ResonanceServer::_update_source_internal(IPLSource src, int32_t handle, Vec
     inputs.hybridReverbTransitionTime = hybrid_reverb_transition_time;
     inputs.hybridReverbOverlapPercent = hybrid_reverb_overlap_percent;
 
-    // Pathing batch must outlive SetInputs until RunPathing finishes; queue release for the worker after the sim tick.
     IPLProbeBatch pathing_batch_retained = nullptr;
     if (enable_pathing && pathing_enabled) {
-        IPLProbeBatch path_batch = _get_pathing_batch_for_source(pathing_probe_batch_handle);
+        IPLProbeBatch path_batch = _get_pathing_batch_for_source(params.pathing_probe_batch_handle);
         if (path_batch) {
             sim_flags = static_cast<IPLSimulationFlags>(sim_flags | IPL_SIMULATIONFLAGS_PATHING);
             inputs.pathingProbes = path_batch;
-            // Pathing spatial order follows ambisonic_order (same as realtime reflection simulation maxOrder / shared order).
             inputs.pathingOrder = ambisonic_order;
             inputs.visRadius = pathing_vis_radius;
             inputs.visThreshold = pathing_vis_threshold;
             inputs.visRange = pathing_vis_range;
-            bool eff_validation = path_validation_enabled;
-            bool eff_alternate = find_alternate_paths;
+            const bool eff_validation = params.path_validation_enabled;
+            bool eff_alternate = params.find_alternate_paths;
             if (!eff_validation)
                 eff_alternate = false;
-
             inputs.enableValidation = eff_validation ? IPL_TRUE : IPL_FALSE;
             inputs.findAlternatePaths = eff_alternate ? IPL_TRUE : IPL_FALSE;
             {
                 std::lock_guard<std::mutex> d_lock(_pathing_deviation_mutex);
-                inputs.deviationModel = (_pathing_deviation_callback_enabled && _pathing_deviation_model.callback) ? &_pathing_deviation_model : nullptr;
+                inputs.deviationModel =
+                    (_pathing_deviation_callback_enabled && _pathing_deviation_model.callback) ? &_pathing_deviation_model : nullptr;
             }
             pathing_batch_retained = path_batch;
         }
@@ -610,36 +498,14 @@ void ResonanceServer::_update_source_internal(IPLSource src, int32_t handle, Vec
 
     if (handle >= 0 && handle < kMaxCacheHandles) {
         source_outputs_reflections_[static_cast<size_t>(handle)].store(enable_reflections ? 1 : 0, std::memory_order_release);
-        source_outputs_realtime_reflections_[static_cast<size_t>(handle)].store((enable_reflections && baked_data_variation == -1) ? 1 : 0, std::memory_order_release);
-        source_outputs_pathing_[static_cast<size_t>(handle)].store(((sim_flags & IPL_SIMULATIONFLAGS_PATHING) != 0) ? 1 : 0, std::memory_order_release);
+        source_outputs_realtime_reflections_[static_cast<size_t>(handle)].store(
+            (enable_reflections && params.baked_data_variation == -1) ? 1 : 0, std::memory_order_release);
+        source_outputs_pathing_[static_cast<size_t>(handle)].store(((sim_flags & IPL_SIMULATIONFLAGS_PATHING) != 0) ? 1 : 0,
+                                                                   std::memory_order_release);
     }
 
     iplSourceSetInputs(src, sim_flags, &inputs);
-
-    // IPL_BAKEDDATAVARIATION_REVERB picks the probe nearest inputs.source.origin in the simulator's reflection lookup.
-    // The bake assumes source==listener (the IR is the listener's room), so feeding the source position picks the
-    // wrong probe whenever the source is in a different room than the listener. The fix is a second SetInputs call
-    // limited to IPL_SIMULATIONFLAGS_REFLECTIONS that overrides only source.{origin,ahead,up,right} with the
-    // listener's coordinate space; the prior DIRECT inputs (occlusion etc., which still want the source position)
-    // remain untouched. Steam Audio explicitly allows split-flag SetInputs calls (see iplSourceSetInputs docs).
-    bool use_listener_probe = baked_reverb_use_listener_probe;
-    if (handle >= 0 && handle < kMaxCacheHandles) {
-        const int8_t ov = _source_baked_reverb_listener_probe_override_[static_cast<size_t>(handle)].load(std::memory_order_acquire);
-        if (ov >= 0)
-            use_listener_probe = (ov != 0);
-    }
-    if (use_listener_probe && baked_data_variation == 0 && enable_reflections &&
-        (sim_flags & IPL_SIMULATIONFLAGS_REFLECTIONS) != 0 &&
-        pending_listener_valid.load(std::memory_order_acquire)) {
-        IPLCoordinateSpace3 listener_cs = _read_listener_coords_seqlock();
-        IPLSimulationInputs reflections_inputs = inputs;
-        reflections_inputs.flags = static_cast<IPLSimulationFlags>(IPL_SIMULATIONFLAGS_REFLECTIONS);
-        reflections_inputs.source.origin = listener_cs.origin;
-        reflections_inputs.source.ahead = listener_cs.ahead;
-        reflections_inputs.source.up = listener_cs.up;
-        reflections_inputs.source.right = listener_cs.right;
-        iplSourceSetInputs(src, IPL_SIMULATIONFLAGS_REFLECTIONS, &reflections_inputs);
-    }
+    _maybe_apply_baked_reverb_listener_reflection_inputs(src, handle, inputs, params, sim_flags, enable_reflections);
 
     if (pathing_batch_retained)
         pathing_probe_batches_pending_release_.push_back(pathing_batch_retained);
@@ -709,16 +575,7 @@ void ResonanceServer::_drain_pending_source_lifecycle_assume_locked() {
         IPLSource src = source_manager.get_source(pa.handle);
         if (!src)
             continue;
-        const PendingSourceUpdate& u = pa.initial;
-        _update_source_internal(src, pa.handle, u.position, u.radius, u.source_forward, u.source_up,
-                                u.directivity_weight, u.directivity_power, u.air_absorption_enabled,
-                                u.use_sim_distance_attenuation, u.min_distance,
-                                u.path_validation_enabled, u.find_alternate_paths,
-                                u.occlusion_samples, u.num_transmission_rays,
-                                u.baked_data_variation, u.baked_endpoint_center, u.baked_endpoint_radius,
-                                u.pathing_probe_batch_handle, u.reflections_enabled_override, u.pathing_enabled_override,
-                                u.occlusion_type_override, u.simulation_occlusion_enabled, u.simulation_transmission_enabled,
-                                u.direct_mix_level, u.reflections_mix_level, u.pathing_mix_level);
+        _update_source_internal(src, pa.handle, pa.initial);
         iplSourceRelease(&src);
     }
 }

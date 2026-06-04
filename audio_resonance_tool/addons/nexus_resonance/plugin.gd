@@ -60,6 +60,7 @@ var export_handler = null  # ResonanceExportHandler
 var steam_audio_export_plugin: EditorExportPlugin = null
 const _tool_submenu_name := "Nexus Resonance"
 var _tool_submenu: PopupMenu = null
+var _gizmo_refresh_pending: bool = false
 
 ## Project settings root: Nexus → Resonance (bundles with other Nexus addons under [nexus]).
 const SETTINGS_PREFIX := "nexus/resonance/"
@@ -171,7 +172,7 @@ func _init_editor_plugin_ui() -> void:
 	var runner_script: Script = load(RESONANCE_BAKE_RUNNER_SCRIPT) as Script
 	if runner_script and export_handler:
 		bake_runner = runner_script.new(get_editor_interface())
-		bake_runner.export_static_callback = export_handler.export_active_scene
+		bake_runner.export_static_callback = export_handler.export_active_scene_sync_for_bake
 
 	var pv_inspector_script: Script = load(RESONANCE_PROBE_VOLUME_INSPECTOR_SCRIPT) as Script
 	if pv_inspector_script and bake_runner:
@@ -271,10 +272,20 @@ func _init_editor_plugin_ui() -> void:
 
 
 func _on_editor_scene_changed_refresh_probe_gizmos(_scene_root: Node) -> void:
+	if _gizmo_refresh_pending:
+		return
+	_gizmo_refresh_pending = true
+	call_deferred("_coalesced_refresh_editor_gizmos")
+
+
+func _coalesced_refresh_editor_gizmos() -> void:
+	_gizmo_refresh_pending = false
+	if not _editor_plugin_ui_active:
+		return
 	if gizmo_instance != null:
-		call_deferred("_refresh_resonance_probe_volume_gizmos_in_edited_scene")
+		_refresh_resonance_probe_volume_gizmos_in_edited_scene()
 	if player_gizmo_instance != null:
-		call_deferred("_refresh_resonance_player_gizmos_in_edited_scene")
+		_refresh_resonance_player_gizmos_in_edited_scene()
 
 
 func _register_probe_volume_gizmo() -> void:
@@ -441,6 +452,7 @@ func _disable_plugin() -> void:
 	# Do not call ResonanceServer.clear_probe_batches() here: it wipes the native registry while
 	# ResonanceProbeVolume nodes still hold stale probe_batch_handle values, corrupting state after
 	# re-enable. Use Project → Tools → Nexus Resonance → Clear Probe Batches when you want that.
+	_detach_reverb_effect()
 	remove_autoload_singleton("ResonanceLogger")
 
 
@@ -834,6 +846,8 @@ func _on_editor_pre_save_animation_audio() -> void:
 		return
 	var root: Node = get_editor_interface().get_edited_scene_root()
 	if root == null:
+		return
+	if not ResonanceAnimationAudioConverter.scene_has_resonance_audio_tracks(root):
 		return
 	var r: Dictionary = ResonanceAnimationAudioConverter.convert_all_animation_players(root)
 	var n: int = int(r.get("tracks_converted", 0))

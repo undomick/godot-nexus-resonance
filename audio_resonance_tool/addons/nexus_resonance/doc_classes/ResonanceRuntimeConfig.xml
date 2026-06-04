@@ -156,9 +156,6 @@
 		<member name="reverb_influence_radius" type="float" default="10000.0">
 			Baked reverb influence radius in meters.
 		</member>
-		<member name="reverb_max_distance" type="float" default="0.0">
-			Extra wet attenuation by distance (meters). [code]0[/code] = off (no extra scale on reflections/pathing wet beyond simulation). When &gt; [code]0[/code], wet gain is full at or below this distance and fades linearly to [code]0[/code] by [code]2 ×[/code] this distance (convolution/TAN mixer feed, parametric/hybrid wet, pathing stereo). Does not replace per-source [member ResonancePlayerConfig.max_distance] for the direct path.
-		</member>
 		<member name="bus" type="StringName" default="Master">
 			Target bus for Direct + Pathing (player output). Empty = Master. Fallback when players use Global bus override.
 		</member>
@@ -170,9 +167,6 @@
 		</member>
 		<member name="apply_occlusion_to_baked_reflections" type="bool" default="false">
 			When on, baked REVERB reflections also scale their wet input by the direct-path occlusion/transmission factor. Default is off: direct-line occlusion cannot distinguish "source around a corner in the same open room" (listener room still excited via openings/diffraction; realtime convolution stays loud) from "source truly sealed away". Turning this on dampens both cases uniformly, making baked REVERB sound less plausible than realtime for the common "around the corner" case. Prefer per-source [code]reflections_type = Realtime[/code] or the STATICSOURCE bake workflow for accurate outdoor-to-indoor reflections. Can be overridden per source via [member ResonancePlayerConfig.apply_occlusion_to_baked_reflections_override] (e.g. enable it just for outdoor thunder / rain sources while indoor sources keep plausible wet feeds). Has no effect on realtime, STATICSOURCE or STATICLISTENER paths.
-		</member>
-		<member name="apply_distance_curve_to_reflections" type="bool" default="true">
-			When on (default), the reflection-effect input gain is multiplied by the per-source 3D distance attenuation factor so baked/realtime reverb fades with distance. Turn this off only for projects that want constant-gain wet feeds (e.g. 2D ambience beds or custom distance handling). Per-source override via [member ResonancePlayerConfig.apply_distance_curve_to_reflections_override] beats this global flag.
 		</member>
 		<member name="reflections_sampling_mode" type="int" default="0">
 			Reflections sampling mode (where baked REVERB chooses its probe from). 0=Listener-centric (probe nearest the listener; recommended), 1=Source-centric (probe nearest the source; legacy behavior). Note: currently this only affects baked REVERB probe lookup. Steam Audio realtime reflections trace rays from the listener in the core API, so this setting does not yet change realtime ray origin. Can be overridden per source via [member ResonancePlayerConfig.reflections_sampling_mode_override].

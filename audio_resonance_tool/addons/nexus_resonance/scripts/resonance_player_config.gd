@@ -1,4 +1,5 @@
 @tool
+@icon("res://addons/nexus_resonance/ui/icons/resonance_config.svg")
 extends Resource
 class_name ResonancePlayerConfig
 
@@ -213,9 +214,6 @@ var reflections_type: int = -1:
 ## Wet occlusion on baked REVERB: Use Global / Off / On (outdoor leak vs indoor beds). See docs/baked-reflections-and-outdoor-sources.md.
 @export_enum("Use Global:-1", "Disabled:0", "Enabled:1")
 var apply_occlusion_to_baked_reflections_override: int = -1
-## Distance curve on reflection wet: Use Global / Off / On (e.g. 2D beds without double distance fade).
-@export_enum("Use Global:-1", "Disabled:0", "Enabled:1")
-var apply_distance_curve_to_reflections_override: int = -1
 ## Baked REVERB probe choice: listener- vs source-centric (Use Global / override). Realtime ray origin unchanged.
 @export_enum("Use Global:-1", "Listener-centric:0", "Source-centric:1")
 var reflections_sampling_mode_override: int = -1
@@ -240,12 +238,15 @@ var _reverb_transmission_amount_input: int = 0
 
 # --- Mix Levels ---
 @export_group("Mix Levels")
+## Scales [member direct_mix_level], [member reflections_mix_level], and [member pathing_mix_level] together.
+## Use for overall source level when the stream has no reliable volume (e.g. AudioStreamSynchronized).
+@export_range(0.0, 10.0, 0.01) var master_mix_level: float = 1.0
 ## Volume of the direct (line-of-sight) sound path. Range 0-10. 1.0 = nominal.
-@export_range(0.0, 10.0, 0.1) var direct_mix_level: float = 1.0
+@export_range(0.0, 10.0, 0.01) var direct_mix_level: float = 1.0
 ## Volume of reflections and reverb. Range 0-10. 1.0 = nominal.
-@export_range(0.0, 10.0, 0.1) var reflections_mix_level: float = 1.0
+@export_range(0.0, 10.0, 0.01) var reflections_mix_level: float = 1.0
 ## Volume of pathing (multi-path propagation). Range 0-10. Requires baked pathing data.
-@export_range(0.0, 10.0, 0.1) var pathing_mix_level: float = 1.0
+@export_range(0.0, 10.0, 0.01) var pathing_mix_level: float = 1.0
 
 # --- Hybrid Reverb ---
 @export_group("Hybrid Reverb")

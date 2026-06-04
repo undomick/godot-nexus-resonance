@@ -50,56 +50,6 @@ inline float baked_reverb_wet_occlusion_factor(float occlusion, float transmissi
     return factor;
 }
 
-/// Inverse-distance wet falloff for baked REVERB (IR has no source-listener distance encoded).
-/// `min_distance_m` is the unity plateau (≤ min: 1.0). Beyond min: `min/dist` (Steam-Audio INVERSE shape).
-/// When `max_distance_m > min_distance_m`: smooth fade to 0 in the last 10% of [min, max], 0 beyond max.
-/// When `max_distance_m <= 0`: pure 1/d (no end-of-range cutoff).
-/// Non-finite `dist_m` (NaN/Inf) returns 0 — safer default than the plateau when something upstream went wrong.
-/// Used for all attenuation modes so wet reflections decay with distance independently of the direct curve.
-inline float reverb_wet_distance_attenuation(float dist_m, float min_distance_m, float max_distance_m) {
-    if (!std::isfinite(dist_m))
-        return 0.0f;
-    const float d = (dist_m > 0.0f) ? dist_m : 0.0f;
-    const float mn = std::fmax(sanitize_audio_float(min_distance_m), 0.0f);
-    const float mx = std::fmax(sanitize_audio_float(max_distance_m), 0.0f);
-    if (d <= mn)
-        return 1.0f;
-    const float effective_d = (d > 1e-6f) ? d : 1e-6f;
-    float att = (mn > 0.0f) ? (mn / effective_d) : (1.0f / effective_d);
-    if (mx > mn) {
-        if (d >= mx)
-            return 0.0f;
-        const float fade_start = mn + 0.9f * (mx - mn);
-        if (d > fade_start) {
-            const float t = (d - fade_start) / (mx - fade_start);
-            const float fade = 1.0f - std::fmin(std::fmax(t, 0.0f), 1.0f);
-            att *= fade;
-        }
-    }
-    if (att <= 0.0f)
-        return 0.0f;
-    if (att >= 1.0f)
-        return 1.0f;
-    return sanitize_audio_float(att);
-}
-
-/// Extra wet falloff from runtime reverb_max_distance (meters). When max_dist_m <= 0: no effect (returns 1).
-/// When dist <= max: 1; linear fade 1..0 from max_dist_m to 2*max_dist_m (used for reflections + pathing wet).
-inline float reverb_wet_falloff_max_distance(float dist_m, float max_dist_m) {
-    if (max_dist_m <= 0.0f || !std::isfinite(dist_m))
-        return 1.0f;
-    if (dist_m <= max_dist_m)
-        return 1.0f;
-    const float span = (max_dist_m > 1.0e-6f) ? max_dist_m : 1.0e-6f;
-    const float t = (dist_m - max_dist_m) / span;
-    const float x = 1.0f - t;
-    if (x <= 0.0f)
-        return sanitize_audio_float(0.0f);
-    if (x >= 1.0f)
-        return sanitize_audio_float(1.0f);
-    return sanitize_audio_float(x);
-}
-
 /// Linear gain ramp across `num_samples` (parameter moves without zipper noise).
 inline void apply_volume_ramp(float start_vol, float end_vol, int num_samples, float* buffer) {
     if (num_samples == 0 || !buffer)

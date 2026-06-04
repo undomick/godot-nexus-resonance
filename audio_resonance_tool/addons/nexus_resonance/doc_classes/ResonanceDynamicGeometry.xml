@@ -4,8 +4,10 @@
 		Dynamic acoustic geometry for doors, moving platforms, and other animated objects.
 	</brief_description>
 	<description>
-		ResonanceDynamicGeometry is a subclass of [ResonanceGeometry] for moving objects. It is excluded from the baked static scene export. The mesh is exported separately via Tools → Nexus Resonance → Export Dynamic Meshes or via the inspector "Export Mesh" button when a ResonanceDynamicGeometry is selected.
-		Assign a [ResonanceGeometryAsset] to [member mesh_asset] when using export (auto-assigned by Export Dynamic Mesh). Enable path validation ([url=#ResonanceRuntimeConfig]ResonanceRuntimeConfig[/url] defaults or per-source **Enabled** in [url=#ResonancePlayerConfig]ResonancePlayerConfig[/url]) when dynamic geometry can block baked paths.
+		Subclass of [ResonanceGeometry] with [member dynamic] fixed to true. Excluded from the baked static scene export. Export the mesh separately via Project -> Tools -> Nexus Resonance -> Export Dynamic Objects In Active Scene, or the inspector Export Mesh button when this node is selected.
+		Assign a [ResonanceGeometryAsset] to [member mesh_asset] after export (auto-assigned by Export Dynamic Mesh). Enable path validation when movers can block baked paths: [member ResonanceRuntimeConfig.path_validation_enabled] on the runtime config, or [member ResonancePlayerConfig.path_validation_override] Enabled per source.
+		Move the geometry node (or its rigid parent chain) as one body; animating only a child transform under the subtree is not supported, matching Steam Audio Dynamic Object rules.
+		Inspector note: [member dynamic] is hidden. [member export_all_children] is hidden because dynamic subtrees are not merged this way.
 	</description>
 	<tutorials>
 	</tutorials>

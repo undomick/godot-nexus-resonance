@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),  
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **ResonanceRuntime (native)** - C++ node replaces `resonance_runtime.gd`; GDScript bus, activator, perf monitors, and config resource unchanged.
+- **ResonanceFmodEventEmitter** / **ResonanceCodaEventEmitter (native)** - Experimental bridge emitters in C++; `resonance_fmod_event_emitter.gd` removed; Coda bridge/sync scripts added.
+- **Reflection IR fingerprint** - Baked-energy / IR helpers plus C++ unit tests (`test_reflection_ir_fingerprint*`, `test_reflection_last_good_ir`).
+- **resonance_server_worker_sim.cpp** - Simulation worker tick split out of other server translation units.
+- **Editor icons** - `resonance_runtime.svg` and `resonance_listener.svg` on nodes; `resonance_config.svg` on **ResonanceRuntimeConfig**, **ResonancePlayerConfig**, and **ResonanceBakeConfig** (`@icon`).
+- **Class reference / tooltips** - Reworked docs for **ResonanceRuntime**, **ResonanceListener**, geometry types, **ResonanceProbeVolume**, **ResonanceProbeData**, **ResonanceBakeConfig**, and FMOD/Coda emitters (wiki synced).
+
+### Changed
+
+- **ResonanceServer** - Refactor across lifecycle, fetch, baking, sources, listener, player, probe volume, and scene manager; worker path in dedicated TU.
+- **ResonanceProbeVolume** - Docs: `bake_probes()` / `bake_probes_with_floor_points()` deprecated (1.0); inspector **Bake** / `ResonanceBakeRunner.run_bake` is the supported pipeline.
+- **Editor bake** - `resonance_editor_job_progress` and `resonance_editor_scene_index` helpers.
+
 ## [0.9.18] - 2026-05-07
 
 ### Added

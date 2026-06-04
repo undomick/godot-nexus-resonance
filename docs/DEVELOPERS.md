@@ -105,10 +105,11 @@ Cursor: Regel `[.cursor/rules/before-push.mdc](.cursor/rules/before-push.mdc)` -
 
 ## CI/CD
 
-- **build.yml** - Builds all platforms on push/PR to main (Linux/Windows/Android on ubuntu, macOS/iOS on macos-latest)
+- **build.yml** - Multi-platform GDExtension binaries on push/PR when **C++ / `.gdextension` / `bin/`** change (not on GDScript-only commits). `workflow_dispatch` always runs. Concurrency cancels superseded runs on the same branch.
 - **release.yml** - Full build + GitHub Release on version tags (`v`*)
-- **tests.yml** - C++unit tests + GDScript GUT tests on push/PR; **clang-format-14** check via `[scripts/check_clang_format.sh](scripts/check_clang_format.sh)` (`--dry-run -Werror` - no in-tree edits, no `git diff` drift). Those `**.sh` files must be committed** with the workflow; if they are missing on GitHub, the format step fails with **exit 127** (script/binary not found). Before pushing C++ changes, run `[scripts/format_cpp.sh](scripts/format_cpp.sh)` (or `CLANG_FORMAT_BIN=…` if your binary is not named `clang-format-14`). **clang-tidy** (first 80 `src` units, `bugprone-`* / `cert-`* / `clang-analyzer-*`) runs with warnings as errors but **excludes** `bugprone-easily-swappable-parameters`, which is too noisy for multi-`float` / multi-`int` engine callbacks.
-- **codeql.yml** - CodeQL security analysis (manual trigger)
+- **tests.yml** - Linux C++ (full gate on `src/**`, lite `template_debug` build when only GDScript changed), Windows C++ only when C++ changed, one Godot job (GUT + headless smokes, single import). Skipped for docs/wiki-only commits. **clang-format-14** via `[scripts/check_clang_format.sh](scripts/check_clang_format.sh)` on C++ changes only. **clang-tidy** (first 80 `src` units) same scope; excludes `bugprone-easily-swappable-parameters`.
+- **gdscript-lint.yml** - `gdformat` / `gdlint` on changed `.gd` files only (workflow `paths` + `dorny/paths-filter`).
+- **codeql.yml** - CodeQL on `src/**` changes (plus manual trigger)
 
 ## Known Limits and Workarounds
 
@@ -166,7 +167,10 @@ All Steam Audio processors (Direct, Reflection, Path, Mixer, Ambisonic) follow a
 | ------------------------- | --------------------------------------------------------------------------------- |
 | Add runtime config option | `resonance_runtime_config.gd`, `resonance_server_config.cpp/h`                    |
 | Add Steam Audio feature   | `resonance_server*.cpp`, `resonance_server.h`, `resonance_player.cpp`, processors |
+| FMOD event emitter node   | `resonance_fmod_event_emitter.cpp/h`, `resonance_fmod_bridge.cpp/h`, `docs/FMOD_BRIDGE.md` |
+| Coda event emitter node   | `resonance_coda_event_emitter.cpp/h`, `resonance_coda_bridge.gd` |
 | Editor UI                 | `plugin.gd`, `editor/resonance_*.gd`                                              |
 | Bake pipeline             | `resonance_baker.cpp`, `editor/resonance_bake_runner.gd`                          |
+| Native node migration     | [docs/adr/001-native-resonance-node-migration.md](adr/001-native-resonance-node-migration.md) |
 
 

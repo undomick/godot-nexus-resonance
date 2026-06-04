@@ -105,6 +105,11 @@ const WARN_EXPORTED_BUT_SAVE_FAILED := "Exported %d mesh(es) but failed to save 
 const WARN_SAVE_SCENE_TO_PERSIST := " - Save scene to persist mesh_asset."
 
 # --- Info (console) ---
+const DIALOG_EXPORT_JOB_TITLE := "Nexus Resonance - Export"
+const INFO_EXPORT_JOB_RUNNING := "Export in progress..."
+const WARN_EXPORT_JOB_ALREADY_RUNNING := (
+	"An export is already running. Wait for it to finish or cancel the progress dialog."
+)
 const INFO_STATIC_UNCHANGED := "Static geometry unchanged (hash match). Skipping export."
 const INFO_STATIC_EXPORTED := "Static scene exported to %s. ResonanceStaticScene updated."
 const INFO_DYNAMIC_EXPORTED := "Dynamic mesh exported to %s"
@@ -163,6 +168,8 @@ const INSPECTOR_PROBE_COUNT_UNKNOWN := "Probes (from data): (initialize server t
 # --- Gizmo (Probe Volume) ---
 const GIZMO_PROBE_VOLUME_CLASS := "ResonanceProbeVolume"
 const ICON_PROBE_VOLUME_GIZMO := "res://addons/nexus_resonance/ui/icons/probe_volume_gizmo.svg"
+const ICON_FMOD_EVENT_EMITTER := "res://addons/nexus_resonance/ui/icons/fmod_emitter_icon.svg"
+const ICON_CODA_EVENT_EMITTER := "res://addons/nexus_resonance/ui/icons/coda_emitter_icon.svg"
 const GIZMO_HANDLE_SIZE_PX := "Size +X"
 const GIZMO_HANDLE_SIZE_PY := "Size +Y"
 const GIZMO_HANDLE_SIZE_PZ := "Size +Z"

@@ -1,10 +1,12 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <class name="ResonanceBakeConfig" inherits="Resource" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../class.xsd">
 	<brief_description>
-		Per-volume bake configuration for Steam Audio probes.
+		Per-volume bake settings for Steam Audio probes.
 	</brief_description>
 	<description>
-		Per-volume bake configuration. Assign from ResonanceProbeVolume as bake_config for reusable presets. Save as .tres for sharing across scenes. Falls back to create_default() when null. Controls reflection type, pathing, static source/listener, and quality (rays, bounces, threads). Pathing visibility params (bake_pathing_vis_range, bake_pathing_radius, bake_pathing_threshold) are used both when baking and at runtime for pathing simulation.
+		GDScript resource assigned to [member ResonanceProbeVolume.bake_config]. Save as .tres for reusable presets. When null on the volume, [method create_default] is used.
+		Controls reflection algorithm, pathing bake, static source/listener passes, and bake quality. [member reflection_type] should match [member ResonanceRuntimeConfig.reflection_type] for playback (BakeConfig has no TrueAudio Next).
+		Pathing visibility fields ([member bake_pathing_vis_range], [member bake_pathing_radius], [member bake_pathing_threshold], etc.) are also read at runtime from the first loaded probe volume with a bake config.
 	</description>
 	<tutorials>
 	</tutorials>
@@ -12,55 +14,55 @@
 		<method name="get_bake_params">
 			<return type="Dictionary" />
 			<description>
-				Returns bake params dictionary for C++ set_bake_params.
+				Returns the bake parameter dictionary passed to the native baker (rays, bounces, pathing ranges, reflection type). Used internally by the bake pipeline.
 			</description>
 		</method>
 		<method name="create_default" qualifiers="static">
 			<return type="ResonanceBakeConfig" />
 			<description>
-				Creates default bake config for volumes without one assigned.
+				Creates a new config with project defaults. Used when [member ResonanceProbeVolume.bake_config] is null.
 			</description>
 		</method>
 	</methods>
 	<members>
 		<member name="reflection_type" type="int" default="2">
-			Reverb algorithm: Convolution (0), Parametric (1), Hybrid (2).
+			Reverb algorithm for the reflection bake: Convolution (0), Parametric (1), Hybrid (2, default). Should match [member ResonanceRuntimeConfig.reflection_type] at runtime.
 		</member>
 		<member name="pathing_enabled" type="bool" default="false">
-			Whether to bake pathing (multi-path propagation).
+			Bakes pathing connectivity between probes. Required when runtime pathing is enabled. When false, pathing sub-properties are read-only in the inspector.
 		</member>
 		<member name="bake_pathing_vis_range" type="float" default="500.0">
-			Pathing visibility range in meters (10–2000). Used at bake and runtime.
+			Maximum distance in meters (10-2000) for mutual probe visibility during pathing bake and runtime pathing. Higher values cost more CPU.
 		</member>
 		<member name="bake_pathing_path_range" type="float" default="100.0">
-			Pathing path range in meters (10–500).
+			Maximum path length in meters (10-500) between probes for pathing bake.
 		</member>
 		<member name="bake_pathing_num_samples" type="int" default="16">
-			Pathing samples (4–128).
+			Visibility samples per probe (4-128) for pathing bake. Higher values are smoother but slower; runtime may use [member ResonanceRuntimeConfig.pathing_num_vis_samples] separately.
 		</member>
 		<member name="bake_pathing_radius" type="float" default="0.5">
-			Pathing probe radius (0.1–2.0). Used at bake and runtime.
+			Probe sphere radius in meters (0.1-2.0) for pathing visibility tests. Used at bake and runtime.
 		</member>
 		<member name="bake_pathing_threshold" type="float" default="0.1">
-			Pathing propagation threshold (0.01–1.0). Used at bake and runtime.
+			Fraction of unoccluded rays required to link probes (0.01-1.0). Lower values admit more paths and increase bake time. Used at bake and runtime.
 		</member>
 		<member name="static_source_enabled" type="bool" default="false">
-			Bake static source from bake_sources node.
+			Bakes Static Source layers from [member ResonanceProbeVolume.bake_sources] on the owning volume (one pass per valid NodePath).
 		</member>
 		<member name="static_listener_enabled" type="bool" default="false">
-			Bake static listener from bake_listeners node.
+			Bakes Static Listener layers from [member ResonanceProbeVolume.bake_listeners] on the owning volume (one pass per valid NodePath).
 		</member>
 		<member name="bake_ambisonics_order" type="int" default="1">
-			Ambisonics order of baked convolution IRs (Steam Audio IPLReflectionsBakeParams.order). Range 1–3: higher order improves spatial detail and increases bake size/time.
+			Ambisonics order (1-3) for baked convolution IRs. Higher order improves spatial detail and increases bake size and time.
 		</member>
 		<member name="bake_num_rays" type="int" default="4096">
-			Reflection rays per probe (256–16384).
+			Reflection rays per probe (256-16384). More rays improve quality and lengthen the bake.
 		</member>
 		<member name="bake_num_bounces" type="int" default="4">
-			Reflection bounces (1–32).
+			Reflection bounces per ray (1-32). More bounces lengthen the reverb tail and the bake.
 		</member>
 		<member name="bake_num_threads" type="int" default="2">
-			Bake threads (1–64).
+			Parallel bake worker threads (1-64). Affects bake duration only; not included in probe outdated hashes.
 		</member>
 	</members>
 </class>

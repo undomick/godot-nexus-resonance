@@ -3,17 +3,34 @@ name: Tests
 on:
   push:
     branches: [main, master]
+    paths:
+      - 'src/**'
+      - 'SConstruct'
+      - 'scripts/**'
+      - 'audio_resonance_tool/**'
+      - '.github/workflows/tests.yml'
+      - '.github/scripts/**'
   pull_request:
     branches: [main, master]
+    paths:
+      - 'src/**'
+      - 'SConstruct'
+      - 'scripts/**'
+      - 'audio_resonance_tool/**'
+      - '.github/workflows/tests.yml'
+      - '.github/scripts/**'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   changes:
     name: Check changes
     runs-on: ubuntu-latest
     outputs:
-      src: ${{ steps.result.outputs.src }}
-      run_gut: ${{ steps.result.outputs.run_gut }}
-      run_smoke: ${{ steps.result.outputs.run_smoke }}
+      cpp: ${{ steps.result.outputs.cpp }}
+      run_godot: ${{ steps.result.outputs.run_godot }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -23,29 +40,36 @@ jobs:
         id: filter
         with:
           filters: |
-            src:
+            cpp:
               - 'src/**'
-              - 'audio_resonance_tool/addons/nexus_resonance/**'
+              - 'SConstruct'
+              - 'scripts/install_steam_audio.py'
+              - 'scripts/check_clang_format.sh'
+              - 'scripts/format_cpp.sh'
+              - 'scripts/strip_compile_commands_for_clang_tidy.py'
+              - '.github/scripts/install_steam_audio_ci.sh'
+              - 'audio_resonance_tool/addons/nexus_resonance/**/*.gdextension'
+              - 'audio_resonance_tool/addons/nexus_resonance/doc_classes/**'
+              - 'audio_resonance_tool/addons/nexus_resonance/bin/**'
             gd:
               - 'audio_resonance_tool/addons/nexus_resonance/**/*.gd'
               - 'audio_resonance_tool/test/**/*.gd'
 
       - id: result
         run: |
-          echo "src=${{ steps.filter.outputs.src }}" >> $GITHUB_OUTPUT
-          if [ "${{ steps.filter.outputs.src }}" = "true" ] || [ "${{ steps.filter.outputs.gd }}" = "true" ]; then
-            echo "run_gut=true" >> $GITHUB_OUTPUT
-            echo "run_smoke=true" >> $GITHUB_OUTPUT
+          echo "cpp=${{ steps.filter.outputs.cpp }}" >> $GITHUB_OUTPUT
+          if [ "${{ steps.filter.outputs.cpp }}" = "true" ] || [ "${{ steps.filter.outputs.gd }}" = "true" ]; then
+            echo "run_godot=true" >> $GITHUB_OUTPUT
           else
-            echo "run_gut=false" >> $GITHUB_OUTPUT
-            echo "run_smoke=false" >> $GITHUB_OUTPUT
+            echo "run_godot=false" >> $GITHUB_OUTPUT
           fi
 
-  cpp-build-test-linux:
-    name: C++ Build & Unit Tests (Linux)
+  cpp-linux:
+    name: C++ (Linux)
     needs: changes
-    if: needs.changes.outputs.src == 'true'
+    if: needs.changes.outputs.cpp == 'true' || needs.changes.outputs.run_godot == 'true'
     runs-on: ubuntu-22.04
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -63,6 +87,7 @@ jobs:
         run: bash .github/scripts/install_steam_audio_ci.sh
 
       - name: Add GCC problem matcher
+        if: needs.changes.outputs.cpp == 'true'
         run: echo "::add-matcher::${{ github.workspace }}/.github/gcc-problem-matcher.json"
 
       - name: Cache SCons build
@@ -83,26 +108,35 @@ jobs:
         run: cp src/lib/steamaudio/lib/linux-x64/libphonon.so audio_resonance_tool/addons/nexus_resonance/bin/linux/
 
       - name: Clang-format check
+        if: needs.changes.outputs.cpp == 'true'
         run: |
-          sudo apt-get update && sudo apt-get install -y clang-format-14
+          sudo apt-get install -y clang-format-14
           bash scripts/check_clang_format.sh
 
       - name: Build C++ extension and tests
+        if: needs.changes.outputs.cpp == 'true'
         env:
           SCONS_CACHE: ${{ github.workspace }}/.scons-cache
         run: scons platform=linux target=editor build_tests=1 compiledb=1 -j$(nproc)
 
+      - name: Build Linux extension (Godot CI only)
+        if: needs.changes.outputs.cpp != 'true'
+        env:
+          SCONS_CACHE: ${{ github.workspace }}/.scons-cache
+        run: scons platform=linux target=template_debug build_tests=0 -j$(nproc)
+
       - name: Run C++ unit tests
+        if: needs.changes.outputs.cpp == 'true'
         run: ./build/tests/nexus_resonance_tests
 
       - name: Clang-Tidy (static analysis)
+        if: needs.changes.outputs.cpp == 'true'
         run: |
           sudo apt-get update -qq && sudo apt-get install -y clang-tidy
           if [ ! -f compile_commands.json ]; then
             echo "compile_commands.json missing (expected from SCons compiledb=1 build)"
             exit 1
           fi
-          # g++ flags such as -fno-gnu-unique break clang-tidy (unknown argument).
           python3 scripts/strip_compile_commands_for_clang_tidy.py compile_commands.json
           CHECKS='-*,bugprone-*,-bugprone-easily-swappable-parameters,cert-*,clang-analyzer-*'
           echo "Clang-tidy (strict): src/handle_manager.cpp src/test/test_ipl_guard.cpp"
@@ -112,6 +146,7 @@ jobs:
           find src -type f \( -name "*.cpp" -o -name "*.h" \) ! -path "*/lib/*" ! -path "*/gen/*" | head -80 | xargs -r clang-tidy -p . -checks="$CHECKS" --warnings-as-errors=* 2>/dev/null || true
 
       - name: Upload bin artifact
+        if: needs.changes.outputs.run_godot == 'true'
         uses: actions/upload-artifact@v5
         with:
           name: nexus_resonance-bin-linux
@@ -120,8 +155,9 @@ jobs:
   cpp-build-test-windows:
     name: C++ Build & Unit Tests (Windows)
     needs: changes
-    if: needs.changes.outputs.src == 'true'
+    if: needs.changes.outputs.cpp == 'true'
     runs-on: windows-latest
+    timeout-minutes: 45
     defaults:
       run:
         shell: bash
@@ -165,12 +201,12 @@ jobs:
       - name: Run C++ unit tests
         run: ./build/tests/nexus_resonance_tests.exe
 
-  gut:
-    name: GDScript Unit Tests
-    needs: [changes, cpp-build-test-linux]
-    if: needs.changes.outputs.run_gut == 'true'
+  godot-linux:
+    name: Godot (GUT + smokes)
+    needs: [changes, cpp-linux]
+    if: needs.changes.outputs.run_godot == 'true'
     runs-on: ubuntu-22.04
-
+    timeout-minutes: 25
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -203,32 +239,6 @@ jobs:
 
       - name: Run GUT tests
         run: godot --headless -d --audio-driver Dummy --path audio_resonance_tool -s addons/gut/gut_cmdln.gd -gdir=res://test/unit -gexit
-        env:
-          GODOT_DISABLE_LEAK_CHECKS: 1
-
-  headless-smoke:
-    name: Headless Smokes (Audio/Animation/Reverb Tail)
-    needs: [changes, cpp-build-test-linux]
-    if: needs.changes.outputs.run_smoke == 'true'
-    runs-on: ubuntu-22.04
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Download bin artifact
-        uses: actions/download-artifact@v5
-        with:
-          name: nexus_resonance-bin-linux
-          path: audio_resonance_tool/addons/nexus_resonance/bin
-
-      - name: Setup Godot 4.6
-        uses: chickensoft-games/setup-godot@v2
-        with:
-          version: "4.6.0"
-          use-dotnet: false
-
-      - name: Import project
-        run: godot --headless --path audio_resonance_tool --import
         env:
           GODOT_DISABLE_LEAK_CHECKS: 1
 

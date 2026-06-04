@@ -1,4 +1,5 @@
 @tool
+@icon("res://addons/nexus_resonance/ui/icons/resonance_config.svg")
 extends Resource
 class_name ResonanceBakeConfig
 

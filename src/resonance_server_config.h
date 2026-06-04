@@ -24,12 +24,9 @@ struct ResonanceServerConfig {
     int max_rays = 4096;
     int max_bounces = 4;
     float reverb_influence_radius = 10000.0f;
-    float reverb_max_distance = 100.0f;
     float reverb_transmission_amount = 1.0f;
     /// If true (default), damp baked REVERB wet by direct-path occlusion×transmission so walls reduce the wet IR (which itself does not encode source/listener geometry). Set false for always-on stylised reverb beds.
     bool apply_occlusion_to_baked_reflections = true;
-    /// If true (default), reflection-effect input scales with per-source distance attenuation; turn off for constant-gain 2D beds.
-    bool apply_distance_curve_to_reflections = true;
     /// If true (default), baked REVERB picks the probe nearest the listener (Steam Audio IPL_BAKEDDATAVARIATION_REVERB assumes source==listener). Disable to fall back to legacy source-position lookup.
     bool baked_reverb_use_listener_probe = true;
 
@@ -50,7 +47,7 @@ struct ResonanceServerConfig {
 
     // HRTF
     float hrtf_volume_db = 0.0f;
-    /// 0=None (IPL_HRTFNORMTYPE_NONE), 1=RMS — applies to embedded default HRTF only; SOFA uses asset norm_type.
+    /// 0=None (IPL_HRTFNORMTYPE_NONE), 1=RMS - applies to embedded default HRTF only; SOFA uses asset norm_type.
     int hrtf_normalization_type = 0;
     Ref<ResonanceSOFAAsset> hrtf_sofa_asset;
     /// HRTF on direct dry path (vs panning) when ResonancePlayerConfig uses global default.

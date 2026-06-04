@@ -52,6 +52,34 @@ ResonanceAudioEffectInstance::~ResonanceAudioEffectInstance() {
     _reset_ipl_mixer_for_context_lifecycle();
 }
 
+bool ResonanceAudioEffectInstance::try_prewarm_processor() {
+    if (initialized_processor)
+        return true;
+    ResonanceServer* srv = ResonanceServer::get_singleton();
+    if (!srv || !srv->is_initialized() || ResonanceServer::ipl_audio_teardown_active())
+        return false;
+
+    const int rt = srv->get_reflection_type();
+    if ((rt == resonance::kReflectionConvolution || rt == resonance::kReflectionTan) &&
+        srv->get_reflection_mixer_handle() == nullptr)
+        return false;
+
+    const int server_frame_size = srv->get_audio_frame_size();
+    ResonanceLog::info("AudioEffect: Initializing MixerProcessor with frame size: " + String::num(server_frame_size));
+    processor.initialize(
+        srv->get_context_handle(),
+        srv->get_sample_rate(),
+        server_frame_size,
+        srv->get_ambisonic_order());
+    if (!processor.is_ready()) {
+        ResonanceLog::error("ResonanceAudioEffect: MixerProcessor initialization failed. Reverb will be silent until init succeeds.");
+        return false;
+    }
+    srv->register_ipl_context_client(this, &ResonanceAudioEffectInstance::ipl_context_reinit_cleanup);
+    initialized_processor = true;
+    return true;
+}
+
 void ResonanceAudioEffectInstance::_process(const void* src_buffer, AudioFrame* dst_buffer, int32_t frame_count) {
     ResonanceServer* srv = ResonanceServer::get_singleton();
 
@@ -64,7 +92,7 @@ void ResonanceAudioEffectInstance::_process(const void* src_buffer, AudioFrame* 
         return;
     }
 
-    // Context exists before reflection mixer is created — passthrough chain only (not an error path).
+    // Context exists before reflection mixer is created - passthrough chain only (not an error path).
     {
         const int rt_init = srv->get_reflection_type();
         if ((rt_init == resonance::kReflectionConvolution || rt_init == resonance::kReflectionTan) &&
@@ -76,24 +104,12 @@ void ResonanceAudioEffectInstance::_process(const void* src_buffer, AudioFrame* 
 
     int server_frame_size = srv->get_audio_frame_size();
 
-    if (!initialized_processor) {
-        ResonanceLog::info("AudioEffect: Initializing MixerProcessor with frame size: " + String::num(server_frame_size));
-        processor.initialize(
-            srv->get_context_handle(),
-            srv->get_sample_rate(),
-            server_frame_size, // Same block size as `IPLReflectionMixer` / server config
-            srv->get_ambisonic_order());
-        if (!processor.is_ready()) {
-            ResonanceLog::error("ResonanceAudioEffect: MixerProcessor initialization failed. Reverb will be silent until init succeeds.");
-            for (int i = 0; i < frame_count; i++) {
-                dst_buffer[i].left = 0.0f;
-                dst_buffer[i].right = 0.0f;
-            }
-            return;
+    if (!initialized_processor && !try_prewarm_processor()) {
+        for (int i = 0; i < frame_count; i++) {
+            dst_buffer[i].left = 0.0f;
+            dst_buffer[i].right = 0.0f;
         }
-        if (ResonanceServer* reg_srv = ResonanceServer::get_singleton())
-            reg_srv->register_ipl_context_client(this, &ResonanceAudioEffectInstance::ipl_context_reinit_cleanup);
-        initialized_processor = true;
+        return;
     }
 
     // Mismatch → possible crackle/overrun; Auto frame size can request reinit.
@@ -103,7 +119,9 @@ void ResonanceAudioEffectInstance::_process(const void* src_buffer, AudioFrame* 
         }
         if (!s_frame_size_mismatch_warned) {
             s_frame_size_mismatch_warned = true;
-            UtilityFunctions::push_warning("Nexus Resonance: Reverb bus frame_count (" + String::num_int64(frame_count) + ") != audio_frame_size (" + String::num_int64(server_frame_size) + "). Set ResonanceRuntimeConfig.audio_frame_size to Auto (0) to derive from Project Settings, or match manually.");
+            ResonanceLog::warn("Reverb bus frame_count (" + String::num_int64(frame_count) + ") != audio_frame_size (" +
+                               String::num_int64(server_frame_size) +
+                               "). Set ResonanceRuntimeConfig.audio_frame_size to Auto (0) to derive from Project Settings, or match manually.");
         }
     }
 
@@ -116,10 +134,10 @@ void ResonanceAudioEffectInstance::_process(const void* src_buffer, AudioFrame* 
         }
         return;
     }
-    // Parametric/Hybrid: no shared mixer (wet per source). Null mixer here: rare ordering/teardown — passthrough only.
+    // Parametric/Hybrid: no shared mixer (wet per source). Null mixer here: rare ordering/teardown - passthrough only.
     if (!mixer) {
         copy_bus_input_to_dst(src_buffer, dst_buffer, frame_count);
-        srv->update_reverb_effect_instrumentation(false, true, frame_count, 0.0f);
+        srv->update_reverb_effect_instrumentation(false, true, frame_count, 0.0f, 0.0f, 0.0f, 0.0f);
         return;
     }
 
@@ -142,10 +160,13 @@ void ResonanceAudioEffectInstance::_process(const void* src_buffer, AudioFrame* 
     srv->record_convolution_reverb_bus_usec(static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::microseconds>(bus_t1 - bus_t0).count()));
 
+    float peak_pre_gain = 0.0f;
+    float rms_pre_gain = 0.0f;
     float peak = 0.0f;
+    float rms_post_gain = 0.0f;
     int32_t frames_written = 0;
     if (success) {
-        // Never `iplReflectionMixerReset` here — would clear state between source Apply and bus Apply (choppy wet).
+        // Never `iplReflectionMixerReset` here - would clear state between source Apply and bus Apply (choppy wet).
         frames_written = frame_count;
 
         float gain = 1.0f;
@@ -153,15 +174,38 @@ void ResonanceAudioEffectInstance::_process(const void* src_buffer, AudioFrame* 
             gain = static_cast<float>(UtilityFunctions::db_to_linear(effect_ref->get_gain_db()));
         }
 
-        // Gain + sanitize + hard clip to [-1, 1].
+        // Pre-gain RMS/peak (decoded wet as written by MixerProcessor; bus input was already copied into dst_buffer).
+        double sum_sq_pre = 0.0;
+        for (int i = 0; i < frame_count; i++) {
+            const float l = resonance::sanitize_audio_float(dst_buffer[i].left);
+            const float r = resonance::sanitize_audio_float(dst_buffer[i].right);
+            const float v = std::max(std::abs(l), std::abs(r));
+            if (v > peak_pre_gain)
+                peak_pre_gain = v;
+            sum_sq_pre += static_cast<double>(l) * static_cast<double>(l);
+            sum_sq_pre += static_cast<double>(r) * static_cast<double>(r);
+        }
+        if (frame_count > 0) {
+            const double mean_sq = sum_sq_pre / static_cast<double>(frame_count * 2);
+            rms_pre_gain = static_cast<float>(std::sqrt(std::max(0.0, mean_sq)));
+        }
+
+        // Gain + sanitize. (No hard clip: Unity-style mixer chains typically clip/limit later in the engine.)
+        double sum_sq_post = 0.0;
         for (int i = 0; i < frame_count; i++) {
             const float left = resonance::sanitize_audio_float(dst_buffer[i].left * gain);
             const float right = resonance::sanitize_audio_float(dst_buffer[i].right * gain);
-            dst_buffer[i].left = std::clamp(left, -1.0f, 1.0f);
-            dst_buffer[i].right = std::clamp(right, -1.0f, 1.0f);
+            dst_buffer[i].left = left;
+            dst_buffer[i].right = right;
             float v = std::max(std::abs(dst_buffer[i].left), std::abs(dst_buffer[i].right));
             if (v > peak)
                 peak = v;
+            sum_sq_post += static_cast<double>(dst_buffer[i].left) * static_cast<double>(dst_buffer[i].left);
+            sum_sq_post += static_cast<double>(dst_buffer[i].right) * static_cast<double>(dst_buffer[i].right);
+        }
+        if (frame_count > 0) {
+            const double mean_sq = sum_sq_post / static_cast<double>(frame_count * 2);
+            rms_post_gain = static_cast<float>(std::sqrt(std::max(0.0, mean_sq)));
         }
     }
 
@@ -186,7 +230,7 @@ void ResonanceAudioEffectInstance::_process(const void* src_buffer, AudioFrame* 
     }
     prev_peak_ = peak;
 
-    srv->update_reverb_effect_instrumentation(false, success, frames_written, peak);
+    srv->update_reverb_effect_instrumentation(false, success, frames_written, peak, rms_post_gain, peak_pre_gain, rms_pre_gain);
 }
 
 ResonanceAudioEffect::ResonanceAudioEffect() { set_name("Resonance Reverb"); } // Audio bus strip label
@@ -195,6 +239,7 @@ Ref<AudioEffectInstance> ResonanceAudioEffect::_instantiate() {
     Ref<ResonanceAudioEffectInstance> ins;
     ins.instantiate();
     ins->set_effect(Ref<ResonanceAudioEffect>(this));
+    ins->try_prewarm_processor();
     return ins;
 }
 

@@ -1,14 +1,13 @@
 #include "resonance_constants.h"
 #include "resonance_math.h"
+#include "resonance_reflection_ir_fingerprint.h"
 #include "resonance_server.h"
 #include "resonance_utils.h"
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
 #include <cstring>
-#include <godot_cpp/classes/engine.hpp>
-#include <godot_cpp/variant/utility_functions.hpp>
-#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -18,13 +17,10 @@ using namespace godot;
 
 namespace {
 
-constexpr int kMaxPathingShCoeffs = 16; // order 3 max: (3+1)^2
-
 // During epoch rollover the visible slot can lag; if IR/param content is still valid, keep mixing instead of going dry.
-static bool reflection_params_still_usable_for_mix(int reflection_type, const IPLReflectionEffectParams& p) {
+bool reflection_params_still_usable_for_mix(int reflection_type, const IPLReflectionEffectParams& p) {
     switch (reflection_type) {
     case resonance::kReflectionConvolution:
-        return p.ir != nullptr;
     case resonance::kReflectionTan:
         return p.ir != nullptr;
     case resonance::kReflectionHybrid:
@@ -36,21 +32,57 @@ static bool reflection_params_still_usable_for_mix(int reflection_type, const IP
     }
 }
 
-bool pathing_copy_sh_coeffs(std::array<float, kMaxPathingShCoeffs>& dst, const float* src, int sh_count) {
-    if (sh_count <= 0 || !src || sh_count > kMaxPathingShCoeffs)
-        return false;
-    std::memcpy(dst.data(), src, static_cast<size_t>(sh_count) * sizeof(float));
-    // Zero unused tail for determinism.
-    for (int i = sh_count; i < kMaxPathingShCoeffs; i++)
-        dst[static_cast<size_t>(i)] = 0.0f;
-    return true;
+IPLReflectionEffectType reflection_effect_type_for_mode(int reflection_type, bool hybrid_convolution_and_parametric) {
+    if (reflection_type == resonance::kReflectionParametric)
+        return IPL_REFLECTIONEFFECTTYPE_PARAMETRIC;
+    if (reflection_type == resonance::kReflectionHybrid) {
+        if (hybrid_convolution_and_parametric)
+            return IPL_REFLECTIONEFFECTTYPE_HYBRID;
+        return IPL_REFLECTIONEFFECTTYPE_PARAMETRIC;
+    }
+    if (reflection_type == resonance::kReflectionTan)
+        return IPL_REFLECTIONEFFECTTYPE_TAN;
+    return IPL_REFLECTIONEFFECTTYPE_CONVOLUTION;
+}
+
+uint32_t bump_slot_epoch(uint32_t& slot_epoch) {
+    uint32_t e = slot_epoch + 1u;
+    slot_epoch = (e == 0u) ? 1u : e;
+    return slot_epoch;
 }
 
 } // namespace
 
+float ResonanceServer::_static_source_interpolated_baked_energy(const SourceUpdateParams& params, const Vector3& listener_pos) const {
+    if (params.baked_data_variation != 1)
+        return 0.0f;
+    IPLContext ctx = _ctx();
+    if (!ctx)
+        return 0.0f;
+    float best = 0.0f;
+    probe_batch_registry_.for_each_probe_data([&](int32_t /*batch_handle*/, const Ref<ResonanceProbeData>& data) {
+        if (!data.is_valid())
+            return;
+        const float e = baker.probe_data_static_source_interpolated_energy(
+            ctx, data, params.baked_endpoint_center, params.baked_endpoint_radius, listener_pos,
+            resonance::kStaticSourceProbeNeighborRadiusM, nullptr, nullptr);
+        if (e > best)
+            best = e;
+    });
+    return best;
+}
+
+bool ResonanceServer::_pathing_copy_sh_coeffs(std::array<float, kMaxPathingSHCoeffs>& dst, const float* src, int sh_count) {
+    if (sh_count <= 0 || !src || sh_count > kMaxPathingSHCoeffs)
+        return false;
+    std::memcpy(dst.data(), src, static_cast<size_t>(sh_count) * sizeof(float));
+    for (int i = sh_count; i < kMaxPathingSHCoeffs; i++)
+        dst[static_cast<size_t>(i)] = 0.0f;
+    return true;
+}
+
 OcclusionData ResonanceServer::get_source_occlusion_data(int32_t handle) {
     OcclusionData result;
-    // Default when cache miss: unoccluded (full LOS / unity attenuation–style neutrals).
     result.occlusion = resonance::kOcclusionFetchDefaultVisible;
     result.transmission[0] = 1.0f;
     result.transmission[1] = 1.0f;
@@ -71,6 +103,46 @@ OcclusionData ResonanceServer::get_source_occlusion_data(int32_t handle) {
     return result;
 }
 
+float ResonanceServer::get_source_occlusion_linear_gain(int32_t handle) {
+    const OcclusionData d = get_source_occlusion_data(handle);
+    const float occlusion = std::clamp(d.occlusion, 0.0f, 1.0f);
+    const float distance_atten = std::max(0.0f, d.distance_attenuation);
+    const float tx_avg = (d.transmission[0] + d.transmission[1] + d.transmission[2]) / 3.0f;
+    constexpr float kMinLinearGain = 0.0001f;
+    return std::max(kMinLinearGain, (1.0f - occlusion) * tx_avg * distance_atten);
+}
+
+Dictionary ResonanceServer::get_source_occlusion_data_dict(int32_t handle) {
+    const OcclusionData d = get_source_occlusion_data(handle);
+    Dictionary out;
+    out["occlusion"] = d.occlusion;
+    PackedFloat32Array tx;
+    tx.resize(3);
+    tx.set(0, d.transmission[0]);
+    tx.set(1, d.transmission[1]);
+    tx.set(2, d.transmission[2]);
+    out["transmission"] = tx;
+    PackedFloat32Array air;
+    air.resize(3);
+    air.set(0, d.air_absorption[0]);
+    air.set(1, d.air_absorption[1]);
+    air.set(2, d.air_absorption[2]);
+    out["air_absorption"] = air;
+    out["directivity"] = d.directivity;
+    out["distance_attenuation"] = d.distance_attenuation;
+    return out;
+}
+
+void ResonanceServer::update_source_position(int32_t handle, Vector3 position, float radius,
+                                             bool use_sim_distance_attenuation, float min_distance) {
+    SourceUpdateParams params = _default_new_source_params();
+    params.position = position;
+    params.radius = radius;
+    params.use_sim_distance_attenuation = use_sim_distance_attenuation;
+    params.min_distance = min_distance;
+    update_source(handle, params);
+}
+
 void ResonanceServer::_set_reverb_params_likely_available_hint(int32_t handle, bool likely) {
     std::lock_guard<std::mutex> lock(reverb_params_likely_available_mutex_);
     reverb_params_likely_available_[handle] = likely;
@@ -89,26 +161,26 @@ bool ResonanceServer::peek_reverb_params_likely_available(int32_t handle) const 
     return it != reverb_params_likely_available_.end() && it->second;
 }
 
+bool ResonanceServer::_source_reflection_fetch_allowed(int32_t handle, bool reflections_have_run) const {
+    if (_uses_parametric_or_hybrid() || reflection_type == resonance::kReflectionTan) {
+        if (max_rays == 0 && !probe_batch_registry_.has_any_batches())
+            return false;
+    }
+    if (_uses_parametric_or_hybrid() && !reflections_have_run)
+        return false;
+    if (_uses_parametric_or_hybrid() && reflections_pending_[static_cast<size_t>(handle)].load(std::memory_order_relaxed))
+        return false;
+    return true;
+}
+
 bool ResonanceServer::fetch_reverb_params(int32_t handle, IPLReflectionEffectParams& out_params) {
     if (handle < 0 || !_ctx() || handle >= kMaxCacheHandles)
         return false;
     if (_is_source_attach_pending(handle))
         return false;
-
-    // Require real data sources for parametric/TAN when rays==0: probes for baked, else deny ambiguous defaults.
-    if (_uses_parametric_or_hybrid() || reflection_type == resonance::kReflectionTan) {
-        if (max_rays == 0) {
-            if (!probe_batch_registry_.has_any_batches())
-                return false;
-        }
-    }
-
-    if (_uses_parametric_or_hybrid() && !reflections_have_run_once_.load(std::memory_order_acquire))
-        return false;
-    if (_uses_parametric_or_hybrid() && reflections_pending_[static_cast<size_t>(handle)].load(std::memory_order_acquire))
+    if (!_source_reflection_fetch_allowed(handle, reflections_have_run_once_.load(std::memory_order_acquire)))
         return false;
 
-    // Lock-free read from worker-filled cache slots (no simulation_mutex).
     bool result = false;
     if (reflection_type == resonance::kReflectionParametric) {
         const int front = reverb_param_cache_front_.load(std::memory_order_acquire);
@@ -188,7 +260,6 @@ bool ResonanceServer::fetch_pathing_params(int32_t handle, IPLPathEffectParams& 
         return false;
     }
 
-    // Lock-free pathing cache read.
     bool result = false;
     const int front = pathing_param_cache_front_.load(std::memory_order_acquire);
     const uint32_t epoch = pathing_param_cache_epoch_[front];
@@ -197,6 +268,7 @@ bool ResonanceServer::fetch_pathing_params(int32_t handle, IPLPathEffectParams& 
         memset(&out_params, 0, sizeof(out_params));
         for (int i = 0; i < resonance::kReverbBandCount; i++)
             out_params.eqCoeffs[i] = e.eqCoeffs[i];
+        // Valid only for this audio callback; mix copies SH into player-local tail storage.
         out_params.shCoeffs = const_cast<float*>(e.shCoeffs.data());
         out_params.order = e.order;
         out_params.binaural = pathing_binaural ? IPL_TRUE : IPL_FALSE;
@@ -210,7 +282,123 @@ bool ResonanceServer::fetch_pathing_params(int32_t handle, IPLPathEffectParams& 
     return result;
 }
 
-// Worker-only (simulation_mutex): pull iplSourceGetOutputs into back buffers, flip cache fronts, refresh reverb hints.
+uint64_t ResonanceServer::_worker_fetch_occlusion_into_back(IPLSource src, int32_t handle, int occ_back) {
+    const auto t0 = std::chrono::steady_clock::now();
+    IPLSimulationOutputs direct_out{};
+    iplSourceGetOutputs(src, IPL_SIMULATIONFLAGS_DIRECT, &direct_out);
+    CachedOcclusionData cd{};
+    cd.data.occlusion = direct_out.direct.occlusion;
+    cd.data.transmission[0] = direct_out.direct.transmission[0];
+    cd.data.transmission[1] = direct_out.direct.transmission[1];
+    cd.data.transmission[2] = direct_out.direct.transmission[2];
+    cd.data.air_absorption[0] = direct_out.direct.airAbsorption[0];
+    cd.data.air_absorption[1] = direct_out.direct.airAbsorption[1];
+    cd.data.air_absorption[2] = direct_out.direct.airAbsorption[2];
+    cd.data.directivity = direct_out.direct.directivity;
+    cd.data.distance_attenuation = direct_out.direct.distanceAttenuation;
+    cd.epoch = occlusion_cache_epoch_[occ_back];
+    occlusion_cache_[static_cast<size_t>(occ_back)][static_cast<size_t>(handle)] = std::move(cd);
+    const auto t1 = std::chrono::steady_clock::now();
+    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count());
+}
+
+bool ResonanceServer::_worker_fetch_reflection_into_back(IPLSource src, int32_t handle, int reverb_back, int refl_back,
+                                                         bool reflections_have_run, uint64_t& out_microseconds) {
+    out_microseconds = 0;
+    if (!_source_reflection_fetch_allowed(handle, reflections_have_run))
+        return false;
+    if (source_outputs_reflections_[static_cast<size_t>(handle)].load(std::memory_order_relaxed) == 0)
+        return false;
+
+    const auto t0 = std::chrono::steady_clock::now();
+    IPLSimulationOutputs outputs{};
+    if (_uses_parametric_or_hybrid())
+        outputs.reflections.type = IPL_REFLECTIONEFFECTTYPE_PARAMETRIC;
+    iplSourceGetOutputs(src, IPL_SIMULATIONFLAGS_REFLECTIONS, &outputs);
+
+    bool has_convolution = (outputs.reflections.ir != nullptr);
+    const bool use_last_good_conv =
+        !has_convolution && reflection_type == resonance::kReflectionConvolution && handle >= 0 && handle < kMaxCacheHandles &&
+        last_good_reflection_valid_[static_cast<size_t>(handle)].load(std::memory_order_relaxed) != 0;
+    bool has_parametric = (outputs.reflections.reverbTimes[0] > 0 || outputs.reflections.reverbTimes[1] > 0 ||
+                           outputs.reflections.reverbTimes[2] > 0);
+    bool has_hybrid = (reflection_type == resonance::kReflectionHybrid &&
+                       (has_convolution || outputs.reflections.reverbTimes[0] > 0));
+    bool has_tan = (reflection_type == resonance::kReflectionTan && outputs.reflections.tanSlot >= 0 && _tan());
+
+    bool refl_hint = false;
+    if (has_convolution || use_last_good_conv || (reflection_type == resonance::kReflectionParametric && has_parametric) || has_hybrid ||
+        has_tan) {
+        IPLReflectionEffectParams out_params = outputs.reflections;
+        if (use_last_good_conv) {
+            out_params = last_good_reflection_params_[static_cast<size_t>(handle)];
+            has_convolution = (out_params.ir != nullptr);
+        }
+        for (int i = 0; i < resonance::kReverbBandCount; i++) {
+            out_params.reverbTimes[i] = resonance::clamp_reverb_time(out_params.reverbTimes[i]);
+            out_params.eq[i] = resonance::sanitize_audio_float(out_params.eq[i]);
+        }
+        out_params.delay = resonance::sanitize_delay_samples(out_params.delay);
+        if (has_convolution && out_params.ir != nullptr) {
+            const int max_ir_samples = 480000;
+            const int max_ir_channels = 64;
+            if (out_params.irSize <= 0 || out_params.irSize > max_ir_samples || out_params.numChannels <= 0 ||
+                out_params.numChannels > max_ir_channels) {
+                if (handle >= 0 && handle < kMaxCacheHandles &&
+                    last_good_reflection_valid_[static_cast<size_t>(handle)].load(std::memory_order_relaxed) != 0) {
+                    out_params = last_good_reflection_params_[static_cast<size_t>(handle)];
+                    has_convolution = (out_params.ir != nullptr);
+                } else {
+                    out_params.ir = nullptr;
+                    has_convolution = false;
+                    has_hybrid = (reflection_type == resonance::kReflectionHybrid && outputs.reflections.reverbTimes[0] > 0);
+                }
+            }
+        }
+        const bool hybrid_conv_and_param = (reflection_type == resonance::kReflectionHybrid && has_convolution && has_parametric);
+        out_params.type = reflection_effect_type_for_mode(reflection_type, hybrid_conv_and_param);
+        if (reflection_type == resonance::kReflectionTan)
+            out_params.tanDevice = _tan();
+
+        uint16_t baked_energy_q16 = 0;
+        if (handle >= 0 && handle < kMaxCacheHandles) {
+            const IPLCoordinateSpace3 listener_cs = _read_listener_coords_seqlock();
+            const Vector3 listener_pos = ResonanceUtils::to_godot_vector3(listener_cs.origin);
+            if (_source_update_snapshot_[static_cast<size_t>(handle)].valid &&
+                _source_update_snapshot_[static_cast<size_t>(handle)].params.baked_data_variation == 1) {
+                const float baked_energy =
+                    _static_source_interpolated_baked_energy(_source_update_snapshot_[static_cast<size_t>(handle)].params, listener_pos);
+                baked_energy_q16 = reflection_baked_energy_to_q16(baked_energy);
+                reflection_baked_energy_last_[static_cast<size_t>(handle)] = baked_energy;
+            }
+        }
+
+        if (reflection_type == resonance::kReflectionParametric && has_parametric) {
+            CachedParametricReverb cr{};
+            for (int i = 0; i < resonance::kReverbBandCount; i++) {
+                cr.reverbTimes[i] = resonance::clamp_reverb_time(outputs.reflections.reverbTimes[i]);
+                cr.eq[i] = outputs.reflections.eq[i];
+            }
+            cr.epoch = reverb_param_cache_epoch_[reverb_back];
+            reverb_param_cache_[static_cast<size_t>(reverb_back)][static_cast<size_t>(handle)] = std::move(cr);
+        }
+        if (_uses_convolution_or_hybrid_or_tan() && (has_convolution || has_hybrid || has_tan)) {
+            CachedReflectionParams rp{};
+            rp.params = out_params;
+            rp.epoch = reflection_param_cache_epoch_[refl_back];
+            reflection_param_cache_[static_cast<size_t>(refl_back)][static_cast<size_t>(handle)] = std::move(rp);
+            if (has_convolution && out_params.ir != nullptr && handle >= 0 && handle < kMaxCacheHandles) {
+                last_good_reflection_params_[static_cast<size_t>(handle)] = out_params;
+                last_good_reflection_valid_[static_cast<size_t>(handle)].store(1, std::memory_order_relaxed);
+            }
+        }
+        refl_hint = true;
+    }
+    const auto t1 = std::chrono::steady_clock::now();
+    out_microseconds = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count());
+    return refl_hint;
+}
+
 void ResonanceServer::_worker_sync_fetch_caches(bool refresh_direct_outputs, bool refresh_reflection_outputs) {
     if (!_ctx() || !simulator)
         return;
@@ -227,35 +415,21 @@ void ResonanceServer::_worker_sync_fetch_caches(bool refresh_direct_outputs, boo
     const int refl_back = 1 - reflection_param_cache_front_.load(std::memory_order_acquire);
     const int path_back = 1 - pathing_param_cache_front_.load(std::memory_order_acquire);
 
-    // Epoch-based invalidation: bump the back-slot epoch instead of clearing O(kMaxCacheHandles) entries.
-    if (refresh_direct_outputs) {
-        uint32_t e = occlusion_cache_epoch_[occ_back] + 1u;
-        occlusion_cache_epoch_[occ_back] = (e == 0u) ? 1u : e;
-    }
-    if (refresh_reflection_outputs && reflection_type == resonance::kReflectionParametric) {
-        uint32_t e = reverb_param_cache_epoch_[reverb_back] + 1u;
-        reverb_param_cache_epoch_[reverb_back] = (e == 0u) ? 1u : e;
-    }
-    if (refresh_reflection_outputs && _uses_convolution_or_hybrid_or_tan()) {
-        uint32_t e = reflection_param_cache_epoch_[refl_back] + 1u;
-        reflection_param_cache_epoch_[refl_back] = (e == 0u) ? 1u : e;
-    }
-    if (pathing_enabled) {
-        uint32_t e = pathing_param_cache_epoch_[path_back] + 1u;
-        pathing_param_cache_epoch_[path_back] = (e == 0u) ? 1u : e;
-    }
-    std::vector<std::pair<int32_t, bool>> reverb_hint_batch;
-    reverb_hint_batch.reserve(handles.size());
-
-    // Snapshot pending flags for this tick (avoid atomic loads inside hot loop).
-    std::array<bool, kMaxCacheHandles> reflections_pending_snapshot{};
-    if (refresh_reflection_outputs && _uses_parametric_or_hybrid()) {
-        for (int i = 0; i < kMaxCacheHandles; i++)
-            reflections_pending_snapshot[static_cast<size_t>(i)] = reflections_pending_[static_cast<size_t>(i)].load(std::memory_order_relaxed);
-    }
-
     const bool pathing_refresh = pathing_enabled && pathing_ran_this_tick.load(std::memory_order_acquire);
     const bool reflections_have_run = reflections_have_run_once_.load(std::memory_order_acquire);
+
+    if (refresh_direct_outputs)
+        bump_slot_epoch(occlusion_cache_epoch_[occ_back]);
+    if (refresh_reflection_outputs && reflection_type == resonance::kReflectionParametric)
+        bump_slot_epoch(reverb_param_cache_epoch_[reverb_back]);
+    if (refresh_reflection_outputs && _uses_convolution_or_hybrid_or_tan())
+        bump_slot_epoch(reflection_param_cache_epoch_[refl_back]);
+    if (pathing_refresh)
+        bump_slot_epoch(pathing_param_cache_epoch_[path_back]);
+
+    std::vector<std::pair<int32_t, bool>> reverb_hint_batch;
+    if (refresh_reflection_outputs)
+        reverb_hint_batch.reserve(handles.size());
 
     for (int32_t handle : handles) {
         if (handle < 0 || handle >= kMaxCacheHandles)
@@ -266,100 +440,18 @@ void ResonanceServer::_worker_sync_fetch_caches(bool refresh_direct_outputs, boo
         if (!src)
             continue;
 
-        if (refresh_direct_outputs) {
-            const auto t0 = std::chrono::steady_clock::now();
-            IPLSimulationOutputs direct_out{};
-            iplSourceGetOutputs(src, IPL_SIMULATIONFLAGS_DIRECT, &direct_out);
-            CachedOcclusionData cd{};
-            cd.data.occlusion = direct_out.direct.occlusion;
-            cd.data.transmission[0] = direct_out.direct.transmission[0];
-            cd.data.transmission[1] = direct_out.direct.transmission[1];
-            cd.data.transmission[2] = direct_out.direct.transmission[2];
-            cd.data.air_absorption[0] = direct_out.direct.airAbsorption[0];
-            cd.data.air_absorption[1] = direct_out.direct.airAbsorption[1];
-            cd.data.air_absorption[2] = direct_out.direct.airAbsorption[2];
-            cd.data.directivity = direct_out.direct.directivity;
-            cd.data.distance_attenuation = direct_out.direct.distanceAttenuation;
-            cd.epoch = occlusion_cache_epoch_[occ_back];
-            occlusion_cache_[static_cast<size_t>(occ_back)][static_cast<size_t>(handle)] = std::move(cd);
-            const auto t1 = std::chrono::steady_clock::now();
-            us_occ += static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count());
-        }
+        if (refresh_direct_outputs)
+            us_occ += _worker_fetch_occlusion_into_back(src, handle, occ_back);
 
-        bool allow_reverb_fetch = true;
-        if (_uses_parametric_or_hybrid() || reflection_type == resonance::kReflectionTan) {
-            if (max_rays == 0 && !probe_batch_registry_.has_any_batches())
-                allow_reverb_fetch = false;
-        }
-        if (allow_reverb_fetch && _uses_parametric_or_hybrid() && !reflections_have_run)
-            allow_reverb_fetch = false;
-        if (allow_reverb_fetch && _uses_parametric_or_hybrid() && reflections_pending_snapshot[static_cast<size_t>(handle)])
-            allow_reverb_fetch = false;
-
-        bool source_refl_sim = true;
-        source_refl_sim = (source_outputs_reflections_[static_cast<size_t>(handle)].load(std::memory_order_relaxed) != 0);
-
-        if (refresh_reflection_outputs && allow_reverb_fetch && source_refl_sim) {
-            const auto t0 = std::chrono::steady_clock::now();
-            IPLSimulationOutputs outputs{};
-            if (_uses_parametric_or_hybrid()) {
-                outputs.reflections.type = IPL_REFLECTIONEFFECTTYPE_PARAMETRIC;
-            }
-            iplSourceGetOutputs(src, IPL_SIMULATIONFLAGS_REFLECTIONS, &outputs);
-            bool has_convolution = (outputs.reflections.ir != nullptr);
-            bool has_parametric = (outputs.reflections.reverbTimes[0] > 0 || outputs.reflections.reverbTimes[1] > 0 || outputs.reflections.reverbTimes[2] > 0);
-            bool has_hybrid = (reflection_type == resonance::kReflectionHybrid && (has_convolution || outputs.reflections.reverbTimes[0] > 0));
-            bool has_tan = (reflection_type == resonance::kReflectionTan && outputs.reflections.tanSlot >= 0 && _tan());
-            bool refl_hint = false;
-            if (has_convolution || (reflection_type == resonance::kReflectionParametric && has_parametric) || has_hybrid || has_tan) {
-                IPLReflectionEffectParams out_params = outputs.reflections;
-                for (int i = 0; i < resonance::kReverbBandCount; i++) {
-                    out_params.reverbTimes[i] = resonance::clamp_reverb_time(out_params.reverbTimes[i]);
-                    out_params.eq[i] = resonance::sanitize_audio_float(out_params.eq[i]);
-                }
-                out_params.delay = resonance::sanitize_delay_samples(out_params.delay);
-                if (has_convolution && out_params.ir != nullptr) {
-                    const int max_ir_samples = 480000;
-                    const int max_ir_channels = 64;
-                    if (out_params.irSize <= 0 || out_params.irSize > max_ir_samples ||
-                        out_params.numChannels <= 0 || out_params.numChannels > max_ir_channels) {
-                        out_params.ir = nullptr;
-                        has_convolution = false;
-                        has_hybrid = (reflection_type == resonance::kReflectionHybrid && outputs.reflections.reverbTimes[0] > 0);
-                    }
-                }
-                bool use_hybrid_type = (reflection_type == resonance::kReflectionHybrid && has_convolution && has_parametric);
-                out_params.type = (reflection_type == resonance::kReflectionParametric) ? IPL_REFLECTIONEFFECTTYPE_PARAMETRIC : (reflection_type == resonance::kReflectionHybrid && use_hybrid_type) ? IPL_REFLECTIONEFFECTTYPE_HYBRID
-                                                                                                                            : (reflection_type == resonance::kReflectionHybrid)                      ? IPL_REFLECTIONEFFECTTYPE_PARAMETRIC
-                                                                                                                            : (reflection_type == resonance::kReflectionTan)                         ? IPL_REFLECTIONEFFECTTYPE_TAN
-                                                                                                                                                                                                     : IPL_REFLECTIONEFFECTTYPE_CONVOLUTION;
-                if (reflection_type == resonance::kReflectionTan)
-                    out_params.tanDevice = _tan();
-                if (reflection_type == resonance::kReflectionParametric && has_parametric) {
-                    CachedParametricReverb cr{};
-                    for (int i = 0; i < resonance::kReverbBandCount; i++) {
-                        cr.reverbTimes[i] = resonance::clamp_reverb_time(outputs.reflections.reverbTimes[i]);
-                        cr.eq[i] = outputs.reflections.eq[i];
-                    }
-                    cr.epoch = reverb_param_cache_epoch_[reverb_back];
-                    reverb_param_cache_[static_cast<size_t>(reverb_back)][static_cast<size_t>(handle)] = std::move(cr);
-                }
-                if (_uses_convolution_or_hybrid_or_tan() && (has_convolution || has_hybrid || has_tan)) {
-                    CachedReflectionParams rp{};
-                    rp.params = out_params;
-                    rp.epoch = reflection_param_cache_epoch_[refl_back];
-                    reflection_param_cache_[static_cast<size_t>(refl_back)][static_cast<size_t>(handle)] = std::move(rp);
-                }
-                refl_hint = true;
-            }
+        if (refresh_reflection_outputs) {
+            uint64_t us_one = 0;
+            const bool refl_hint = _worker_fetch_reflection_into_back(src, handle, reverb_back, refl_back, reflections_have_run, us_one);
+            us_refl += us_one;
             reverb_hint_batch.emplace_back(handle, refl_hint);
-            const auto t1 = std::chrono::steady_clock::now();
-            us_refl += static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count());
         }
 
         if (pathing_refresh) {
-            bool source_pathing = (source_outputs_pathing_[static_cast<size_t>(handle)].load(std::memory_order_relaxed) != 0);
-            if (!source_pathing) {
+            if (source_outputs_pathing_[static_cast<size_t>(handle)].load(std::memory_order_relaxed) == 0) {
                 iplSourceRelease(&src);
                 continue;
             }
@@ -367,14 +459,14 @@ void ResonanceServer::_worker_sync_fetch_caches(bool refresh_direct_outputs, boo
             IPLSimulationOutputs pout{};
             iplSourceGetOutputs(src, IPL_SIMULATIONFLAGS_PATHING, &pout);
             if (pout.pathing.shCoeffs != nullptr) {
-                int order = pout.pathing.order;
-                int sh_count = (order >= 0) ? (order + 1) * (order + 1) : 0;
+                const int order = pout.pathing.order;
+                const int sh_count = (order >= 0) ? (order + 1) * (order + 1) : 0;
                 if (sh_count > 0) {
                     CachedPathingParams pm{};
                     pm.eqCoeffs[0] = pout.pathing.eqCoeffs[0];
                     pm.eqCoeffs[1] = pout.pathing.eqCoeffs[1];
                     pm.eqCoeffs[2] = pout.pathing.eqCoeffs[2];
-                    if (pathing_copy_sh_coeffs(pm.shCoeffs, pout.pathing.shCoeffs, sh_count)) {
+                    if (_pathing_copy_sh_coeffs(pm.shCoeffs, pout.pathing.shCoeffs, sh_count)) {
                         pm.order = order;
                         pm.epoch = pathing_param_cache_epoch_[path_back];
                         pathing_param_cache_[static_cast<size_t>(path_back)][static_cast<size_t>(handle)] = std::move(pm);
@@ -385,8 +477,6 @@ void ResonanceServer::_worker_sync_fetch_caches(bool refresh_direct_outputs, boo
                 } else {
                     instrumentation_pathing_fetch_sh_bad_order.fetch_add(1, std::memory_order_relaxed);
                 }
-            } else {
-                // shCoeffs null is often normal (no contribution); do not inflate fetch_sh_null counters per tick.
             }
             const auto t1 = std::chrono::steady_clock::now();
             us_path += static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count());
@@ -401,14 +491,13 @@ void ResonanceServer::_worker_sync_fetch_caches(bool refresh_direct_outputs, boo
             reverb_params_likely_available_[kv.first] = kv.second;
     }
 
-    // Publish freshly written back slots (even if empty; front flip is cheap and avoids extra state).
     if (refresh_direct_outputs)
         occlusion_cache_front_.store(occ_back, std::memory_order_release);
     if (refresh_reflection_outputs && reflection_type == resonance::kReflectionParametric)
         reverb_param_cache_front_.store(reverb_back, std::memory_order_release);
     if (refresh_reflection_outputs && _uses_convolution_or_hybrid_or_tan())
         reflection_param_cache_front_.store(refl_back, std::memory_order_release);
-    if (pathing_enabled && pathing_refresh)
+    if (pathing_refresh)
         pathing_param_cache_front_.store(path_back, std::memory_order_release);
 
     instrumentation_worker_us_sync_fetch_occlusion.store(us_occ, std::memory_order_relaxed);

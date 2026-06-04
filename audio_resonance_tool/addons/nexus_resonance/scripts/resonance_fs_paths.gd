@@ -4,6 +4,21 @@ class_name ResonanceFsPaths
 ## Map [code]res://[/code] / [code]user://[/code] to OS paths for [DirAccess] / [FileAccess].
 
 
+## Repo-root [code]logs/[/code] when the Godot project is [code]audio_resonance_tool/[/code]; else [code]logs/[/code] beside the project folder.
+static func repo_logs_dir_absolute() -> String:
+	var project_dir := ProjectSettings.globalize_path("res://").replace("\\", "/").rstrip("/")
+	if project_dir.get_file() == "audio_resonance_tool":
+		return project_dir.get_base_dir().path_join("logs")
+	return project_dir.path_join("logs")
+
+
+## Creates [method repo_logs_dir_absolute] if missing; returns that path.
+static func ensure_repo_logs_dir() -> String:
+	var dir := repo_logs_dir_absolute()
+	DirAccess.make_dir_recursive_absolute(dir)
+	return dir
+
+
 static func filesystem_path_for_dir_access(path: String) -> String:
 	if path.is_empty():
 		return path

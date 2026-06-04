@@ -4,19 +4,14 @@
 #include "resonance_math.h"
 #include "resonance_server.h"
 #include "resonance_utils.h"
-#include <algorithm>
 #include <atomic>
-#include <cmath>
-#include <godot_cpp/classes/audio_server.hpp>
-#if defined(_WIN32) && defined(_MSC_VER)
-#include <excpt.h>
-#endif
 #include <chrono>
+#include <cmath>
 #include <cstdint>
+#include <godot_cpp/classes/audio_server.hpp>
 #include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 #include <limits>
-#include <unordered_set>
 #include <vector>
 
 using namespace godot;
@@ -24,18 +19,7 @@ using namespace godot;
 // Server lifecycle: IPL init/reinit/shutdown, worker vs main-thread simulation, tick scheduling, and phonon run loop.
 
 namespace {
-#if defined(_WIN32) && defined(_MSC_VER)
-// SEH must not run in the same function as C++ objects with destructors (e.g. lock_guard) when using /EHsc.
-void run_pathing_seh(IPLSimulator sim, int* out_ok) {
-    *out_ok = 0;
-    __try {
-        iplSimulatorRunPathing(sim);
-        *out_ok = 1;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        *out_ok = 0;
-    }
-}
-#endif
+
 String ambient_order_ordinal(int64_t n) {
     uint64_t abs_part;
     if (n == std::numeric_limits<int64_t>::min())
@@ -163,10 +147,8 @@ void ResonanceServer::_apply_config(Dictionary config) {
     max_rays = config_.max_rays;
     max_bounces = config_.max_bounces;
     reverb_influence_radius = config_.reverb_influence_radius;
-    reverb_max_distance = config_.reverb_max_distance;
     reverb_transmission_amount = config_.reverb_transmission_amount;
     apply_occlusion_to_baked_reflections = config_.apply_occlusion_to_baked_reflections;
-    apply_distance_curve_to_reflections = config_.apply_distance_curve_to_reflections;
     baked_reverb_use_listener_probe = config_.baked_reverb_use_listener_probe;
     reflection_type = config_.reflection_type;
     default_reflections_mode = config_.default_reflections_mode;
@@ -276,7 +258,6 @@ void ResonanceServer::_init_internal() {
     reverb_convolution_gain_min.store(1.0f, std::memory_order_relaxed);
     reverb_convolution_gain_max.store(0.0f, std::memory_order_relaxed);
     reverb_convolution_input_rms_max.store(0.0f, std::memory_order_relaxed);
-    instrumentation_fetch_lock_ok.store(0, std::memory_order_relaxed);
     instrumentation_fetch_cache_hit.store(0, std::memory_order_relaxed);
     instrumentation_fetch_cache_miss.store(0, std::memory_order_relaxed);
     instrumentation_fetch_cache_skip.store(0, std::memory_order_relaxed);
@@ -458,58 +439,14 @@ void ResonanceServer::_start_worker_thread() {
 }
 
 void ResonanceServer::tick(float delta) {
-    if (reflection_force_heavy_next_tick_.exchange(false, std::memory_order_acq_rel)) {
-        const bool need_rfl = _any_source_needs_reflection_sim_assume_locked();
-        if (need_rfl)
-            reflection_sim_heavy_requested.store(true, std::memory_order_release);
-    }
+    static std::atomic<bool> s_log_main_bound{false};
+    if (!s_log_main_bound.exchange(true, std::memory_order_relaxed))
+        resonance_log_bind_main_thread();
+    resonance_log_drain_pending();
 
-    // Reflections and pathing use independent min-interval timers (seconds). Adaptive scheduling adds extra delay
-    // to the reflection interval only when reflections_adaptive_budget_us_ > 0.
-    const bool need_refl_heavy = _any_source_needs_reflection_sim_assume_locked();
-    const bool adaptive_refl = (reflections_adaptive_budget_us_ > 0);
-    const float rdt = reflections_sim_interval;
-    const float pdt = pathing_sim_interval;
-    const float eff_r = rdt + (adaptive_refl ? reflections_adaptive_extra_interval_ : 0.0f);
-    reflections_interval_elapsed += delta;
-    pathing_interval_elapsed += delta;
-    if (need_refl_heavy && (eff_r <= 0.0f || reflections_interval_elapsed >= eff_r)) {
-        reflections_interval_elapsed = 0.0f;
-        reflection_sim_heavy_requested.store(true, std::memory_order_release);
-    }
-    if (pathing_enabled && (pdt <= 0.0f || pathing_interval_elapsed >= pdt)) {
-        pathing_interval_elapsed = 0.0f;
-        pathing_sim_heavy_requested.store(true, std::memory_order_release);
-    }
-
-    if (reflections_adaptive_budget_us_ > 0) {
-        const uint64_t last = instrumentation_worker_us_run_reflections.load(std::memory_order_relaxed);
-        const uint64_t budget = static_cast<uint64_t>(reflections_adaptive_budget_us_);
-        if (last > budget) {
-            reflections_adaptive_extra_interval_ = std::min(
-                reflections_adaptive_extra_interval_ + reflections_adaptive_step_sec_,
-                reflections_adaptive_max_extra_interval_);
-        } else {
-            reflections_adaptive_extra_interval_ = std::max(
-                0.0f,
-                reflections_adaptive_extra_interval_ - reflections_adaptive_decay_per_sec_ * delta);
-        }
-    }
-
-    direct_sim_time_elapsed += delta;
-
-    const bool heavy_pending = reflection_sim_heavy_requested.load(std::memory_order_acquire) ||
-                               pathing_sim_heavy_requested.load(std::memory_order_acquire);
-    bool run_direct_this_wake = true;
-    if (direct_sim_interval > 0.0f) {
-        if (heavy_pending) {
-            direct_sim_time_elapsed = 0.0f;
-        } else if (direct_sim_time_elapsed < direct_sim_interval) {
-            run_direct_this_wake = false;
-        } else {
-            direct_sim_time_elapsed = 0.0f;
-        }
-    }
+    std::vector<int32_t> tick_source_handles;
+    source_manager.get_all_handles(tick_source_handles);
+    const bool run_direct_this_wake = _tick_schedule_simulation(delta, tick_source_handles);
 
     if (_uses_main_thread_phonon_simulation()) {
         IPLCoordinateSpace3 listener_cs = _snapshot_listener_for_simulation();
@@ -556,295 +493,6 @@ void ResonanceServer::_worker_thread_func() {
     }
 }
 
-// Single simulation step under simulation_mutex: shared inputs + commit, optional RunDirect/Reflections/Pathing, then cache sync.
-// Per-source flags (elsewhere) can omit reflections for sources that should not drive realtime reflection work.
-void ResonanceServer::_run_phonon_simulation_locked(const IPLCoordinateSpace3& current_listener, bool run_direct, bool run_reflection_sim,
-                                                    bool run_pathing_sim) {
-    _drain_pending_source_lifecycle_assume_locked();
-    uint64_t us_dyn_apply = 0;
-    bool dynamic_instanced_transforms_applied = false;
-    {
-        const auto td0 = std::chrono::steady_clock::now();
-        dynamic_instanced_transforms_applied = _apply_queued_dynamic_instanced_mesh_transforms_assume_locked();
-        const auto td1 = std::chrono::steady_clock::now();
-        us_dyn_apply = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(td1 - td0).count());
-    }
-    instrumentation_worker_us_dynamic_instanced_apply.store(us_dyn_apply, std::memory_order_relaxed);
-
-    // Skip reflections simulation when no source needs it. (Probe batches existing alone is not sufficient.)
-    const bool shared_reflections = _any_source_needs_reflection_sim_assume_locked();
-    const bool any_realtime_reflections = _any_source_needs_realtime_reflections_assume_locked();
-
-    // Debug/diagnostics: count sources participating in reflections, and how many request realtime ray tracing.
-    int32_t active_reflection_sources = 0;
-    int32_t active_realtime_sources = 0;
-    {
-        std::vector<int32_t> handles;
-        source_manager.get_all_handles(handles);
-        for (int32_t h : handles) {
-            if (h < 0 || h >= kMaxCacheHandles)
-                continue;
-            if (source_outputs_reflections_[static_cast<size_t>(h)].load(std::memory_order_relaxed) != 0)
-                active_reflection_sources++;
-            if (source_outputs_realtime_reflections_[static_cast<size_t>(h)].load(std::memory_order_relaxed) != 0)
-                active_realtime_sources++;
-        }
-    }
-    instrumentation_worker_active_reflection_sources_.store(active_reflection_sources, std::memory_order_relaxed);
-    instrumentation_worker_active_realtime_reflection_sources_.store(active_realtime_sources, std::memory_order_relaxed);
-
-    // Optional skip when listener/sources unchanged (disabled while tuning).
-    constexpr bool kReflectionsDirtyGatingDisabled = true; // set false to re-enable skip_no_change
-    constexpr float kListenerMoveEps = 0.0025f;            // meters
-    constexpr float kSourceMoveEps = 0.0025f;              // meters
-    bool reflections_dirty = true;
-    if (run_reflection_sim && shared_reflections) {
-        if (!kReflectionsDirtyGatingDisabled) {
-            reflections_dirty = false;
-            if (dynamic_instanced_transforms_applied)
-                reflections_dirty = true;
-            if (!reflections_dirty && scene_dirty.load(std::memory_order_relaxed))
-                reflections_dirty = true;
-
-            const Vector3 listener_pos(current_listener.origin.x, current_listener.origin.y, current_listener.origin.z);
-            if (!reflections_dirty) {
-                if (!_last_reflections_listener_pos_valid_ || _last_reflections_listener_pos_.distance_to(listener_pos) > kListenerMoveEps) {
-                    reflections_dirty = true;
-                }
-            }
-            if (!reflections_dirty && active_realtime_sources > 0) {
-                std::vector<int32_t> handles;
-                source_manager.get_all_handles(handles);
-                for (int32_t h : handles) {
-                    if (h < 0 || h >= kMaxCacheHandles)
-                        continue;
-                    if (source_outputs_realtime_reflections_[static_cast<size_t>(h)].load(std::memory_order_relaxed) == 0)
-                        continue;
-                    auto it = _source_update_snapshot_.find(h);
-                    if (it == _source_update_snapshot_.end() || !it->second.valid) {
-                        reflections_dirty = true;
-                        break;
-                    }
-                    const Vector3& p = it->second.position;
-                    const size_t idx = static_cast<size_t>(h);
-                    if (!_last_realtime_reflection_source_pos_valid_[idx] ||
-                        _last_realtime_reflection_source_pos_[idx].distance_to(p) > kSourceMoveEps) {
-                        reflections_dirty = true;
-                        break;
-                    }
-                }
-            }
-            if (!reflections_dirty) {
-                instrumentation_reflections_sim_skip_no_change.fetch_add(1, std::memory_order_relaxed);
-            }
-        }
-    }
-
-    IPLSimulationSharedInputs inputs{};
-    inputs.listener = current_listener;
-    // Adaptive numRays (budget-driven): scale rays proportionally to budget vs last tick cost.
-    // This makes `reflections_adaptive_budget_us` meaningfully affect aggressiveness even when last_us is huge.
-    int eff_num_rays = 0;
-    int adaptive_target = 0;
-    if (any_realtime_reflections && reflections_dirty) {
-        eff_num_rays = max_rays;
-        adaptive_target = max_rays;
-        if (reflections_adaptive_budget_us_ > 0) {
-            const int min_rays_cfg = std::max(1, std::min(reflections_adaptive_ray_min_, max_rays));
-            if (!_adaptive_realtime_num_rays_initialized_) {
-                _adaptive_realtime_num_rays_ = max_rays;
-                _adaptive_realtime_num_rays_initialized_ = true;
-            } else {
-                const uint64_t last_us = instrumentation_worker_us_run_reflections.load(std::memory_order_relaxed);
-                const uint64_t budget = static_cast<uint64_t>(reflections_adaptive_budget_us_);
-                if (budget > 0 && last_us > budget) {
-                    // Scale down roughly proportional to overshoot.
-                    const double ratio = static_cast<double>(budget) / static_cast<double>(last_us);
-                    int next = static_cast<int>(static_cast<double>(_adaptive_realtime_num_rays_) * ratio);
-                    next = std::max(min_rays_cfg, next);
-                    _adaptive_realtime_num_rays_ = std::min(max_rays, next);
-                } else {
-                    // Recover using configured fraction/cap (aggressiveness knob separate from budget).
-                    const float frac = std::max(0.0f, std::min(1.0f, reflections_adaptive_ray_recover_frac_));
-                    int step = static_cast<int>(std::ceil(static_cast<float>(max_rays) * frac));
-                    const int cap = reflections_adaptive_ray_recover_cap_;
-                    if (cap > 0)
-                        step = std::min(step, cap);
-                    step = std::max(1, step);
-                    _adaptive_realtime_num_rays_ = std::min(max_rays, _adaptive_realtime_num_rays_ + step);
-                }
-            }
-            eff_num_rays = std::max(min_rays_cfg, std::min(max_rays, _adaptive_realtime_num_rays_));
-            adaptive_target = _adaptive_realtime_num_rays_;
-        }
-    }
-    inputs.numRays = eff_num_rays;
-    instrumentation_worker_last_num_rays_.store(static_cast<int32_t>(inputs.numRays), std::memory_order_relaxed);
-    instrumentation_worker_last_adaptive_num_rays_target_.store(static_cast<int32_t>(adaptive_target), std::memory_order_relaxed);
-    inputs.numBounces = max_bounces;
-    inputs.duration = realtime_simulation_duration;
-    inputs.order = ambisonic_order;
-    inputs.irradianceMinDistance = realtime_irradiance_min_distance;
-    inputs.pathingVisCallback = (pathing_enabled && debug_pathing.load(std::memory_order_acquire)) ? _pathing_vis_callback : nullptr;
-    inputs.pathingUserData = (pathing_enabled && debug_pathing.load(std::memory_order_acquire)) ? static_cast<void*>(this) : nullptr;
-    IPLSimulationFlags sim_flags = static_cast<IPLSimulationFlags>(IPL_SIMULATIONFLAGS_DIRECT | (shared_reflections ? IPL_SIMULATIONFLAGS_REFLECTIONS : 0));
-    if (pathing_enabled)
-        sim_flags = static_cast<IPLSimulationFlags>(sim_flags | IPL_SIMULATIONFLAGS_PATHING);
-    iplSimulatorSetSharedInputs(simulator, sim_flags, &inputs);
-
-    // Commit after SetSharedInputs; scene_dirty adds iplSceneCommit + SetScene first (timings split for profiling).
-    uint64_t us_scene_graph = 0;
-    uint64_t us_commit = 0;
-    if (scene_dirty.load(std::memory_order_acquire)) {
-        const auto ts0 = std::chrono::steady_clock::now();
-        iplSceneCommit(scene);
-        iplSimulatorSetScene(simulator, scene);
-        scene_dirty.store(false, std::memory_order_release);
-        const auto ts1 = std::chrono::steady_clock::now();
-        us_scene_graph = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(ts1 - ts0).count());
-    }
-    {
-        const auto tc0 = std::chrono::steady_clock::now();
-        iplSimulatorCommit(simulator);
-        const auto tc1 = std::chrono::steady_clock::now();
-        us_commit += static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(tc1 - tc0).count());
-    }
-    instrumentation_worker_us_scene_graph_commit.store(us_scene_graph, std::memory_order_relaxed);
-    instrumentation_worker_us_simulator_commit.store(us_commit, std::memory_order_relaxed);
-
-    bool execute_run_reflections = run_reflection_sim && shared_reflections && reflections_dirty;
-    if (execute_run_reflections && reflections_defer_after_scene_commit_us_ > 0 &&
-        us_scene_graph >= static_cast<uint64_t>(reflections_defer_after_scene_commit_us_)) {
-        execute_run_reflections = false;
-        reflection_force_heavy_next_tick_.store(true, std::memory_order_release);
-    }
-
-    uint64_t us_direct = 0, us_refl = 0, us_path = 0, us_sync = 0;
-    if (run_direct) {
-        const auto t0 = std::chrono::steady_clock::now();
-        iplSimulatorRunDirect(simulator);
-        const auto t1 = std::chrono::steady_clock::now();
-        us_direct = (uint64_t)std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
-        _worker_note_direct_sim_pass_completed();
-    }
-    instrumentation_worker_us_run_direct.store(us_direct, std::memory_order_relaxed);
-
-    pathing_ran_this_tick.store(false);
-    const bool any_heavy = run_reflection_sim || run_pathing_sim;
-    bool ran_reflections_this_pass = false;
-    if (any_heavy) {
-        if (execute_run_reflections) {
-            const auto t0 = std::chrono::steady_clock::now();
-            iplSimulatorRunReflections(simulator);
-            const auto t1 = std::chrono::steady_clock::now();
-            us_refl = (uint64_t)std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
-            reflections_have_run_once_.store(true);
-            ran_reflections_this_pass = true;
-            // Update dirty-gating state on successful reflections run.
-            _last_reflections_listener_pos_ = Vector3(current_listener.origin.x, current_listener.origin.y, current_listener.origin.z);
-            _last_reflections_listener_pos_valid_ = true;
-            if (active_realtime_sources > 0) {
-                std::vector<int32_t> handles;
-                source_manager.get_all_handles(handles);
-                for (int32_t h : handles) {
-                    if (h < 0 || h >= kMaxCacheHandles)
-                        continue;
-                    if (source_outputs_realtime_reflections_[static_cast<size_t>(h)].load(std::memory_order_relaxed) == 0)
-                        continue;
-                    auto it = _source_update_snapshot_.find(h);
-                    if (it == _source_update_snapshot_.end() || !it->second.valid)
-                        continue;
-                    const size_t idx = static_cast<size_t>(h);
-                    _last_realtime_reflection_source_pos_[idx] = it->second.position;
-                    _last_realtime_reflection_source_pos_valid_[idx] = 1;
-                }
-            }
-            for (size_t i = 0; i < reflections_pending_.size(); i++)
-                reflections_pending_[i].store(false, std::memory_order_release);
-        }
-        int cooldown = pathing_crash_cooldown.load();
-        if (cooldown > 0)
-            pathing_crash_cooldown.store(cooldown - 1);
-        if (run_pathing_sim && pathing_enabled && pending_listener_valid.load(std::memory_order_acquire) &&
-            pathing_crash_cooldown.load(std::memory_order_acquire) <= 0) {
-            if (debug_pathing.load(std::memory_order_acquire)) {
-                std::lock_guard<std::mutex> pv_lock(pathing_vis_mutex);
-                pathing_vis_segments.clear();
-            }
-            instrumentation_pathing_sim_attempt.fetch_add(1, std::memory_order_relaxed);
-#if defined(_WIN32) && defined(_MSC_VER)
-            const auto tp0 = std::chrono::steady_clock::now();
-            int pathing_ok = 0;
-            run_pathing_seh(simulator, &pathing_ok);
-            const auto tp1 = std::chrono::steady_clock::now();
-            us_path = (uint64_t)std::chrono::duration_cast<std::chrono::microseconds>(tp1 - tp0).count();
-            if (pathing_ok) {
-                pathing_ran_this_tick.store(true);
-                instrumentation_pathing_sim_ran.fetch_add(1, std::memory_order_relaxed);
-            } else {
-                pathing_crash_cooldown.store(resonance::kPathingCrashCooldownTicks);
-                instrumentation_pathing_sim_seh_fail.fetch_add(1, std::memory_order_relaxed);
-            }
-            _drain_pathing_probe_batch_releases();
-#else
-            const auto tp0 = std::chrono::steady_clock::now();
-            iplSimulatorRunPathing(simulator);
-            const auto tp1 = std::chrono::steady_clock::now();
-            us_path = (uint64_t)std::chrono::duration_cast<std::chrono::microseconds>(tp1 - tp0).count();
-            pathing_ran_this_tick.store(true);
-            instrumentation_pathing_sim_ran.fetch_add(1, std::memory_order_relaxed);
-            _drain_pathing_probe_batch_releases();
-#endif
-        } else if (run_pathing_sim && pathing_enabled) {
-            if (!pending_listener_valid.load(std::memory_order_acquire)) {
-                instrumentation_pathing_sim_skip_listener.fetch_add(1, std::memory_order_relaxed);
-            } else if (pathing_crash_cooldown.load(std::memory_order_acquire) > 0) {
-                instrumentation_pathing_sim_skip_cooldown.fetch_add(1, std::memory_order_relaxed);
-            }
-        }
-    }
-    instrumentation_worker_us_run_reflections.store(us_refl, std::memory_order_relaxed);
-    instrumentation_worker_us_run_pathing.store(us_path, std::memory_order_relaxed);
-
-    {
-        const auto t0 = std::chrono::steady_clock::now();
-        const bool refresh_refl_cache = ran_reflections_this_pass;
-        _worker_sync_fetch_caches(run_direct, refresh_refl_cache);
-        const auto t1 = std::chrono::steady_clock::now();
-        us_sync = (uint64_t)std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
-    }
-    instrumentation_worker_us_sync_fetch.store(us_sync, std::memory_order_relaxed);
-    instrumentation_worker_last_wake_was_heavy.store(any_heavy, std::memory_order_relaxed);
-}
-
-bool ResonanceServer::_any_source_needs_reflection_sim_assume_locked() {
-    std::vector<int32_t> handles;
-    source_manager.get_all_handles(handles);
-    if (handles.empty())
-        return false;
-    for (int32_t h : handles) {
-        if (h < 0 || h >= kMaxCacheHandles)
-            return true;
-        if (source_outputs_reflections_[static_cast<size_t>(h)].load(std::memory_order_relaxed) != 0)
-            return true;
-    }
-    return false;
-}
-
-bool ResonanceServer::_any_source_needs_realtime_reflections_assume_locked() {
-    std::vector<int32_t> handles;
-    source_manager.get_all_handles(handles);
-    if (handles.empty())
-        return false;
-    for (int32_t h : handles) {
-        if (h < 0 || h >= kMaxCacheHandles)
-            continue;
-        if (source_outputs_realtime_reflections_[static_cast<size_t>(h)].load(std::memory_order_relaxed) != 0)
-            return true;
-    }
-    return false;
-}
-
 IPLCoordinateSpace3 ResonanceServer::_snapshot_listener_for_simulation() {
     return _read_listener_coords_seqlock();
 }
@@ -858,84 +506,6 @@ IPLSceneType ResonanceServer::_tracer_type_for_mesh_operations() const {
     if (t == IPL_SCENETYPE_CUSTOM)
         return IPL_SCENETYPE_DEFAULT;
     return t;
-}
-
-void ResonanceServer::set_physics_world(const Ref<World3D>& world) {
-    godot_physics_bridge_.set_world(world);
-}
-
-void ResonanceServer::_rebuild_and_apply_physics_ray_excludes_unlocked() {
-    std::unordered_set<int64_t> seen;
-    TypedArray<RID> merged;
-    auto append = [&seen, &merged](RID r) {
-        if (!r.is_valid())
-            return;
-        const int64_t id = r.get_id();
-        if (!seen.insert(id).second)
-            return;
-        merged.append(r);
-    };
-    const int nu = physics_ray_exclude_rids_user_.size();
-    for (int i = 0; i < nu; ++i)
-        append(physics_ray_exclude_rids_user_[i]);
-    const int nl = listener_physics_ray_exclude_rids_.size();
-    for (int i = 0; i < nl; ++i)
-        append(listener_physics_ray_exclude_rids_[i]);
-    for (const RID& r : physics_ray_auto_exclude_active_)
-        append(r);
-    godot_physics_bridge_.set_exclude_rids(merged);
-}
-
-void ResonanceServer::_clear_physics_ray_excludes_state() {
-    std::lock_guard<std::mutex> lock(physics_ray_excludes_mutex_);
-    physics_ray_exclude_rids_user_.clear();
-    listener_physics_ray_exclude_rids_.clear();
-    physics_ray_auto_exclude_refcount_.clear();
-    physics_ray_auto_exclude_active_.clear();
-    godot_physics_bridge_.set_exclude_rids(TypedArray<RID>());
-}
-
-void ResonanceServer::set_physics_ray_exclude_rids(const TypedArray<RID>& exclude) {
-    std::lock_guard<std::mutex> lock(physics_ray_excludes_mutex_);
-    physics_ray_exclude_rids_user_ = exclude;
-    _rebuild_and_apply_physics_ray_excludes_unlocked();
-}
-
-void ResonanceServer::set_listener_physics_ray_exclude_rids(const TypedArray<RID>& rids) {
-    std::lock_guard<std::mutex> lock(physics_ray_excludes_mutex_);
-    listener_physics_ray_exclude_rids_ = rids;
-    _rebuild_and_apply_physics_ray_excludes_unlocked();
-}
-
-void ResonanceServer::register_physics_ray_auto_exclude_rid(RID rid) {
-    if (!rid.is_valid())
-        return;
-    std::lock_guard<std::mutex> lock(physics_ray_excludes_mutex_);
-    const int64_t id = rid.get_id();
-    int& c = physics_ray_auto_exclude_refcount_[id];
-    if (c == 0)
-        physics_ray_auto_exclude_active_.push_back(rid);
-    c++;
-    _rebuild_and_apply_physics_ray_excludes_unlocked();
-}
-
-void ResonanceServer::unregister_physics_ray_auto_exclude_rid(RID rid) {
-    if (!rid.is_valid())
-        return;
-    std::lock_guard<std::mutex> lock(physics_ray_excludes_mutex_);
-    const int64_t id = rid.get_id();
-    auto it = physics_ray_auto_exclude_refcount_.find(id);
-    if (it == physics_ray_auto_exclude_refcount_.end() || it->second <= 0)
-        return;
-    it->second--;
-    if (it->second == 0) {
-        physics_ray_auto_exclude_refcount_.erase(it);
-        auto vit = std::find_if(physics_ray_auto_exclude_active_.begin(), physics_ray_auto_exclude_active_.end(),
-                                [id](const RID& r) { return r.get_id() == id; });
-        if (vit != physics_ray_auto_exclude_active_.end())
-            physics_ray_auto_exclude_active_.erase(vit);
-    }
-    _rebuild_and_apply_physics_ray_excludes_unlocked();
 }
 
 void ResonanceServer::_shutdown_steam_audio() {
@@ -958,6 +528,7 @@ void ResonanceServer::_shutdown_steam_audio() {
         dynamic_instanced_transform_queue_.clear();
     }
     spatial_audio_warmup_passes_remaining_.store(0, std::memory_order_release);
+    phonon_scene_audio_ready_.store(true, std::memory_order_release);
     pathing_ran_this_tick.store(false);
     reflections_have_run_once_.store(false);
     for (size_t i = 0; i < reflections_pending_.size(); i++)
@@ -1105,13 +676,16 @@ bool ResonanceServer::is_simulating() const {
         return false;
     if (_scene_type() == IPL_SCENETYPE_CUSTOM)
         return godot_physics_bridge_.has_valid_world();
-    return global_triangle_count > 0;
+    return global_triangle_count.load(std::memory_order_acquire) > 0;
 }
 
 bool ResonanceServer::is_spatial_audio_output_ready() const {
     if (!is_initialized())
         return true;
-    return spatial_audio_warmup_passes_remaining_.load(std::memory_order_acquire) <= 0;
+    return resonance::spatial_audio_geometry_gate_allows_output(
+        spatial_audio_warmup_passes_remaining_.load(std::memory_order_acquire),
+        global_triangle_count.load(std::memory_order_acquire),
+        phonon_scene_audio_ready_.load(std::memory_order_acquire));
 }
 
 void ResonanceServer::reset_spatial_audio_warmup_passes() {

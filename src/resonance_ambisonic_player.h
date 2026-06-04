@@ -95,6 +95,9 @@ class ResonanceAmbisonicInternalPlayback : public AudioStreamPlayback {
 
     void update_parameters(const AmbisonicPlaybackParameters& p_params);
 
+    /// Main-thread IPL buffer setup before first `_mix` (same as ResonanceStreamPlayback).
+    bool prewarm_steam_audio();
+
     virtual int32_t _mix(AudioFrame* buffer, float rate_scale, int32_t frames) override;
     virtual void _start(double from_pos) override;
     virtual void _stop() override;

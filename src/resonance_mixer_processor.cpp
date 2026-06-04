@@ -206,10 +206,9 @@ void ResonanceMixerProcessor::_write_stereo_to_audio_frames_with_carry(AudioFram
     // If caller requested more than what has been decoded so far, leave zeros for the rest.
     if (written < frame_count && !s_frame_count_large_warned) {
         s_frame_count_large_warned = true;
-        UtilityFunctions::push_warning(
-            "Nexus Resonance: Reverb output frame_count (" + String::num_int64(frame_count) +
-            ") > audio_frame_size (" + String::num_int64(frame_size) +
-            "). Zero-padding missing samples until audio engine reinitializes to a matching frame size.");
+        ResonanceLog::warn("Reverb output frame_count (" + String::num_int64(frame_count) + ") > audio_frame_size (" +
+                           String::num_int64(frame_size) +
+                           "). Zero-padding missing samples until audio engine reinitializes to a matching frame size.");
     }
 }
 
@@ -242,7 +241,7 @@ bool ResonanceMixerProcessor::process_mixer_return(IPLReflectionMixer mixer_hand
         return false;
 
     // mixer_feed_count bumps whenever any source actually feeds the reflection mixer this tick. If it is unchanged
-    // across consecutive calls, the engine may not have invoked Apply — replay last stereo once per plateau to
+    // across consecutive calls, the engine may not have invoked Apply - replay last stereo once per plateau to
     // avoid silence, then force a real Apply on the next identical count (suppression prevents repeating forever).
     ResonanceServer* srv_count = ResonanceServer::get_singleton();
     const uint64_t feed_count_now = srv_count ? srv_count->get_mixer_feed_count() : 0;
@@ -273,10 +272,9 @@ bool ResonanceMixerProcessor::process_mixer_return(IPLReflectionMixer mixer_hand
     // Sub-sized callbacks: carry queues the remainder for the next mix() until a full block is consumed.
     if (frame_count < frame_size && !s_frame_count_small_warned) {
         s_frame_count_small_warned = true;
-        UtilityFunctions::push_warning(
-            "Nexus Resonance: Reverb output frame_count (" + String::num_int64(frame_count) +
-            ") < audio_frame_size (" + String::num_int64(frame_size) +
-            "). Carrying tail samples across callbacks until audio engine reinitializes to a matching frame size.");
+        ResonanceLog::warn("Reverb output frame_count (" + String::num_int64(frame_count) + ") < audio_frame_size (" +
+                           String::num_int64(frame_size) +
+                           "). Carrying tail samples across callbacks until audio engine reinitializes to a matching frame size.");
     }
     _write_stereo_to_audio_frames_with_carry(out_frames, frame_count);
 

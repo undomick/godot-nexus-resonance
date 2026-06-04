@@ -1,4 +1,5 @@
 @tool
+@icon("res://addons/nexus_resonance/ui/icons/resonance_config.svg")
 extends Resource
 class_name ResonanceRuntimeConfig
 
@@ -155,10 +156,6 @@ var realtime_rays: int:
 ## [br][b]Source-centric[/b] = pick the probe nearest the source (legacy behavior).
 ## [br][br]Note: currently this only affects baked REVERB probe lookup. Steam Audio realtime reflections trace rays from the listener in the core API, so this mode does not yet change realtime ray origin.
 @export_enum("Listener-centric:0", "Source-centric:1") var reflections_sampling_mode: int = 0
-## Extra wet attenuation by distance (meters). 0 = off (reflections/pathing wet not scaled by this).
-## When > 0: full wet at or below this distance; linear fade to 0 by 2× this distance (convolution/TAN feed,
-## parametric/hybrid wet, pathing). Does not replace per-source max_distance on the direct path.
-@export var reverb_max_distance: float = 0.0
 var _pathing_enabled: bool = false
 ## Enable pathing (multi-path sound propagation). Requires baked pathing in Probe Volumes.
 @export var pathing_enabled: bool:
@@ -184,13 +181,6 @@ var _pathing_enabled: bool = false
 @export_range(0.0, 1.0, 0.01) var reverb_transmission_amount: float = 1.0
 ## Baked REVERB: multiply wet by direct-path occlusion/transmission. Default [code]false[/code] - LOS occlusion does not separate “same room, blocked sight” from “sealed source”; enabling dampens both and can kill plausible diffraction. Prefer realtime reflections or STATICSOURCE bakes for hard cases; see [code]docs/baked-reflections-and-outdoor-sources.md[/code].
 @export var apply_occlusion_to_baked_reflections: bool = false
-## When on (default), the reflection-effect input gain is multiplied by the per-source 3D distance attenuation
-## curve so baked/realtime reverb fades with distance. Turn this off only
-## for projects that want constant-gain wet feeds (e.g. 2D ambience beds or custom distance handling).
-## Per-source override via [member ResonancePlayerConfig.apply_distance_curve_to_reflections_override] beats this
-## global flag.
-@export var apply_distance_curve_to_reflections: bool = true
-
 # --- Occlusion & Transmission ---
 @export_group("Occlusion & Transmission")
 ## Occlusion model: Raycast (binary hit) or Volumetric (fractional occlusion from samples; Steam Audio [code]numOcclusionSamples[/code]). Volumetric only affects how occlusion is computed, not how transmission coefficients are banded. Pair with [member ResonancePlayerConfig.occlusion_samples] and [member ResonancePlayerConfig.source_radius] on each source.
@@ -481,10 +471,8 @@ func get_config() -> Dictionary:
 		"hrtf_sofa_asset": get_hrtf_sofa_effective(),
 		"hrtf_interpolation_bilinear": hrtf_interpolation_bilinear,
 		"reverb_influence_radius": reverb_influence_radius,
-		"reverb_max_distance": reverb_max_distance,
 		"reverb_transmission_amount": reverb_transmission_amount,
 		"apply_occlusion_to_baked_reflections": apply_occlusion_to_baked_reflections,
-		"apply_distance_curve_to_reflections": apply_distance_curve_to_reflections,
 		# Native engine flag used for baked-REVERB probe selection (Phase 4). Keep the config key stable even if we
 		# later extend reflections_sampling_mode to realtime ray origin.
 		"baked_reverb_use_listener_probe": reflections_sampling_mode == 0,

@@ -32,13 +32,13 @@
 	</methods>
 	<members>
 		<member name="min_distance" type="float" default="1.0">
-			Distance (meters) at which sound is at full volume.
+			Distance (meters) at which sound is at full volume on the direct playback path and in Phonon [code]distanceAttenuationModel[/code] when simulation distance attenuation is active.
 		</member>
 		<member name="max_distance" type="float" default="500.0">
-			Max distance (meters) for attenuation.
+			Max distance (meters) for direct playback attenuation and for the simulation distance model (Linear/Curve rolloff end; Inverse cutoff in IR correction).
 		</member>
 		<member name="attenuation_mode" type="int" default="0">
-			Inverse (0) = Steam inverse distance on the direct path. Linear (1), Curve (2), or Disabled (3): simulator **distance attenuation** off on the direct path - not muting the source. Older resources could use [code]distance_attenuation_simulation_enabled = false[/code] with mode 0 - that migrates to mode 3 at runtime.
+			Inverse (0) = Steam inverse distance on direct playback; simulation may apply [code]distanceAttenuationModel[/code] to reflections (IR correction) when enabled. Linear (1) and Curve (2) share rolloff on direct and in simulation. Disabled (3) = no distance rolloff on direct playback; simulation distance model off. Legacy [code]distance_attenuation_simulation_enabled = false[/code] with mode 0 is treated as Disabled (3). Reflection playback wet is not multiplied by this curve (Unity Spatialize parity); use [member reflections_mix_level] and baked wet occlusion only.
 		</member>
 		<member name="attenuation_curve" type="Curve" default="null">
 			Custom attenuation curve. Used when attenuation_mode is Curve.
@@ -115,9 +115,6 @@
 		<member name="apply_occlusion_to_baked_reflections_override" type="int" default="-1">
 			Per-source override for [member ResonanceRuntimeConfig.apply_occlusion_to_baked_reflections]. -1=Use Global, 0=Disabled, 1=Enabled. Enabled = dampen this source's baked REVERB wet input by its direct-path occlusion/transmission. Disabled = keep wet input unattenuated regardless of the global flag. See [code]docs/baked-reflections-and-outdoor-sources.md[/code] for workflow guidance.
 		</member>
-		<member name="apply_distance_curve_to_reflections_override" type="int" default="-1">
-			Per-source override for [member ResonanceRuntimeConfig.apply_distance_curve_to_reflections]. -1=Use Global, 0=Disabled, 1=Enabled. Disabled = this source's wet input does not fade with distance (useful for 2D ambience beds or sources where the distance curve already lives elsewhere).
-		</member>
 		<member name="reflections_sampling_mode_override" type="int" default="-1">
 			Per-source override for [member ResonanceRuntimeConfig.reflections_sampling_mode]. -1=Use Global, 0=Listener-centric (pick baked REVERB probe nearest the listener), 1=Source-centric (pick probe nearest the source; legacy behavior). Note: currently this only affects baked REVERB probe lookup; it does not change realtime reflection ray origin.
 		</member>
@@ -171,6 +168,9 @@
 		</member>
 		<member name="find_alternate_paths_override" type="int" default="-1">
 			Find alternate paths when a baked path is occluded. [code]-1[/code] = Use Global ([member ResonanceRuntimeConfig.find_alternate_paths]). [code]0[/code] = Disabled. [code]1[/code] = Enabled. Only effective when path validation is on for this source. Very CPU-heavy - tune [member ResonanceRuntimeConfig.pathing_sim_interval] and [member ResonanceRuntimeConfig.pathing_num_vis_samples] when enabling.
+		</member>
+		<member name="master_mix_level" type="float" default="1.0">
+			Scales [member direct_mix_level], [member reflections_mix_level], and [member pathing_mix_level] together. Use when the stream has no reliable volume control (e.g. [AudioStreamSynchronized]).
 		</member>
 		<member name="direct_mix_level" type="float" default="1.0">
 			Volume of the direct sound path (0-10).

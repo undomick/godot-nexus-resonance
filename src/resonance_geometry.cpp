@@ -107,7 +107,7 @@ static bool parse_mesh_to_ipl(const Ref<Mesh>& mesh, const Transform3D& xform,
 }
 
 /// When ResonanceDynamicGeometry sits next to a glTF/instance subtree (parent is Node3D, not MeshInstance3D),
-/// geometry_override matches the visual mesh but vertices are in mesh space — use that MeshInstance3D's global transform.
+/// geometry_override matches the visual mesh but vertices are in mesh space - use that MeshInstance3D's global transform.
 static MeshInstance3D* find_mesh_instance_using_mesh(Node* node, const Ref<Mesh>& mesh, int depth_left) {
     if (!node || mesh.is_null() || depth_left < 0)
         return nullptr;

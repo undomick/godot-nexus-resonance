@@ -187,6 +187,13 @@ void ResonanceAmbisonicInternalPlayback::_ensure_ambisonic_processor(ResonanceSe
                          p.apply_output_gain, srv->get_hrtf_handle());
 }
 
+bool ResonanceAmbisonicInternalPlayback::prewarm_steam_audio() {
+    if (is_initialized)
+        return true;
+    _lazy_init_steam_audio();
+    return is_initialized;
+}
+
 void ResonanceAmbisonicInternalPlayback::_lazy_init_steam_audio() {
     ResonanceServer* srv = ResonanceServer::get_singleton();
     if (!srv || !srv->is_initialized())
@@ -474,6 +481,7 @@ Ref<AudioStreamPlayback> ResonanceAmbisonicInternalStream::_instantiate_playback
         return playback;
 
     playback->set_channel_playbacks(streams, order);
+    playback->prewarm_steam_audio();
     return playback;
 }
 

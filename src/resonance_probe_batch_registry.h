@@ -2,6 +2,7 @@
 #define RESONANCE_PROBE_BATCH_REGISTRY_H
 
 #include <cstdint>
+#include <functional>
 #include <mutex>
 #include <phonon.h>
 #include <unordered_map>
@@ -19,8 +20,10 @@ class ResonanceProbeBatchRegistry {
     ResonanceProbeBatchRegistry() = default;
 
     /// Load probe batch. Returns handle or -1. Caller must validate compatibility before calling.
+    /// [probe_bytes, probe_byte_size] must reference the same blob used to compute [data_hash] (no copy here).
     int32_t load_batch(IPLContext ctx, IPLSimulator sim, std::mutex* sim_mutex,
-                       Ref<ResonanceProbeData> data, uint64_t data_hash);
+                       Ref<ResonanceProbeData> data, uint64_t data_hash,
+                       const uint8_t* probe_bytes, int64_t probe_byte_size);
 
     void remove_batch(int32_t handle, IPLSimulator sim, std::mutex* sim_mutex);
 
@@ -32,6 +35,11 @@ class ResonanceProbeBatchRegistry {
     /// Returns pathing batch for preferred_handle if valid, else first with pathing.
     /// IMPORTANT: Return value is retained. Caller MUST call iplProbeBatchRelease when done; failure to release causes leaks.
     IPLProbeBatch get_pathing_batch(int32_t preferred_handle) const;
+
+    /// Probe data resource associated with a loaded batch handle (-1 if unknown).
+    Ref<ResonanceProbeData> get_probe_data_for_handle(int32_t handle) const;
+
+    void for_each_probe_data(const std::function<void(int32_t handle, const Ref<ResonanceProbeData>& data)>& fn) const;
 
     bool is_compatible(int32_t handle, int reflection_type, bool pathing_enabled) const;
 
@@ -51,6 +59,7 @@ class ResonanceProbeBatchRegistry {
     std::unordered_map<int32_t, int> refcount_;
     std::unordered_map<int32_t, bool> handle_has_pathing_;
     std::unordered_map<int32_t, int> handle_baked_refl_;
+    std::unordered_map<int32_t, Ref<ResonanceProbeData>> handle_to_probe_data_;
     mutable std::mutex mutex_;
 };
 

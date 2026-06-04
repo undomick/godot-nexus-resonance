@@ -394,13 +394,10 @@ func _refresh_status() -> void:
 			var art := int(wtim.get("shared_adaptive_num_rays_target", -1))
 			var ar := int(wtim.get("active_reflection_sources", -1))
 			var rr := int(wtim.get("active_realtime_reflection_sources", -1))
-			var sk := int(wtim.get("refl_skip_no_change", -1))
 			if nr >= 0 or ar >= 0 or rr >= 0:
 				var extra := ""
-				if sk >= 0:
-					extra = " | skip_no_change=%d" % maxi(sk, 0)
 				if art >= 0:
-					extra += " | adaptive_target=%d" % maxi(art, 0)
+					extra = " | adaptive_target=%d" % maxi(art, 0)
 				parts.append(
 					(
 						"[color=%s]Reflections:[/color] active=%d realtime=%d | shared numRays=%d%s"
@@ -753,11 +750,10 @@ func _refresh_reverb_bus() -> void:
 	if parametric_or_hybrid and eff_null > 0 and eff_ok == 0:
 		eff_col = COLOR_NEUTRAL
 
-	var fetch_lock := int(ri.get("fetch_lock_ok", 0))
 	var fetch_hit := int(ri.get("fetch_cache_hit", 0))
 	var fetch_miss := int(ri.get("fetch_cache_miss", 0))
 	var fetch_skip := int(ri.get("fetch_cache_skip", 0))
-	var fetch_total := fetch_lock + fetch_hit + fetch_miss
+	var fetch_total := fetch_hit + fetch_miss
 	var miss_pct := (100.0 * fetch_miss / fetch_total) if fetch_total > 0 else 0.0
 	var miss_col := (
 		COLOR_OK if fetch_miss == 0 else (COLOR_WARNING if miss_pct < 10.0 else COLOR_ERROR)
@@ -802,8 +798,8 @@ func _refresh_reverb_bus() -> void:
 		compact
 		. append(
 			(
-				"[color=%s]Fetch reverb:[/color] [color=%s]miss %.1f%%[/color] (hit=%d miss=%d skip=%d lock_ok=%d)"
-				% [COLOR_NEUTRAL, miss_col, miss_pct, fetch_hit, fetch_miss, fetch_skip, fetch_lock]
+				"[color=%s]Fetch reverb:[/color] [color=%s]miss %.1f%%[/color] (hit=%d miss=%d skip=%d)"
+				% [COLOR_NEUTRAL, miss_col, miss_pct, fetch_hit, fetch_miss, fetch_skip]
 			)
 		)
 	)

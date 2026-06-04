@@ -5,7 +5,6 @@ class_name ResonanceBakeRunner
 ## Public bake entry for ResonanceProbeVolume (inspector / project menu). Delegates to bake_* modules.
 
 const ResonanceBakeConfig = preload("res://addons/nexus_resonance/scripts/resonance_bake_config.gd")
-const ResonanceRuntimeScript = preload("res://addons/nexus_resonance/scripts/resonance_runtime.gd")
 const ResonanceSceneUtils = preload("res://addons/nexus_resonance/scripts/resonance_scene_utils.gd")
 const _BakeEstimates = preload("res://addons/nexus_resonance/editor/resonance_bake_estimates.gd")
 const _BakeHashes = preload("res://addons/nexus_resonance/editor/resonance_bake_hashes.gd")
@@ -39,6 +38,7 @@ var _progress_ui  # Untyped to allow headless operation
 var _backup  # Untyped to allow headless operation
 var _server_setup: RefCounted
 var _pipeline: RefCounted
+var _bake_shutdown_requested: bool = false
 
 
 # Changed parameter to loosely typed to explicitly allow null instantiation at runtime
@@ -63,9 +63,32 @@ func _init(p_editor_interface = null) -> void:
 	_pipeline = _BakePipeline.new(self)
 
 
+func is_bake_cancel_requested() -> bool:
+	if _bake_shutdown_requested:
+		return true
+	if _progress_ui and _progress_ui.cancel_requested:
+		return true
+	return false
+
+
+func cancel_active_bake_and_join(max_wait_ms: int = 5000) -> void:
+	_bake_shutdown_requested = true
+	if _progress_ui:
+		_progress_ui.cancel_requested = true
+	var srv = ResonanceServerAccess.get_server()
+	if srv:
+		if srv.has_method("cancel_reflections_bake"):
+			srv.cancel_reflections_bake()
+		if srv.has_method("cancel_pathing_bake"):
+			srv.cancel_pathing_bake()
+	if _pipeline and _pipeline.has_method("cancel_active_bake_thread_and_join"):
+		_pipeline.cancel_active_bake_thread_and_join(max_wait_ms)
+
+
 func shutdown() -> void:
-	# Drop RefCounted cycles; release UI and backup state on editor shutdown.
+	cancel_active_bake_and_join()
 	_bake_in_progress = false
+	_bake_shutdown_requested = false
 	if _progress_ui and _progress_ui.has_method("shutdown"):
 		_progress_ui.shutdown()
 	if _backup and _backup.has_method("shutdown"):
@@ -87,6 +110,7 @@ func shutdown() -> void:
 func run_bake(volumes: Array[Node], root: Node = null, save_results: bool = true) -> void:
 	if volumes.is_empty() or _bake_in_progress:
 		return
+	_bake_shutdown_requested = false
 
 	save_to_disk = save_results
 	if root:
@@ -409,7 +433,7 @@ func _notify_volumes_viz_updated(volumes: Array[Node]) -> void:
 	var root = _get_edited_scene_root(volumes)
 	if not root:
 		return
-	var cfg = _BakeDiscovery.find_resonance_runtime(root, ResonanceRuntimeScript)
+	var cfg = _BakeDiscovery.find_resonance_runtime(root)
 	if not cfg:
 		return
 	var rt = cfg.get("runtime") if cfg else null

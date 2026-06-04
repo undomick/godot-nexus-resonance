@@ -3,8 +3,24 @@ name: Build GDExtension
 on:
   push:
     branches: [main, master]
+    paths:
+      - 'src/**'
+      - 'SConstruct'
+      - 'scripts/install_steam_audio.py'
+      - 'audio_resonance_tool/addons/nexus_resonance/**/*.gdextension'
+      - 'audio_resonance_tool/addons/nexus_resonance/bin/**'
+      - '.github/workflows/build.yml'
+      - '.github/scripts/**'
   pull_request:
     branches: [main, master]
+    paths:
+      - 'src/**'
+      - 'SConstruct'
+      - 'scripts/install_steam_audio.py'
+      - 'audio_resonance_tool/addons/nexus_resonance/**/*.gdextension'
+      - 'audio_resonance_tool/addons/nexus_resonance/bin/**'
+      - '.github/workflows/build.yml'
+      - '.github/scripts/**'
   workflow_dispatch:
 
 concurrency:
@@ -16,7 +32,7 @@ jobs:
     name: Check changes
     runs-on: ubuntu-latest
     outputs:
-      src: ${{ steps.result.outputs.src }}
+      cpp: ${{ steps.result.outputs.cpp }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -27,22 +43,26 @@ jobs:
         if: github.event_name != 'workflow_dispatch'
         with:
           filters: |
-            src:
+            cpp:
               - 'src/**'
-              - 'audio_resonance_tool/addons/nexus_resonance/**'
+              - 'SConstruct'
+              - 'scripts/install_steam_audio.py'
+              - 'audio_resonance_tool/addons/nexus_resonance/**/*.gdextension'
+              - 'audio_resonance_tool/addons/nexus_resonance/bin/**'
 
       - id: result
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "src=true" >> $GITHUB_OUTPUT
+            echo "cpp=true" >> $GITHUB_OUTPUT
           else
-            echo "src=${{ steps.filter.outputs.src }}" >> $GITHUB_OUTPUT
+            echo "cpp=${{ steps.filter.outputs.cpp }}" >> $GITHUB_OUTPUT
           fi
 
   build-linux-android:
     name: Linux / Android
     needs: changes
-    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.src == 'true'
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.cpp == 'true'
+    timeout-minutes: 90
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v5
@@ -127,7 +147,8 @@ jobs:
   build-windows:
     name: Windows (MSVC)
     needs: changes
-    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.src == 'true'
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.cpp == 'true'
+    timeout-minutes: 60
     runs-on: windows-2022
     defaults:
       run:
@@ -196,7 +217,8 @@ jobs:
   build-macos-ios:
     name: macOS / iOS
     needs: changes
-    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.src == 'true'
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.cpp == 'true'
+    timeout-minutes: 90
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v5

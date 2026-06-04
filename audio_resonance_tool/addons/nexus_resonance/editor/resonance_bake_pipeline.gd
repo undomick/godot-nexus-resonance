@@ -10,12 +10,15 @@ const _VolumeCtx = preload("res://addons/nexus_resonance/editor/resonance_bake_v
 const _BakeDiscovery = preload("res://addons/nexus_resonance/editor/resonance_bake_discovery.gd")
 const _BakeEstimates = preload("res://addons/nexus_resonance/editor/resonance_bake_estimates.gd")
 const _BakeHashes = preload("res://addons/nexus_resonance/editor/resonance_bake_hashes.gd")
+const _BakeValidation = preload("res://addons/nexus_resonance/editor/resonance_bake_validation.gd")
 
 const BAKE_INITIAL_DELAY_SEC := 1.5
 const BAKE_VOLUME_DELAY_SEC := 0.5
 const DEFAULT_BAKE_INFLUENCE_RADIUS := 10000.0
+const BAKE_THREAD_JOIN_TIMEOUT_MS := 5000
 
 var _runner: Object
+var _active_bake_thread: Thread = null
 
 
 func _init(runner: Object) -> void:
@@ -23,8 +26,26 @@ func _init(runner: Object) -> void:
 
 
 func shutdown() -> void:
-	# Break RefCounted reference cycles (runner <-> pipeline).
+	cancel_active_bake_thread_and_join(BAKE_THREAD_JOIN_TIMEOUT_MS)
 	_runner = null
+
+
+func cancel_active_bake_thread_and_join(max_wait_ms: int = BAKE_THREAD_JOIN_TIMEOUT_MS) -> void:
+	if _active_bake_thread == null:
+		return
+	if not _active_bake_thread.is_alive():
+		_active_bake_thread = null
+		return
+	var deadline_ms: int = Time.get_ticks_msec() + max_wait_ms
+	while _active_bake_thread.is_alive() and Time.get_ticks_msec() < deadline_ms:
+		OS.delay_msec(10)
+	if _active_bake_thread.is_alive():
+		push_warning(
+			"Nexus Resonance: Bake thread did not finish within %d ms during shutdown." % max_wait_ms
+		)
+	else:
+		_active_bake_thread.wait_to_finish()
+	_active_bake_thread = null
 
 
 func run_bake_pipeline_main_thread(volumes: Array[Node]) -> void:
@@ -126,7 +147,8 @@ func _wait_before_bake(tree: SceneTree) -> bool:
 
 func _run_in_thread_with_cancel_poll(bake_callable: Callable) -> Variant:
 	var result: Variant = null
-	var thread = Thread.new()
+	var thread := Thread.new()
+	_active_bake_thread = thread
 	thread.start(func() -> void: result = bake_callable.call())
 
 	var tree = _get_active_tree()
@@ -142,6 +164,8 @@ func _run_in_thread_with_cancel_poll(bake_callable: Callable) -> Variant:
 			srv.cancel_reflections_bake()
 			srv.cancel_pathing_bake()
 	thread.wait_to_finish()
+	if _active_bake_thread == thread:
+		_active_bake_thread = null
 	return result
 
 
@@ -231,6 +255,7 @@ func _bake_reflections(ctx: Variant) -> bool:
 		ctx.probe_data.set_static_listener_params_hash(0)
 	if ctx.bc.pathing_enabled:
 		ctx.need_pathing = true
+	_rebake_sets_static_pass_needed(ctx)
 	if ctx.probe_data.has_method("set_static_scene_params_hash"):
 		var uhash: int = _BakeHashes.compute_all_resonance_static_scenes_params_hash(ctx.root)
 		if uhash != 0:
@@ -262,12 +287,23 @@ func _bake_pathing(ctx: Variant) -> void:
 	)
 
 
+## Reflections rebake clears static hashes; force static passes when enabled (partial-rebake fix).
+static func _rebake_sets_static_pass_needed(ctx: Variant) -> void:
+	if ctx.add_flags.get("static_source", false):
+		ctx.need_static_source = true
+	if ctx.add_flags.get("static_listener", false):
+		ctx.need_static_listener = true
+
+
 func _bake_static_source(ctx: Variant) -> void:
 	var srv = ResonanceServerAccess.get_server()
-	# One STATICSOURCE pass per bake_sources entry (separate IR layer per outdoor emitter).
 	var entries: Array = ctx.static_source_entries
-	if entries.is_empty():
-		entries = [{"pos": ctx.player_pos, "radius": ctx.player_radius}]
+	var err := _BakeValidation.static_source_entries_error(ctx.add_flags.static_source, entries)
+	if not err.is_empty():
+		push_error(err)
+		if Engine.has_singleton("ResonanceLogger"):
+			Engine.get_singleton("ResonanceLogger").log(&"bake", err, {"volume": ctx.vol.name, "step": "static_source"})
+		return
 
 	var total: int = entries.size()
 	var all_ok: bool = true
@@ -293,8 +329,12 @@ func _bake_static_source(ctx: Variant) -> void:
 func _bake_static_listener(ctx: Variant) -> void:
 	var srv = ResonanceServerAccess.get_server()
 	var entries: Array = ctx.static_listener_entries
-	if entries.is_empty():
-		entries = [{"pos": ctx.listener_pos, "radius": ctx.listener_radius}]
+	var err := _BakeValidation.static_listener_entries_error(ctx.add_flags.static_listener, entries)
+	if not err.is_empty():
+		push_error(err)
+		if Engine.has_singleton("ResonanceLogger"):
+			Engine.get_singleton("ResonanceLogger").log(&"bake", err, {"volume": ctx.vol.name, "step": "static_listener"})
+		return
 
 	var total: int = entries.size()
 	var all_ok: bool = true
@@ -344,6 +384,9 @@ func _update_status(msg: String) -> void:
 
 
 func _is_canceled() -> bool:
+	if _runner and _runner.has_method("is_bake_cancel_requested"):
+		if _runner.is_bake_cancel_requested():
+			return true
 	var pui = _runner.get("_progress_ui") if _runner else null
 	return pui.cancel_requested if pui else false
 

@@ -21,7 +21,7 @@ struct ResonanceSteamAudioContextConfig {
     bool context_validation = false;
     int context_simd_level = -1;
     float hrtf_volume_db = 0.0f;
-    /// 0=None, 1=RMS — embedded default HRTF only.
+    /// 0=None, 1=RMS - embedded default HRTF only.
     int hrtf_normalization_type = 0;
     int max_simulation_sources = resonance::kMaxSimulationSources;
     Ref<ResonanceSOFAAsset> hrtf_sofa_asset;

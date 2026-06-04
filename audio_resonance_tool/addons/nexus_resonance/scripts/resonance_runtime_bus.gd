@@ -29,7 +29,9 @@ var _get_reverb_bus_name: Callable
 var _get_reverb_bus_send: Callable
 
 
-func _init(
+## Wires the runtime callables. Separate from construction so native (C++) owners can instantiate
+## parameterless and configure afterwards; GDScript callers do new() then setup().
+func setup(
 	get_bus_effective_cb: Callable,
 	get_reverb_bus_name_cb: Callable,
 	get_reverb_bus_send_cb: Callable
@@ -69,8 +71,9 @@ func ensure_reverb_bus_exists() -> bool:
 	return idx >= 0
 
 
-## Pushes effective buses and reverb split mode to every node in group [code]resonance_player[/code].
-func apply_bus_to_players(tree: SceneTree) -> void:
+## Pushes effective buses and reverb split mode to [code]resonance_player[/code] nodes.
+## Pass [param players] when the caller already collected the group (e.g. [ResonanceRuntime] per-frame cache).
+func apply_bus_to_players(tree: SceneTree, players: Array = []) -> void:
 	if tree == null:
 		return
 	var global_bus := get_bus_effective()
@@ -79,8 +82,10 @@ func apply_bus_to_players(tree: SceneTree) -> void:
 	var srv: Variant = ResonanceServerAccess.get_server_if_initialized()
 	if srv != null and srv.has_method("get_reflection_type"):
 		reflection_type = srv.get_reflection_type()
-	var players = tree.get_nodes_in_group("resonance_player")
-	for p in players:
+	var player_nodes: Array = players
+	if player_nodes.is_empty():
+		player_nodes = tree.get_nodes_in_group("resonance_player")
+	for p in player_nodes:
 		var cfg = p.get("player_config") if "player_config" in p else null
 		var effective_bus: StringName
 		if cfg and cfg.has_method("get_bus_name_effective"):

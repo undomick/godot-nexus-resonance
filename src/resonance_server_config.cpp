@@ -145,9 +145,6 @@ void ResonanceServerConfig::apply(const Dictionary& config,
     reverb_influence_radius = config_float(config, "reverb_influence_radius", reverb_influence_radius);
     if (reverb_influence_radius < 1.0f)
         reverb_influence_radius = 1.0f;
-    reverb_max_distance = config_float(config, "reverb_max_distance", reverb_max_distance);
-    if (reverb_max_distance < 0.0f)
-        reverb_max_distance = 0.0f;
     reverb_transmission_amount = config_float(config, "reverb_transmission_amount", reverb_transmission_amount);
     if (reverb_transmission_amount < 0.0f)
         reverb_transmission_amount = 0.0f;
@@ -155,8 +152,6 @@ void ResonanceServerConfig::apply(const Dictionary& config,
         reverb_transmission_amount = 1.0f;
     apply_occlusion_to_baked_reflections = config_bool(config, "apply_occlusion_to_baked_reflections",
                                                        apply_occlusion_to_baked_reflections);
-    apply_distance_curve_to_reflections = config_bool(config, "apply_distance_curve_to_reflections",
-                                                      apply_distance_curve_to_reflections);
     baked_reverb_use_listener_probe = config_bool(config, "baked_reverb_use_listener_probe",
                                                   baked_reverb_use_listener_probe);
     reflection_type = config_int(config, "reflection_type", reflection_type);

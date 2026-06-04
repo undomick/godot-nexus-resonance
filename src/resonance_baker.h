@@ -37,7 +37,7 @@ class ResonanceBaker {
         int generation_type,
         float height_above_floor);
 
-    /// Scene-aware probe placement (`iplProbeArrayGenerateProbes`); only GEN_CENTROID / GEN_UNIFORM_FLOOR — use `bake_manual_grid` for GEN_VOLUME.
+    /// Scene-aware probe placement (`iplProbeArrayGenerateProbes`); only GEN_CENTROID / GEN_UNIFORM_FLOOR - use `bake_manual_grid` for GEN_VOLUME.
     /// `progress_callback`: optional synchronous progress; `pathing_scheduled`: defer disk save until pathing bake finishes.
     bool bake_with_probe_array(
         IPLContext context,
@@ -128,13 +128,18 @@ class ResonanceBaker {
     /// Probe count in serialized probe data, or -1 if load fails.
     int32_t probe_data_get_num_probes(IPLContext context, Ref<ResonanceProbeData> probe_data_res) const;
 
-    /// `iplProbeBatchRemoveProbe` + reserialize; drop matching `probe_positions` entry; clears pathing hash — reload batch in runtime if live.
+    /// `iplProbeBatchRemoveProbe` + reserialize; drop matching `probe_positions` entry; clears pathing hash - reload batch in runtime if live.
     bool probe_data_remove_probe_at_index(IPLContext context, Ref<ResonanceProbeData> probe_data_res, int32_t index) const;
 
     /// `iplProbeBatchRemoveData`: type 0 = reflections, 1 = pathing; variation 0–3 = reverb / static source / static listener / dynamic.
     /// Endpoint sphere must match the original bake for static variations.
     bool probe_data_remove_baked_data_layer(IPLContext context, Ref<ResonanceProbeData> probe_data_res, int baked_data_type,
                                             int variation, Vector3 endpoint, float influence_radius) const;
+
+    /// Weighted sum of STATICSOURCE energy fields from probes near [listener_position] (audit / cliff diagnosis).
+    float probe_data_static_source_interpolated_energy(IPLContext context, Ref<ResonanceProbeData> probe_data_res, Vector3 endpoint_position,
+                                                       float influence_radius, Vector3 listener_position, float neighbor_radius_m,
+                                                       int* out_probes_with_data = nullptr, int* out_probes_missing = nullptr) const;
 
   private:
     bool _bake_static_endpoint(

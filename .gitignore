@@ -2,7 +2,7 @@
 .godot/
 .nomedia
 
-# Local toolchain extracts (e.g. LLVM for clang-format matching CI)
+# Local toolchain extracts
 .tools/
 
 # Visual Studio
@@ -17,6 +17,10 @@ src/lib/steamaudio/
 # SCons database
 .sconsign.dblite
 compile_commands.json
+
+# Local runtime logs
+logs/*
+!logs/.gitkeep
 
 # Build artifacts
 build/

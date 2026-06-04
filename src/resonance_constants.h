@@ -1,6 +1,7 @@
 #ifndef RESONANCE_CONSTANTS_H
 #define RESONANCE_CONSTANTS_H
 
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -9,7 +10,7 @@ namespace resonance {
 
 /// Version string (centralized; override via NEXUS_RESONANCE_VERSION when building)
 #ifndef NEXUS_RESONANCE_VERSION
-#define NEXUS_RESONANCE_VERSION "0.9.18"
+#define NEXUS_RESONANCE_VERSION "0.9.19"
 #endif
 constexpr const char* kVersion = NEXUS_RESONANCE_VERSION;
 
@@ -29,7 +30,7 @@ constexpr int kEosInputEndTaperMaxSamples = 4800; // ~100ms @ 48k
 /// Host-side fades (ms → samples via `host_fade_samples_from_ms`); scale with sample rate.
 constexpr float kPlaybackHostFadeInMs = 8.7f;   // ~384 samples @ 44.1 kHz
 constexpr float kPlaybackHostFadeOutMs = 17.4f; // ~768 samples @ 44.1 kHz
-/// Optional extra ramps on stop/start (default off—stack with EOS tapers and repeated `play()`).
+/// Optional extra ramps on stop/start (default off-stack with EOS tapers and repeated `play()`).
 constexpr bool kPlaybackHostFadeOutEnabled = false;
 constexpr bool kPlaybackHostFadeInEnabled = false;
 
@@ -40,6 +41,16 @@ inline int host_fade_samples_from_ms(float ms, int sample_rate) {
 }
 /// Warm-up: mute spatial output until this many `iplSimulatorRunDirect` ticks (avoids early unoccluded direct).
 constexpr int kSpatialAudioWarmupWorkerPasses = 6;
+
+/// Lock-free gate for player spatial output: warmup done and Phonon scene committed when triangles exist.
+inline bool spatial_audio_geometry_gate_allows_output(int warmup_passes_remaining, int triangle_count,
+                                                      bool phonon_scene_audio_ready) {
+    if (warmup_passes_remaining > 0)
+        return false;
+    if (triangle_count > 0 && !phonon_scene_audio_ready)
+        return false;
+    return true;
+}
 
 /// Default reverb/IR duration in seconds (used for irSize = sample_rate * duration)
 constexpr float kDefaultReverbDurationSec = 2.0f;
@@ -68,6 +79,9 @@ constexpr int kBakeDefaultNumThreads = 2;
 constexpr int kBakeAmbisonicsOrderMin = 1;
 constexpr int kBakeAmbisonicsOrderMax = 3;
 constexpr int kBakeDefaultAmbisonicsOrder = 1;
+
+/// STATICSOURCE cliff audit: probe neighborhood radius for baked-energy readback.
+constexpr float kStaticSourceProbeNeighborRadiusM = 4.0f;
 
 inline int clamp_bake_ambisonics_order(int order) {
     if (order < kBakeAmbisonicsOrderMin)
@@ -106,6 +120,7 @@ constexpr float kSimulatorIrradianceMinDistance = 0.1f;
 
 /// Parametric reverb / pathing EQ band count (low/mid/high).
 constexpr int kReverbBandCount = 3;
+using AudioBands3 = std::array<float, kReverbBandCount>;
 /// Path EQ coefficient clamp (IPL allows [0, ∞)).
 constexpr float kPathEQCoeffMin = 1e-6f;
 constexpr float kPathEQCoeffMax = 1.0f;
@@ -139,6 +154,13 @@ constexpr float kDegenerateVectorEpsilonSq = 1e-16f;
 
 /// Transform-only geometry notifies + dynamic instanced-mesh enqueue share this cadence so scene_dirty / queues do not fire every frame (matches former geometry_update_throttle default of 4).
 constexpr int kGeometryTransformCoalesceInterval = 4;
+
+/// Max rays traced per get_ray_debug_segments* call (caps main-thread cost when max_rays is high).
+constexpr int kRayDebugVizMaxRaysPerCall = 512;
+/// Pathing debug: max segments stored per RunPathing tick (callback push_back).
+constexpr int kPathingVisMaxSegmentsPerTick = 4096;
+/// Pathing debug: max segments copied into Godot Array per get_pathing_visualization_segments call.
+constexpr int kPathingVisMaxSegmentsReturned = 2048;
 
 /// Ray debug visualization max distance for reflection ray tracing
 constexpr float kRayDebugMaxDistance = 500.0f;
@@ -198,6 +220,9 @@ inline uint64_t fnv1a_hash(const uint8_t* data, size_t size) {
 }
 /// Inter-callback time threshold (us) above which _mix is counted as "late" for dropout diagnostics
 constexpr uint64_t kLateMixThresholdUs = 15000;
+
+/// Max ResonancePlayer polyphony voices in the lock-free snapshot read by the audio thread.
+constexpr int kMaxPlayerPolyphonySnapshot = 32;
 
 /// Worker ticks to skip iplSimulatorRunPathing after a caught SEH fault (Windows; reduces repeated AV)
 constexpr int kPathingCrashCooldownTicks = 5;
