@@ -221,6 +221,33 @@ void ResonanceServer::enqueue_source_update(int32_t handle, const SourceUpdatePa
     source_update_batch_[handle] = params;
 }
 
+int ResonanceServer::_apply_source_update_batch(const std::vector<std::pair<int32_t, SourceUpdateParams>>& batch) {
+    int applied = 0;
+    for (const auto& kv : batch) {
+        IPLSource src = source_manager.get_source(kv.first);
+        if (!src)
+            continue;
+        _update_source_internal(src, kv.first, kv.second);
+        iplSourceRelease(&src);
+        applied++;
+    }
+    return applied;
+}
+
+void ResonanceServer::_flush_pending_source_updates_assume_locked() {
+    std::vector<std::pair<int32_t, SourceUpdateParams>> batch;
+    {
+        std::lock_guard<std::mutex> lock(source_update_batch_mutex_);
+        if (source_update_batch_.empty())
+            return;
+        batch.reserve(source_update_batch_.size());
+        for (const auto& kv : source_update_batch_)
+            batch.push_back(kv);
+        source_update_batch_.clear();
+    }
+    _apply_source_update_batch(batch);
+}
+
 void ResonanceServer::flush_pending_source_updates() {
     // If the worker holds simulation_mutex, merge back only handles not updated while flushing - never block main.
     std::vector<std::pair<int32_t, SourceUpdateParams>> batch;
@@ -242,13 +269,7 @@ void ResonanceServer::flush_pending_source_updates() {
         }
         return;
     }
-    for (const auto& kv : batch) {
-        IPLSource src = source_manager.get_source(kv.first);
-        if (!src)
-            continue;
-        _update_source_internal(src, kv.first, kv.second);
-        iplSourceRelease(&src);
-    }
+    _apply_source_update_batch(batch);
 }
 
 void ResonanceServer::set_source_attenuation_callback_data(int32_t handle, int attenuation_mode, float min_distance, float max_distance, const PackedFloat32Array& curve_samples) {

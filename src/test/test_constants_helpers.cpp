@@ -43,3 +43,8 @@ TEST_CASE("spatial_audio_geometry_gate_allows_output warmup and commit", "[const
     REQUIRE(spatial_audio_geometry_gate_allows_output(0, 100, true));
     REQUIRE(kSpatialAudioWarmupWorkerPasses > 0);
 }
+
+TEST_CASE("process priority chain listener before player before runtime", "[constants]") {
+    REQUIRE(kResonanceListenerProcessPriority > kResonancePlayerProcessPriority);
+    REQUIRE(kResonancePlayerProcessPriority > kResonanceRuntimeProcessPriority);
+}

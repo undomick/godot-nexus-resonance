@@ -617,6 +617,8 @@ class ResonanceServer : public Object {
     /// Runs at the start of every worker tick so [method create_source_handle] / [method destroy_source_handle]
     /// can return immediately on the main thread without blocking on simulation_mutex.
     void _drain_pending_source_lifecycle_assume_locked();
+    /// Requires simulation_mutex. Applies [member source_update_batch_] before RunDirect/RunReflections.
+    void _flush_pending_source_updates_assume_locked();
     /// Requires simulation_mutex.
     void _drain_pathing_probe_batch_releases();
     /// Thread-safe: true when handle was created but the worker hasn't yet run iplSourceAdd on the simulator.
@@ -680,6 +682,7 @@ class ResonanceServer : public Object {
 
     SourceUpdateParams _default_new_source_params() const;
     void _update_source_internal(IPLSource source, int32_t handle, const SourceUpdateParams& params);
+    int _apply_source_update_batch(const std::vector<std::pair<int32_t, SourceUpdateParams>>& batch);
     void _maybe_apply_baked_reverb_listener_reflection_inputs(IPLSource src, int32_t handle, const IPLSimulationInputs& inputs,
                                                               const SourceUpdateParams& params, IPLSimulationFlags sim_flags,
                                                               bool enable_reflections);
@@ -1016,7 +1019,7 @@ class ResonanceServer : public Object {
     bool try_update_source(int32_t handle, const SourceUpdateParams& params);
     /// Queue for flush_pending_source_updates (one simulation_mutex lock per frame).
     void enqueue_source_update(int32_t handle, const SourceUpdateParams& params);
-    /// Apply all [method enqueue_source_update] entries (try_lock; re-queues on failure). Call once per frame after [method tick] when batching is on.
+    /// Apply all [method enqueue_source_update] entries (try_lock; re-queues on failure). Worker also drains the batch at sim tick start.
     void flush_pending_source_updates();
     bool uses_batch_source_updates() const { return batch_source_updates; }
     /// Set attenuation callback data for Linear/Curve modes. Call before update_source when attenuation_mode is 1 or 2.

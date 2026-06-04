@@ -1,3 +1,4 @@
+#include "resonance_listener.h"
 #include "resonance_runtime.h"
 #include "resonance_server.h"
 
@@ -128,6 +129,7 @@ void ResonanceRuntime::apply_resonance_viewport_to_server(Viewport* vp, bool use
             vp_sync_last_had_listener_nodes = false;
         } else {
             vp_sync_last_had_listener_nodes = true;
+            ResonanceListener::sync_viewport_listeners_to_server(vp, listener_nodes);
         }
     }
     vp_sync_cache_valid = true;
@@ -147,6 +149,13 @@ void ResonanceRuntime::sync_physics_process_for_custom_tracer() {
     }
     const bool custom = srv->uses_custom_ray_tracer();
     set_physics_process(custom);
+    if (is_inside_tree()) {
+        SceneTree* tree = get_tree();
+        if (tree) {
+            tree->call_group_flags(
+                SceneTree::GROUP_CALL_DEFERRED, "resonance_listener", "_apply_process_mode_for_tracer");
+        }
+    }
     if (custom) {
         warn_custom_tracer_main_thread_sim(srv);
     }
@@ -215,16 +224,16 @@ void ResonanceRuntime::_process(double delta) {
                 const uint64_t tv = Time::get_singleton()->get_ticks_usec();
                 apply_resonance_viewport_to_server(vp, false);
                 main_thread_viewport_usec = usec_since(tv);
-                const uint64_t tt = Time::get_singleton()->get_ticks_usec();
-                srv->tick(delta);
-                main_thread_tick_usec = usec_since(tt);
                 const uint64_t tf = Time::get_singleton()->get_ticks_usec();
                 srv->flush_pending_source_updates();
                 main_thread_flush_usec = usec_since(tf);
+                const uint64_t tt = Time::get_singleton()->get_ticks_usec();
+                srv->tick(delta);
+                main_thread_tick_usec = usec_since(tt);
             } else {
                 apply_resonance_viewport_to_server(vp, false);
-                srv->tick(delta);
                 srv->flush_pending_source_updates();
+                srv->tick(delta);
             }
         }
     }
@@ -264,15 +273,15 @@ void ResonanceRuntime::_physics_process(double delta) {
         }
     }
     if (uses_full_frame_timing()) {
-        const uint64_t tt = Time::get_singleton()->get_ticks_usec();
-        srv->tick(delta);
-        runtime_physics_server_tick_usec = usec_since(tt);
         const uint64_t tf = Time::get_singleton()->get_ticks_usec();
         srv->flush_pending_source_updates();
         runtime_physics_flush_usec = usec_since(tf);
-    } else {
+        const uint64_t tt = Time::get_singleton()->get_ticks_usec();
         srv->tick(delta);
+        runtime_physics_server_tick_usec = usec_since(tt);
+    } else {
         srv->flush_pending_source_updates();
+        srv->tick(delta);
     }
     runtime_physics_tick_usec = usec_since(t0);
 

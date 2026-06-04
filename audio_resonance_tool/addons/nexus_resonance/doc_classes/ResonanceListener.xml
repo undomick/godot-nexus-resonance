@@ -6,6 +6,8 @@
 	<description>
 		Reports listener position and orientation to [ResonanceServer] each frame from this node's global transform (forward = -Z, up = Y). Attach as a child of a [Camera3D] so the listener follows the camera.
 		Only the listener under the active viewport camera drives the server; other listeners stay inactive so they do not overwrite the active pose. When no ResonanceListener is in the scene, [ResonanceRuntime] falls back to the active camera transform.
+		Listener updates run at process priority 101, before [ResonancePlayer] (90) and [ResonanceRuntime] (0). The runtime flushes pending source updates, then ticks the simulator so inverse distance attenuation uses the current source pose.
+		With the Custom scene tracer, listener sync runs in `_physics_process` instead of `_process`.
 		Draws reflection debug rays from this node's origin when [member ResonanceRuntimeConfig.realtime_rays] is greater than 0 on [member ResonanceRuntime.runtime] and the player overlay is active on [ResonanceRuntime] ([member ResonanceRuntime.enable_debug] plus the overlay toggle key).
 		On Windows, pathing is protected by an SEH safety net when the listener moves through solid geometry; you do not need to disable [member listener_valid] for those cases.
 	</description>

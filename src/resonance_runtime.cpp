@@ -1,4 +1,5 @@
 #include "resonance_runtime.h"
+#include "resonance_constants.h"
 #include "resonance_key_enum_hint.h"
 #include "resonance_server.h"
 
@@ -63,8 +64,8 @@ void ResonanceRuntime::_ready() {
     if (!editor_hint()) {
         live_game_runtime_count++;
     }
-    set_process_priority(100);
-    set_physics_process_priority(100);
+    set_process_priority(resonance::kResonanceRuntimeProcessPriority);
+    set_physics_process_priority(resonance::kResonanceRuntimeProcessPriority);
     // Physics tick runs only with the Custom (Godot Physics) tracer; sync_physics_process_for_custom_tracer
     // enables it after the server reports the tracer (1.3d). Off until then.
     set_physics_process(false);

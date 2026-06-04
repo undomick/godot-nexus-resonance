@@ -12,6 +12,9 @@ using namespace godot;
 
 void ResonanceListener::_enter_tree() {
     add_to_group("resonance_listener");
+    set_process_priority(resonance::kResonanceListenerProcessPriority);
+    set_physics_process_priority(resonance::kResonanceListenerProcessPriority);
+    call_deferred("_apply_process_mode_for_tracer");
 }
 
 void ResonanceListener::_exit_tree() {
@@ -19,24 +22,30 @@ void ResonanceListener::_exit_tree() {
     remove_from_group("resonance_listener");
 }
 
-void ResonanceListener::_process(double delta) {
-    Engine* eng = Engine::get_singleton();
-    if (eng && eng->is_editor_hint())
-        return;
+bool ResonanceListener::_listener_sync_uses_physics() const {
+    return listener_sync_uses_physics_;
+}
 
+void ResonanceListener::_apply_process_mode_for_tracer() {
+    Engine* eng = Engine::get_singleton();
+    if (eng && eng->is_editor_hint()) {
+        set_physics_process(false);
+        listener_sync_uses_physics_ = false;
+        return;
+    }
+    ResonanceServer* server = ResonanceServer::get_singleton();
+    const bool custom = server && server->is_initialized() && server->uses_custom_ray_tracer();
+    listener_sync_uses_physics_ = custom;
+    set_physics_process(custom);
+}
+
+void ResonanceListener::_push_listener_pose_if_active(Camera3D* cam) {
     ResonanceServer* server = ResonanceServer::get_singleton();
     if (!server || !server->is_initialized())
         return;
 
-    // Only update when this listener is in the active viewport path (descendant of viewport's camera).
-    // With multiple listeners (e.g. split-screen), only the one under the active camera drives the server.
-    Viewport* vp = get_viewport();
-    Camera3D* cam = vp ? vp->get_camera_3d() : nullptr;
     const bool drives_server = cam && cam->is_ancestor_of(this);
     if (!drives_server) {
-        // Do not call update_listener when inactive - it would overwrite the active listener pose
-        // (camera-driven fallback in ResonanceRuntime, or another listener under the active camera).
-        // Clear validity so pathing does not run against stale pending_listener_valid state.
         server->set_listener_valid(false);
         return;
     }
@@ -47,9 +56,26 @@ void ResonanceListener::_process(double delta) {
     Vector3 position = gt.origin;
     Vector3 forward = -gt.basis.get_column(2);
     Vector3 up = gt.basis.get_column(1);
-
     server->update_listener(position, forward, up);
+}
 
+void ResonanceListener::sync_viewport_listeners_to_server(Viewport* vp, const TypedArray<Node>& listener_nodes) {
+    if (!vp)
+        return;
+    ResonanceServer* server = ResonanceServer::get_singleton();
+    if (!server || !server->is_initialized())
+        return;
+    Camera3D* cam = vp->get_camera_3d();
+    for (int i = 0; i < listener_nodes.size(); i++) {
+        ResonanceListener* rl = Object::cast_to<ResonanceListener>(listener_nodes[i]);
+        if (rl)
+            rl->_push_listener_pose_if_active(cam);
+    }
+}
+
+void ResonanceListener::_sync_reflection_debug_viz(ResonanceServer* server) {
+    if (!server)
+        return;
     if (server->wants_debug_reflection_viz()) {
         Array segments = server->get_ray_debug_segments();
         if (!segments.is_empty()) {
@@ -65,6 +91,33 @@ void ResonanceListener::_process(double delta) {
         if (reflection_mesh_instance)
             reflection_mesh_instance->set_visible(false);
     }
+}
+
+void ResonanceListener::_sync_listener_tick(double delta, bool use_physics_frame) {
+    (void)delta;
+    if (use_physics_frame != listener_sync_uses_physics_)
+        return;
+
+    Engine* eng = Engine::get_singleton();
+    if (eng && eng->is_editor_hint())
+        return;
+
+    ResonanceServer* server = ResonanceServer::get_singleton();
+    if (!server || !server->is_initialized())
+        return;
+
+    Viewport* vp = get_viewport();
+    Camera3D* cam = vp ? vp->get_camera_3d() : nullptr;
+    _push_listener_pose_if_active(cam);
+    _sync_reflection_debug_viz(server);
+}
+
+void ResonanceListener::_process(double delta) {
+    _sync_listener_tick(delta, false);
+}
+
+void ResonanceListener::_physics_process(double delta) {
+    _sync_listener_tick(delta, true);
 }
 
 void ResonanceListener::_ensure_reflection_viz() {
@@ -113,5 +166,10 @@ void ResonanceListener::_draw_reflection_rays(const Array& segments) {
 void ResonanceListener::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_listener_valid", "valid"), &ResonanceListener::set_listener_valid);
     ClassDB::bind_method(D_METHOD("is_listener_valid"), &ResonanceListener::is_listener_valid);
+    ClassDB::bind_static_method(
+        "ResonanceListener",
+        D_METHOD("sync_viewport_listeners_to_server", "viewport", "listener_nodes"),
+        &ResonanceListener::sync_viewport_listeners_to_server);
+    ClassDB::bind_method(D_METHOD("_apply_process_mode_for_tracer"), &ResonanceListener::_apply_process_mode_for_tracer);
     ADD_PROPERTY(PropertyInfo(Variant::BOOL, "listener_valid"), "set_listener_valid", "is_listener_valid");
 }

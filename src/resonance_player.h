@@ -599,6 +599,7 @@ class ResonancePlayer : public AudioStreamPlayer3D {
     ResonancePlayer() = default;
     ~ResonancePlayer() override;
 
+    void _enter_tree() override;
     void _ready() override;
     void _process(double delta) override;
     void _exit_tree() override;

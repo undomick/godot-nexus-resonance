@@ -42,6 +42,11 @@ inline int host_fade_samples_from_ms(float ms, int sample_rate) {
 /// Warm-up: mute spatial output until this many `iplSimulatorRunDirect` ticks (avoids early unoccluded direct).
 constexpr int kSpatialAudioWarmupWorkerPasses = 6;
 
+/// Godot process priority (higher = earlier). Chain: listener -> players enqueue source -> runtime flush + tick.
+constexpr int kResonanceListenerProcessPriority = 101;
+constexpr int kResonancePlayerProcessPriority = 90;
+constexpr int kResonanceRuntimeProcessPriority = 0;
+
 /// Lock-free gate for player spatial output: warmup done and Phonon scene committed when triangles exist.
 inline bool spatial_audio_geometry_gate_allows_output(int warmup_passes_remaining, int triangle_count,
                                                       bool phonon_scene_audio_ready) {

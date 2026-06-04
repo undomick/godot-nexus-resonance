@@ -230,6 +230,7 @@ uint64_t ResonanceServer::_run_pathing_sim_assume_locked(bool run_pathing_sim) {
 void ResonanceServer::_run_phonon_simulation_locked(const IPLCoordinateSpace3& current_listener, bool run_direct, bool run_reflection_sim,
                                                     bool run_pathing_sim) {
     _drain_pending_source_lifecycle_assume_locked();
+    _flush_pending_source_updates_assume_locked();
     const auto td0 = std::chrono::steady_clock::now();
     _apply_queued_dynamic_instanced_mesh_transforms_assume_locked();
     const auto td1 = std::chrono::steady_clock::now();

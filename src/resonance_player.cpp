@@ -375,6 +375,10 @@ Ref<AudioStreamPlayback> ResonanceReverbStream::_instantiate_playback() const {
     return pb;
 }
 
+void ResonancePlayer::_enter_tree() {
+    set_process_priority(resonance::kResonancePlayerProcessPriority);
+}
+
 void ResonancePlayer::_ready() {
     Engine* eng = Engine::get_singleton();
     if (eng && eng->is_editor_hint())
