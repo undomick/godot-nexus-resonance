@@ -209,7 +209,6 @@ const _EXTRA_MONITORS: Array[Dictionary] = [
 	},
 ]
 
-
 ## Owning [ResonanceRuntime] node; set on [method register] / [method tick]. Source of [method ResonanceRuntime.get_frame_timings].
 var _owner: Node = null
 var _level: int = PERF_MONITORS_OFF

@@ -4,7 +4,9 @@ class_name ResonanceCodaBridge
 ## Connects Nexus Coda event voices to ResonanceServer source handles (Option A).
 ## Applies occlusion/transmission/distance as volume_db on Coda's AudioStreamPlayer pool.
 
-const VoiceSyncScript := preload("res://addons/nexus_resonance/scripts/resonance_coda_voice_sync.gd")
+const VoiceSyncScript := preload(
+	"res://addons/nexus_resonance/scripts/resonance_coda_voice_sync.gd"
+)
 
 const _POS_EPS := 1e-4
 
@@ -20,7 +22,9 @@ func init(coda_runtime: Node, resonance_runtime: Node) -> bool:
 	if _coda == null:
 		return false
 	if not _coda.has_signal("voice_started") or not _coda.has_signal("voice_finished"):
-		push_warning("ResonanceCodaBridge: Coda runtime missing voice_started/voice_finished signals.")
+		push_warning(
+			"ResonanceCodaBridge: Coda runtime missing voice_started/voice_finished signals."
+		)
 		return false
 	if not _coda.voice_started.is_connected(_on_voice_started):
 		_coda.voice_started.connect(_on_voice_started)
@@ -207,7 +211,6 @@ func _coda_handle_id(handle: Variant) -> int:
 	if "id" in handle:
 		return int(handle.id)
 	return handle.get_instance_id()
-
 
 ## TODO: Timeline voices — one Resonance handle per lane player in timeline dispatchers.
 ## TODO: BLEND siblings — separate source handle per parallel graph voice.

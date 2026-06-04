@@ -107,9 +107,7 @@ const WARN_SAVE_SCENE_TO_PERSIST := " - Save scene to persist mesh_asset."
 # --- Info (console) ---
 const DIALOG_EXPORT_JOB_TITLE := "Nexus Resonance - Export"
 const INFO_EXPORT_JOB_RUNNING := "Export in progress..."
-const WARN_EXPORT_JOB_ALREADY_RUNNING := (
-	"An export is already running. Wait for it to finish or cancel the progress dialog."
-)
+const WARN_EXPORT_JOB_ALREADY_RUNNING := "An export is already running. Wait for it to finish or cancel the progress dialog."
 const INFO_STATIC_UNCHANGED := "Static geometry unchanged (hash match). Skipping export."
 const INFO_STATIC_EXPORTED := "Static scene exported to %s. ResonanceStaticScene updated."
 const INFO_DYNAMIC_EXPORTED := "Dynamic mesh exported to %s"

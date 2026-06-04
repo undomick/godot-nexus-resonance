@@ -41,7 +41,10 @@ func cancel_active_bake_thread_and_join(max_wait_ms: int = BAKE_THREAD_JOIN_TIME
 		OS.delay_msec(10)
 	if _active_bake_thread.is_alive():
 		push_warning(
-			"Nexus Resonance: Bake thread did not finish within %d ms during shutdown." % max_wait_ms
+			(
+				"Nexus Resonance: Bake thread did not finish within %d ms during shutdown."
+				% max_wait_ms
+			)
 		)
 	else:
 		_active_bake_thread.wait_to_finish()
@@ -302,7 +305,9 @@ func _bake_static_source(ctx: Variant) -> void:
 	if not err.is_empty():
 		push_error(err)
 		if Engine.has_singleton("ResonanceLogger"):
-			Engine.get_singleton("ResonanceLogger").log(&"bake", err, {"volume": ctx.vol.name, "step": "static_source"})
+			Engine.get_singleton("ResonanceLogger").log(
+				&"bake", err, {"volume": ctx.vol.name, "step": "static_source"}
+			)
 		return
 
 	var total: int = entries.size()
@@ -333,7 +338,9 @@ func _bake_static_listener(ctx: Variant) -> void:
 	if not err.is_empty():
 		push_error(err)
 		if Engine.has_singleton("ResonanceLogger"):
-			Engine.get_singleton("ResonanceLogger").log(&"bake", err, {"volume": ctx.vol.name, "step": "static_listener"})
+			Engine.get_singleton("ResonanceLogger").log(
+				&"bake", err, {"volume": ctx.vol.name, "step": "static_listener"}
+			)
 		return
 
 	var total: int = entries.size()

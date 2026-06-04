@@ -794,13 +794,10 @@ func _refresh_reverb_bus() -> void:
 				)
 			)
 		)
-	(
-		compact
-		. append(
-			(
-				"[color=%s]Fetch reverb:[/color] [color=%s]miss %.1f%%[/color] (hit=%d miss=%d skip=%d)"
-				% [COLOR_NEUTRAL, miss_col, miss_pct, fetch_hit, fetch_miss, fetch_skip]
-			)
+	compact.append(
+		(
+			"[color=%s]Fetch reverb:[/color] [color=%s]miss %.1f%%[/color] (hit=%d miss=%d skip=%d)"
+			% [COLOR_NEUTRAL, miss_col, miss_pct, fetch_hit, fetch_miss, fetch_skip]
 		)
 	)
 	if srv.has_method("get_pathing_instrumentation"):

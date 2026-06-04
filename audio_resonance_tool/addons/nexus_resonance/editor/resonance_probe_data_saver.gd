@@ -6,7 +6,6 @@ class_name ResonanceProbeDataSaver
 ## [.bak] saves are rejected (backups are file copies; saving here caused take_over_path → .bak chains).
 ## Writes via tmp + rename. Per-path Mutex serializes concurrent saves to the same file.
 
-
 static var _path_mutexes: Dictionary = {}
 
 
