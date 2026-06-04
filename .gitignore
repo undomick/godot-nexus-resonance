@@ -35,3 +35,6 @@ audio_resonance_tool/addons/nexus_resonance/bin/
 
 # GUT sidecar mesh test output (ResourceSaver)
 audio_resonance_tool/test/unit/_gut_reso_sidecar/
+
+# Affinity Designer lock files while a document is open (repo-root icons/ sources)
+*~lock~
