@@ -105,8 +105,9 @@ if env["platform"] == "ios":
         source=sources,
     )
 else:
+    lib_prefix = "lib" if env["platform"] in ["android", "linux", "macos"] else ""
     library = env.SharedLibrary(
-        target=target_path + target_name,
+        target=target_path + lib_prefix + target_name,
         source=sources,
     )
 

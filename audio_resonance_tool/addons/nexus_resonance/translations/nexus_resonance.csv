@@ -1,103 +1,1195 @@
-keys,en
-"Nexus Resonance","Nexus Resonance"
-"Bake Probes","Bake Probes"
-"Export Mesh","Export Mesh"
-"Clear","Clear"
-"Cancel","Cancel"
-"Continue","Continue"
-"Bake Anyway","Bake Anyway"
-"Undo","Undo"
-"Preview Bake Settings","Preview Bake Settings"
-"Documentation","Documentation"
-"Export Active Scene","Export Active Scene"
-"Export All Open Scenes","Export All Open Scenes"
-"Export Active Scene To OBJ (Debug)","Export Active Scene To OBJ (Debug)"
-"Export Dynamic Objects In Active Scene","Export Dynamic Objects In Active Scene"
-"Export Dynamic Objects In All Scenes In Build","Export Dynamic Objects In All Scenes In Build"
-"Export All Dynamic Objects In Project","Export All Dynamic Objects In Project"
-"Clear Unreferenced Probe Data","Clear Unreferenced Probe Data"
-"Bake All Probe Volumes In Active Scene","Bake All Probe Volumes In Active Scene"
-"Clear Probe Batches","Clear Probe Batches"
-"Unlink Probe Volume References","Unlink Probe Volume References"
-"Nexus Resonance - Bake Failed","Nexus Resonance - Bake Failed"
-"Nexus Resonance - Export Failed","Nexus Resonance - Export Failed"
-"Nexus Resonance - Save Failed","Nexus Resonance - Save Failed"
-"Nexus Resonance - GDExtension Not Loaded","Nexus Resonance - GDExtension Not Loaded"
-"Nexus Resonance - Pre-Bake Check","Nexus Resonance - Pre-Bake Check"
-"Nexus Resonance - Baking","Nexus Resonance - Baking"
-"Nexus Resonance - Backup","Nexus Resonance - Backup"
-"A backup of current Probe Volume data will be created before baking. You can undo the bake to restore the previous data.","A backup of current Probe Volume data will be created before baking. You can undo the bake to restore the previous data."
-"Preparing...","Preparing..."
-"Processing...","Processing..."
-"Baking reverb probes","Baking reverb probes"
-"Baking pathing","Baking pathing"
-"Baking static source","Baking static source"
-"Baking static listener","Baking static listener"
-"Skipping (up-to-date)","Skipping (up-to-date)"
-"Estimated time: %s","Estimated time: %s"
-"Stage %d of %d","Stage %d of %d"
-"%d probes","%d probes"
-"Details","Details"
-"Status","Status"
-"No scene open.","No scene open."
-"GDExtension not loaded.","GDExtension not loaded."
-"Export failed with error %s","Export failed with error %s"
-"Scene not exported. Use Tools > Nexus Resonance > Export Active Scene before baking.","Scene not exported. Use Tools > Nexus Resonance > Export Active Scene before baking."
-"Bake runner not initialized.","Bake runner not initialized."
-"ResonanceServer lacks export_static_scene_to_asset. Update the addon.","ResonanceServer lacks export_static_scene_to_asset. Update the addon."
-"ResonanceSOFAAsset not available.","ResonanceSOFAAsset not available."
-"Bake failed. Check Editor output.","Bake failed. Check Editor output."
-"Failed to build config.","Failed to build config."
-"Failed to save: %s","Failed to save: %s"
-"No main scene configured.","No main scene configured."
-"Failed to load main scene: %s","Failed to load main scene: %s"
-"Addon and GDExtension may be out of sync.","Addon and GDExtension may be out of sync."
-"Update the Nexus Resonance addon and GDExtension to matching versions.","Update the Nexus Resonance addon and GDExtension to matching versions."
-"Set application/run/main_scene in Project Settings.","Set application/run/main_scene in Project Settings."
-"Failed to create audio_data directory (error %d). Ensure res:// is writable.","Failed to create audio_data directory (error %d). Ensure res:// is writable."
-"Failed to create resonance_meshes directory (error %d). Ensure res:// is writable.","Failed to create resonance_meshes directory (error %d). Ensure res:// is writable."
-"No ResonanceDynamicGeometry in scene. Nothing to export.","No ResonanceDynamicGeometry in scene. Nothing to export."
-"Select one or more ResonanceProbeVolume nodes, then run this to unlink references before deleting.","Select one or more ResonanceProbeVolume nodes, then run this to unlink references before deleting."
-"No ResonancePlayer in this scene points to the selected Probe Volume(s).","No ResonancePlayer in this scene points to the selected Probe Volume(s)."
-"No ResonanceProbeVolume in scene. Nothing to bake.","No ResonanceProbeVolume in scene. Nothing to bake."
-"Add ResonanceRuntime with valid ResonanceRuntimeConfig to the scene.","Add ResonanceRuntime with valid ResonanceRuntimeConfig to the scene."
-"Server init failed.","Server init failed."
-"Bake runner not set. Cannot bake.","Bake runner not set. Cannot bake."
-"Scene has no ResonanceRuntime. Add ResonanceRuntime for export to make sense.","Scene has no ResonanceRuntime. Add ResonanceRuntime for export to make sense."
-"Scene has no ResonanceStaticGeometry or ResonanceStaticScene. Add ResonanceStaticGeometry for export.","Scene has no ResonanceStaticGeometry or ResonanceStaticScene. Add ResonanceStaticGeometry for export."
-"No scenes open.","No scenes open."
-"No scenes exported.","No scenes exported."
-"No scene files found.","No scene files found."
-"No dynamic objects exported.","No dynamic objects exported."
-"Exported %d mesh(es) but failed to save scene: %s","Exported %d mesh(es) but failed to save scene: %s"
-" — Save scene to persist mesh_asset."," — Save scene to persist mesh_asset."
-"Static geometry unchanged (hash match). Skipping export.","Static geometry unchanged (hash match). Skipping export."
-"Static scene exported to %s. ResonanceStaticScene updated.","Static scene exported to %s. ResonanceStaticScene updated."
-"Dynamic mesh exported to %s","Dynamic mesh exported to %s"
-"Exported %d dynamic mesh(es).","Exported %d dynamic mesh(es)."
-"Exported %d dynamic object(s) from scenes in build.","Exported %d dynamic object(s) from scenes in build."
-"Exported %d dynamic object(s) from project.","Exported %d dynamic object(s) from project."
-"Cleared %d pathing_probe_volume reference(s). You can now delete the Probe Volume(s).","Cleared %d pathing_probe_volume reference(s). You can now delete the Probe Volume(s)."
-"Probe batches cleared.","Probe batches cleared."
-"Scene exported to OBJ: %s","Scene exported to OBJ: %s"
-"Exported %d open scene(s) to static assets.","Exported %d open scene(s) to static assets."
-"Cleared %d unreferenced probe data file(s).","Cleared %d unreferenced probe data file(s)."
-"Skipped %d scene(s) without exportable static geometry.","Skipped %d scene(s) without exportable static geometry."
-"Restored Probe Volume data from backup.","Restored Probe Volume data from backup."
-"No probe data files found in %s","No probe data files found in %s"
-"All probe data files are still referenced. Nothing to clear.","All probe data files are still referenced. Nothing to clear."
-"Delete %d unreferenced probe data file(s)?\n\n%s","Delete %d unreferenced probe data file(s)?\n\n%s"
-"Clear Unreferenced Probe Data","Clear Unreferenced Probe Data"
-"Bake reflections, pathing, static source/listener. Skips up-to-date stages. Configure in bake_config.","Bake reflections, pathing, static source/listener. Skips up-to-date stages. Configure in bake_config."
-"Export this dynamic mesh to a .tres asset.","Export this dynamic mesh to a .tres asset."
-"Estimate probe count and approximate bake time for current settings.","Estimate probe count and approximate bake time for current settings."
-"Stop the current bake and close.","Stop the current bake and close."
-"Open documentation","Open documentation"
-"Configure bake_config for accurate estimates.","Configure bake_config for accurate estimates."
-"Size +X","Size +X"
-"Size +Y","Size +Y"
-"Size +Z","Size +Z"
-"Size -X","Size -X"
-"Size -Y","Size -Y"
-"Size -Z","Size -Z"
-"Change Resonance Probe Volume Size","Change Resonance Probe Volume Size"
+keys,en,es
+Nexus Resonance,Nexus Resonance,Nexus Resonance
+Bake Probes,Bake Probes,Hornear sondas
+Export Mesh,Export Mesh,Exportar malla
+Clear,Clear,Limpiar
+Cancel,Cancel,Cancelar
+Continue,Continue,Continuar
+Bake Anyway,Bake Anyway,Hornear de todos modos
+Undo,Undo,Deshacer
+Preview Bake Settings,Preview Bake Settings,Previsualizar ajustes de horneado
+Documentation,Documentation,Documentación
+Export Active Scene,Export Active Scene,Exportar escena activa
+Export All Open Scenes,Export All Open Scenes,Exportar todas las escenas abiertas
+Export Active Scene To OBJ (Debug),Export Active Scene To OBJ (Debug),Exportar escena activa a OBJ (Depuración)
+Export Dynamic Objects In Active Scene,Export Dynamic Objects In Active Scene,Exportar objetos dinámicos en escena activa
+Export Dynamic Objects In All Scenes In Build,Export Dynamic Objects In All Scenes In Build,Exportar objetos dinámicos en todas las escenas de la compilación
+Export All Dynamic Objects In Project,Export All Dynamic Objects In Project,Exportar todos los objetos dinámicos del proyecto
+Clear Unreferenced Probe Data,Clear Unreferenced Probe Data,Limpiar datos de sondas no referenciados
+Bake All Probe Volumes In Active Scene,Bake All Probe Volumes In Active Scene,Hornear todos los volúmenes de sondas en escena activa
+Clear Probe Batches,Clear Probe Batches,Limpiar lotes de sondas
+Unlink Probe Volume References,Unlink Probe Volume References,Desvincular referencias de volúmenes de sondas
+Nexus Resonance - Bake Failed,Nexus Resonance - Bake Failed,Nexus Resonance - Error al hornear
+Nexus Resonance - Export Failed,Nexus Resonance - Export Failed,Nexus Resonance - Error al exportar
+Nexus Resonance - Save Failed,Nexus Resonance - Save Failed,Nexus Resonance - Error al guardar
+Nexus Resonance - GDExtension Not Loaded,Nexus Resonance - GDExtension Not Loaded,Nexus Resonance - GDExtension no cargada
+Nexus Resonance - Pre-Bake Check,Nexus Resonance - Pre-Bake Check,Nexus Resonance - Comprobación pre-horneado
+Nexus Resonance - Baking,Nexus Resonance - Baking,Nexus Resonance - Horneando
+Nexus Resonance - Backup,Nexus Resonance - Backup,Nexus Resonance - Copia de seguridad
+A backup of current Probe Volume data will be created before baking. You can undo the bake to restore the previous data.,A backup of current Probe Volume data will be created before baking. You can undo the bake to restore the previous data.,Se creará una copia de seguridad de los datos actuales del volumen de sondas antes de hornear. Puedes deshacer el horneado para restaurar los datos anteriores.
+Preparing...,Preparing...,Preparando...
+Processing...,Processing...,Procesando...
+Baking reverb probes,Baking reverb probes,Horneando sondas de reverberación
+Baking pathing,Baking pathing,Horneando trazado de rutas
+Baking static source,Baking static source,Horneando fuente estática
+Baking static listener,Baking static listener,Horneando oyente estático
+Skipping (up-to-date),Skipping (up-to-date),Omitiendo (actualizado)
+Estimated time: %s,Estimated time: %s,Tiempo estimado: %s
+Stage %d of %d,Stage %d of %d,Etapa %d de %d
+%d probes,%d probes,%d sondas
+Details,Details,Detalles
+Status,Status,Estado
+No scene open.,No scene open.,No hay ninguna escena abierta.
+GDExtension not loaded.,GDExtension not loaded.,GDExtension no cargada.
+Export failed with error %s,Export failed with error %s,La exportación falló con el error %s
+Scene not exported. Use Tools > Nexus Resonance > Export Active Scene before baking.,Scene not exported. Use Tools > Nexus Resonance > Export Active Scene before baking.,Escena no exportada. Usa Herramientas > Nexus Resonance > Exportar escena activa antes de hornear.
+Bake runner not initialized.,Bake runner not initialized.,Ejecutor de horneado no inicializado.
+ResonanceServer lacks export_static_scene_to_asset. Update the addon.,ResonanceServer lacks export_static_scene_to_asset. Update the addon.,ResonanceServer carece de export_static_scene_to_asset. Actualiza el addon.
+ResonanceSOFAAsset not available.,ResonanceSOFAAsset not available.,ResonanceSOFAAsset no disponible.
+Bake failed. Check Editor output.,Bake failed. Check Editor output.,El horneado falló. Revisa la salida del editor.
+Failed to build config.,Failed to build config.,Error al generar la configuración.
+Failed to save: %s,Failed to save: %s,Error al guardar: %s
+No main scene configured.,No main scene configured.,No se configuró ninguna escena principal.
+Failed to load main scene: %s,Failed to load main scene: %s,Error al cargar la escena principal: %s
+Addon and GDExtension may be out of sync.,Addon and GDExtension may be out of sync.,El addon y GDExtension podrían estar desincronizados.
+Update the Nexus Resonance addon and GDExtension to matching versions.,Update the Nexus Resonance addon and GDExtension to matching versions.,Actualiza el addon Nexus Resonance y GDExtension a versiones coincidentes.
+Set application/run/main_scene in Project Settings.,Set application/run/main_scene in Project Settings.,Configura application/run/main_scene en los Ajustes del Proyecto.
+Failed to create audio_data directory (error %d). Ensure res:// is writable.,Failed to create audio_data directory (error %d). Ensure res:// is writable.,Error al crear el directorio audio_data (error %d). Asegúrate de que res:// tenga permisos de escritura.
+Failed to create resonance_meshes directory (error %d). Ensure res:// is writable.,Failed to create resonance_meshes directory (error %d). Ensure res:// is writable.,Error al crear el directorio resonance_meshes (error %d). Asegúrate de que res:// tenga permisos de escritura.
+No ResonanceDynamicGeometry in scene. Nothing to export.,No ResonanceDynamicGeometry in scene. Nothing to export.,No hay ningún ResonanceDynamicGeometry en la escena. Nada que exportar.
+"Select one or more ResonanceProbeVolume nodes, then run this to unlink references before deleting.","Select one or more ResonanceProbeVolume nodes, then run this to unlink references before deleting.","Selecciona uno o más nodos ResonanceProbeVolume, luego ejecuta esto para desvincular las referencias antes de eliminarlos."
+No ResonancePlayer in this scene points to the selected Probe Volume(s).,No ResonancePlayer in this scene points to the selected Probe Volume(s).,Ningún ResonancePlayer en esta escena apunta a los volúmenes de sondas seleccionados.
+No ResonanceProbeVolume in scene. Nothing to bake.,No ResonanceProbeVolume in scene. Nothing to bake.,No hay ningún ResonanceProbeVolume en la escena. Nada que hornear.
+Add ResonanceRuntime with valid ResonanceRuntimeConfig to the scene.,Add ResonanceRuntime with valid ResonanceRuntimeConfig to the scene.,Añade un ResonanceRuntime con una ResonanceRuntimeConfig válida a la escena.
+Server init failed.,Server init failed.,La inicialización del servidor falló.
+Bake runner not set. Cannot bake.,Bake runner not set. Cannot bake.,Ejecutor de horneado no asignado. No se puede hornear.
+Scene has no ResonanceRuntime. Add ResonanceRuntime for export to make sense.,Scene has no ResonanceRuntime. Add ResonanceRuntime for export to make sense.,La escena no tiene un ResonanceRuntime. Añade ResonanceRuntime para que la exportación tenga sentido.
+Scene has no ResonanceStaticGeometry or ResonanceStaticScene. Add ResonanceStaticGeometry for export.,Scene has no ResonanceStaticGeometry or ResonanceStaticScene. Add ResonanceStaticGeometry for export.,La escena no tiene un ResonanceStaticGeometry ni un ResonanceStaticScene. Añade ResonanceStaticGeometry para exportar.
+No scenes open.,No scenes open.,No hay ninguna escena abierta.
+No scenes exported.,No scenes exported.,No se han exportado escenas.
+No scene files found.,No scene files found.,No se encontraron archivos de escena.
+No dynamic objects exported.,No dynamic objects exported.,No se han exportado objetos dinámicos.
+Exported %d mesh(es) but failed to save scene: %s,Exported %d mesh(es) but failed to save scene: %s,Se exportaron %d malla(s) pero falló al guardar la escena: %s
+ — Save scene to persist mesh_asset., — Save scene to persist mesh_asset., — Guarda la escena para mantener persistente el recurso mesh_asset.
+Static geometry unchanged (hash match). Skipping export.,Static geometry unchanged (hash match). Skipping export.,Geometría estática sin cambios (coincidencia de hash). Omitiendo exportación.
+Static scene exported to %s. ResonanceStaticScene updated.,Static scene exported to %s. ResonanceStaticScene updated.,Escena estática exportada a %s. ResonanceStaticScene actualizado.
+Dynamic mesh exported to %s,Dynamic mesh exported to %s,Malla dinámica exportada a %s
+Exported %d dynamic mesh(es).,Exported %d dynamic mesh(es).,Se exportaron %d malla(s) dinámica(s).
+Exported %d dynamic object(s) from scenes in build.,Exported %d dynamic object(s) from scenes in build.,Se exportaron %d objeto(s) dinámico(s) de escenas en compilación.
+Exported %d dynamic object(s) from project.,Exported %d dynamic object(s) from project.,Se exportaron %d objeto(s) dinámico(s) del proyecto.
+Cleared %d pathing_probe_volume reference(s). You can now delete the Probe Volume(s).,Cleared %d pathing_probe_volume reference(s). You can now delete the Probe Volume(s).,Se limpiaron %d referencia(s) a volúmenes de sondas de ruta. Ahora puedes eliminar los volúmenes.
+Probe batches cleared.,Probe batches cleared.,Lotes de sondas limpiados.
+Scene exported to OBJ: %s,Scene exported to OBJ: %s,Escena exportada a OBJ: %s
+Exported %d open scene(s) to static assets.,Exported %d open scene(s) to static assets.,Se exportaron %d escena(s) abierta(s) a recursos estáticos.
+Cleared %d unreferenced probe data file(s).,Cleared %d unreferenced probe data file(s).,Se limpiaron %d archivo(s) de datos de sondas no referenciados.
+Skipped %d scene(s) without exportable static geometry.,Skipped %d scene(s) without exportable static geometry.,Se omitieron %d escena(s) sin geometría estática exportable.
+Restored Probe Volume data from backup.,Restored Probe Volume data from backup.,Datos del volumen de sondas restaurados desde copia de seguridad.
+No probe data files found in %s,No probe data files found in %s,No se encontraron archivos de datos de sondas en %s
+All probe data files are still referenced. Nothing to clear.,All probe data files are still referenced. Nothing to clear.,Todos los archivos de datos de sondas siguen referenciados. Nada que limpiar.
+Delete %d unreferenced probe data file(s)?\n\n%s,Delete %d unreferenced probe data file(s)?\n\n%s,¿Eliminar %d archivo(s) de datos de sondas no referenciados?\n\n%s
+Clear Unreferenced Probe Data,Clear Unreferenced Probe Data,Limpiar datos de sondas no referenciados
+"Bake reflections, pathing, static source/listener. Skips up-to-date stages. Configure in bake_config.","Bake reflections, pathing, static source/listener. Skips up-to-date stages. Configure in bake_config.","Hornea reflexiones, trazado de rutas y oyente/fuente estática. Omite etapas actualizadas. Configura en bake_config."
+Export this dynamic mesh to a .tres asset.,Export this dynamic mesh to a .tres asset.,Exporta esta malla dinámica a un recurso .tres.
+Estimate probe count and approximate bake time for current settings.,Estimate probe count and approximate bake time for current settings.,Estima el conteo de sondas y el tiempo aproximado de horneado para los ajustes actuales.
+Stop the current bake and close.,Stop the current bake and close.,Detener el horneado actual y cerrar.
+Open documentation,Open documentation,Abrir documentación
+Configure bake_config for accurate estimates.,Configure bake_config for accurate estimates.,Configura bake_config para estimaciones precisas.
+Size +X,Size +X,Tamaño +X
+Size +Y,Size +Y,Tamaño +Y
+Size +Z,Size +Z,Tamaño +Z
+Size -X,Size -X,Tamaño -X
+Size -Y,Size -Y,Tamaño -Y
+Size -Z,Size -Z,Tamaño -Z
+Change Resonance Probe Volume Size,Change Resonance Probe Volume Size,Cambiar tamaño de volumen de sondas de Resonance
+nexus,Nexus,Nexus
+resonance,Resonance,Nexus Resonance
+Saving probe data...,Saving probe data...,Guardando datos de sondas...
+Convert Animation Audio Tracks (ResonancePlayer)…,Convert Animation Audio Tracks (ResonancePlayer)…,Convertir pistas de audio de animación (ResonancePlayer)…
+Convert Animation Audio Tracks In All Scenes…,Convert Animation Audio Tracks In All Scenes…,Convertir pistas de audio de animación en todas las escenas…
+Editor file system not available.,Editor file system not available.,El sistema de archivos del editor no está disponible.
+Could not scan res://.,Could not scan res://.,No se pudo escanear res://.
+ - Save scene to persist mesh_asset., - Save scene to persist mesh_asset., - Guarda la escena para mantener persistente el recurso mesh_asset.
+Nexus Resonance - Export,Nexus Resonance - Export,Nexus Resonance - Exportar
+Export in progress...,Export in progress...,Exportación en progreso...
+An export is already running. Wait for it to finish or cancel the progress dialog.,An export is already running. Wait for it to finish or cancel the progress dialog.,Ya se está ejecutando una exportación. Espera a que termine o cancela el cuadro de diálogo de progreso.
+Nexus Resonance - Convert All Scenes,Nexus Resonance - Convert All Scenes,Nexus Resonance - Convertir todas las escenas
+ Skipped %d audio track(s) with use blend - convert manually (method keys) for full Steam Audio., Skipped %d audio track(s) with use blend - convert manually (method keys) for full Steam Audio., Se omitieron %d pista(s) de audio con use blend; conviértelas manualmente (claves de método) para usar Steam Audio completo.
+Probe batch (advanced),Probe batch (advanced),Lote de sondas (avanzado)
+Remove probe at index,Remove probe at index,Eliminar sonda en el índice
+Remove baked pathing layer,Remove baked pathing layer,Eliminar capa de trazado de rutas horneada
+Remove baked reflections (reverb),Remove baked reflections (reverb),Eliminar reflexiones horneadas (reverberación)
+Uses Steam Audio iplProbeBatchRemoveProbe. Clears pathing hash; re-bake pathing if needed. Saves external .tres when set; reloads batch on this volume.,Uses Steam Audio iplProbeBatchRemoveProbe. Clears pathing hash; re-bake pathing if needed. Saves external .tres when set; reloads batch on this volume.,Usa iplProbeBatchRemoveProbe de Steam Audio. Limpia el hash del trazado de rutas; vuelve a hornear si es necesario. Guarda un archivo .tres externo si está configurado; recarga el lote en este volumen.
+iplProbeBatchRemoveData: pathing (dynamic) layer. Reload probe batch after.,iplProbeBatchRemoveData: pathing (dynamic) layer. Reload probe batch after.,iplProbeBatchRemoveData: capa de trazado de rutas (dinámica). Recarga el lote de sondas después.
+iplProbeBatchRemoveData: reflections reverb layer. Re-bake probes if you still need this data.,iplProbeBatchRemoveData: reflections reverb layer. Re-bake probes if you still need this data.,iplProbeBatchRemoveData: capa de reverberación de reflexiones. Vuelve a hornear las sondas si aún necesitas estos datos.
+"ResonanceServer not ready. Add ResonanceRuntime with config to this scene, then click Bake Probes or re-open the inspector.","ResonanceServer not ready. Add ResonanceRuntime with config to this scene, then click Bake Probes or re-open the inspector.","ResonanceServer no está listo. Añade un ResonanceRuntime con configuración a esta escena, luego haz clic en Hornear sondas o vuelve a abrir el inspector."
+"Probe batch edit failed (wrong index, no matching baked layer, load/save error). See the Output panel for the exact message.","Probe batch edit failed (wrong index, no matching baked layer, load/save error). See the Output panel for the exact message.","Falló la edición del lote de sondas (índice incorrecto, no hay capa horneada coincidente, error de carga/guardado). Revisa el panel de Salida para ver el mensaje exacto."
+"ResonanceServer is not initialized. Add a ResonanceRuntime node (with ResonanceRuntimeConfig) to the edited scene, then press Bake Probes once or deselect and reselect this volume so the server can start. Without it, probe batch edits cannot run.","ResonanceServer is not initialized. Add a ResonanceRuntime node (with ResonanceRuntimeConfig) to the edited scene, then press Bake Probes once or deselect and reselect this volume so the server can start. Without it, probe batch edits cannot run.","ResonanceServer no está inicializado. Añade un nodo ResonanceRuntime (con ResonanceRuntimeConfig) a la escena editada, luego presiona Hornear sondas una vez o deselecciona y vuelve a seleccionar este volumen para iniciar el servidor. Sin esto, no se pueden editar los lotes de sondas."
+Probes (from data): %d,Probes (from data): %d,Sondas (desde datos): %d
+Probes (from data): (initialize server to query),Probes (from data): (initialize server to query),Sondas (desde datos): (inicializa el servidor para consultar)
+Categories Enabled,Categories Enabled,Categorías habilitadas
+Output To Debug,Output To Debug,Enviar salida a depuración
+Output To File,Output To File,Enviar salida a archivo
+File Path,File Path,Ruta del archivo
+Steam Audio Verbose,Steam Audio Verbose,Steam Audio detallado
+Default Output Directory,Default Output Directory,Directorio de salida por defecto
+Auto Convert Animation Audio On Save,Auto Convert Animation Audio On Save,Convertir audio de animación automáticamente al guardar
+Editor TTS,Editor TTS,TTS del Editor
+Runtime Debug TTS,Runtime Debug TTS,TTS de depuración en ejecución
+Static Scene Asset Format,Static Scene Asset Format,Formato del recurso de escena estática
+Probe Data Format,Probe Data Format,Formato de datos de sondas
+Tts Voice,Tts Voice,Voz del TTS
+Tts Volume,Tts Volume,Volumen del TTS
+Tts Speed,Tts Speed,Velocidad del TTS
+Bake Config,Bake Config,Configuración de horneado
+Probe Data,Probe Data,Datos de las sondas
+Region Size,Region Size,Tamaño de la región
+Generation Type,Generation Type,Tipo de generación
+Spacing,Spacing,Espaciado
+Height Above Floor,Height Above Floor,Altura sobre el suelo
+Show Probes,Show Probes,Mostrar sondas
+Viz Probe Scale,Viz Probe Scale,Escala de visualización de sondas
+Bake Sources,Bake Sources,Fuentes de horneado
+Bake Listeners,Bake Listeners,Oyentes de horneado
+Bake Influence Radius,Bake Influence Radius,Radio de influencia del horneado
+Dynamic,Dynamic,Dinámico
+Mesh Asset,Mesh Asset,Recurso de malla
+Static Scene Asset,Static Scene Asset,Recurso de escena estática
+Export All Children,Export All Children,Exportar todos los hijos
+Scene Name When Exported,Scene Name When Exported,Nombre de la escena al exportar
+Playback Coeff Smoothing Time,Playback Coeff Smoothing Time,Tiempo de suavizado de coeficientes
+Reverb Bus Name,Reverb Bus Name,Nombre del bus de reverberación
+Default Reflections Mode,Default Reflections Mode,Modo de reflexiones por defecto
+Direct Speaker Channels,Direct Speaker Channels,Canales de altavoz directo
+Opencl Device Type,Opencl Device Type,Tipo de dispositivo OpenCL
+Opencl Device Index,Opencl Device Index,Índice de dispositivo OpenCL
+Convert Animation Audio Tracks (ResonancePlayer)…,Convert Animation Audio Tracks (ResonancePlayer)…,Convertir pistas de audio de animación (ResonancePlayer)…
+Convert Animation Audio Tracks In All Scenes…,Convert Animation Audio Tracks In All Scenes…,Convertir pistas de audio de animación en todas las escenas…
+Editor file system not available.,Editor file system not available.,El sistema de archivos del editor no está disponible.
+Could not scan res://.,Could not scan res://.,No se pudo escanear res://.
+Nexus Resonance - Export,Nexus Resonance - Export,Nexus Resonance - Exportar
+Export in progress...,Export in progress...,Exportación en progreso...
+An export is already running. Wait for it to finish or cancel the progress dialog.,An export is already running. Wait for it to finish or cancel the progress dialog.,Ya se está ejecutando una exportación. Espera a que termine o cancela el cuadro de diálogo de progreso.
+Nexus Resonance - Convert All Scenes,Nexus Resonance - Convert All Scenes,Nexus Resonance - Convertir todas las escenas
+ Skipped %d audio track(s) with use blend - convert manually (method keys) for full Steam Audio., Skipped %d audio track(s) with use blend - convert manually (method keys) for full Steam Audio., Se omitieron %d pista(s) de audio con use blend; conviértelas manualmente (claves de método) para usar Steam Audio completo.
+Probe batch (advanced),Probe batch (advanced),Lote de sondas (avanzado)
+Remove probe at index,Remove probe at index,Eliminar sonda en el índice
+Remove baked pathing layer,Remove baked pathing layer,Eliminar capa de trazado de rutas horneada
+Remove baked reflections (reverb),Remove baked reflections (reverb),Eliminar reflexiones horneadas (reverberación)
+Uses Steam Audio iplProbeBatchRemoveProbe. Clears pathing hash; re-bake pathing if needed. Saves external .tres when set; reloads batch on this volume.,Uses Steam Audio iplProbeBatchRemoveProbe. Clears pathing hash; re-bake pathing if needed. Saves external .tres when set; reloads batch on this volume.,Usa iplProbeBatchRemoveProbe de Steam Audio. Limpia el hash del trazado de rutas; vuelve a hornear si es necesario. Guarda un archivo .tres externo si está configurado; recarga el lote en este volumen.
+iplProbeBatchRemoveData: pathing (dynamic) layer. Reload probe batch after.,iplProbeBatchRemoveData: pathing (dynamic) layer. Reload probe batch after.,iplProbeBatchRemoveData: capa de trazado de rutas (dinámica). Recarga el lote de sondas después.
+iplProbeBatchRemoveData: reflections reverb layer. Re-bake probes if you still need this data.,iplProbeBatchRemoveData: reflections reverb layer. Re-bake probes if you still need this data.,iplProbeBatchRemoveData: capa de reverberación de reflexiones. Vuelve a hornear las sondas si aún necesitas estos datos.
+"ResonanceServer not ready. Add ResonanceRuntime with config to this scene, then click Bake Probes or re-open the inspector.","ResonanceServer not ready. Add ResonanceRuntime with config to this scene, then click Bake Probes or re-open the inspector.","ResonanceServer no está listo. Añade un ResonanceRuntime con configuración a esta escena, luego haz clic en Hornear sondas o vuelve a abrir el inspector."
+"Probe batch edit failed (wrong index, no matching baked layer, load/save error). See the Output panel for the exact message.","Probe batch edit failed (wrong index, no matching baked layer, load/save error). See the Output panel for the exact message.","Falló la edición del lote de sondas (índice incorrecto, no hay capa horneada coincidente, error de carga/guardado). Revisa el panel de Salida para ver el mensaje exacto."
+"ResonanceServer is not initialized. Add a ResonanceRuntime node (with ResonanceRuntimeConfig) to the edited scene, then press Bake Probes once or deselect and reselect this volume so the server can start. Without it, probe batch edits cannot run.","ResonanceServer is not initialized. Add a ResonanceRuntime node (with ResonanceRuntimeConfig) to the edited scene, then press Bake Probes once or deselect and reselect this volume so the server can start. Without it, probe batch edits cannot run.","ResonanceServer no está inicializado. Añade un nodo ResonanceRuntime (con ResonanceRuntimeConfig) a la escena editada, luego presiona Hornear sondas una vez o deselecciona y vuelve a seleccionar este volumen para iniciar el servidor. Sin esto, no se pueden editar los lotes de sondas."
+Probes (from data): %d,Probes (from data): %d,Sondas (desde datos): %d
+Probes (from data): (initialize server to query),Probes (from data): (initialize server to query),Sondas (desde datos): (inicializa el servidor para consultar)
+Categories Enabled,Categories Enabled,Categorías habilitadas
+Output To Debug,Output To Debug,Enviar salida a depuración
+Output To File,Output To File,Enviar salida a archivo
+File Path,File Path,Ruta del archivo
+Steam Audio Verbose,Steam Audio Verbose,Steam Audio detallado
+Default Output Directory,Default Output Directory,Directorio de salida por defecto
+Auto Convert Animation Audio On Save,Auto Convert Animation Audio On Save,Convertir audio de animación automáticamente al guardar
+Editor TTS,Editor TTS,TTS del Editor
+Runtime Debug TTS,Runtime Debug TTS,TTS de depuración en ejecución
+Static Scene Asset Format,Static Scene Asset Format,Formato del recurso de escena estática
+Probe Data Format,Probe Data Format,Formato de datos de sondas
+Tts Voice,Tts Voice,Voz del TTS
+Tts Volume,Tts Volume,Volumen del TTS
+Tts Speed,Tts Speed,Velocidad del TTS
+Bake Config,Bake Config,Configuración de horneado
+Probe Data,Probe Data,Datos de las sondas
+Region Size,Region Size,Tamaño de la región
+Generation Type,Generation Type,Tipo de generación
+Spacing,Spacing,Espaciado
+Height Above Floor,Height Above Floor,Altura sobre el suelo
+Show Probes,Show Probes,Mostrar sondas
+Viz Probe Scale,Viz Probe Scale,Escala de visualización de sondas
+Bake Sources,Bake Sources,Fuentes de horneado
+Bake Listeners,Bake Listeners,Oyentes de horneado
+Bake Influence Radius,Bake Influence Radius,Radio de influencia del horneado
+Dynamic,Dynamic,Dinámico
+Mesh Asset,Mesh Asset,Recurso de malla
+Static Scene Asset,Static Scene Asset,Recurso de escena estática
+Export All Children,Export All Children,Exportar todos los hijos
+Scene Name When Exported,Scene Name When Exported,Nombre de la escena al exportar
+Playback Coeff Smoothing Time,Playback Coeff Smoothing Time,Tiempo de suavizado de coeficientes
+Reverb Bus Name,Reverb Bus Name,Nombre del bus de reverberación
+Default Reflections Mode,Default Reflections Mode,Modo de reflexiones por defecto
+Direct Speaker Channels,Direct Speaker Channels,Canales de altavoz directo
+Opencl Device Type,Opencl Device Type,Tipo de dispositivo OpenCL
+Opencl Device Index,Opencl Device Index,Índice de dispositivo OpenCL
+Nexus,Nexus,Nexus
+Logger,Logger,Registro
+Editor,Editor,Editor
+Bake,Bake,Horneado
+Accessibility,Accessibility,Accesibilidad
+Export,Export,Exportación
+Editor Tts,Editor Tts,TTS del editor
+Runtime Debug Tts,Runtime Debug Tts,TTS de depuración en ejecución
+Ambisonics,Ambisonics,Ambisónicos
+Ambisonic decode,Ambisonic decode,Decodificación ambisónica
+Absorption,Absorption,Absorción
+Physics,Physics,Física
+Transmission,Transmission,Transmisión
+Debug,Debug,Depuración
+Data,Data,Datos
+Bake Targets,Bake Targets,Objetivos de horneado
+Volume,Volume,Volumen
+Generation,Generation,Generación
+FMOD Bridge,FMOD Bridge,Puente FMOD
+Coda Bridge,Coda Bridge,Puente Coda
+Steam Audio Context,Steam Audio Context,Contexto de Steam Audio
+Runtime Debug,Runtime Debug,Depuración en tiempo de ejecución
+Output & Routing,Output & Routing,Salida y enrutamiento
+Audio Engine,Audio Engine,Motor de audio
+Spatialization,Spatialization,Espacialización
+Reflections & Reverb,Reflections & Reverb,Reflexiones y reverberación
+Baked Reverb & Pathing,Baked Reverb & Pathing,Reverberación horneada y trazado
+Occlusion & Transmission,Occlusion & Transmission,Oclusión y transmisión
+Performance & Scheduling,Performance & Scheduling,Rendimiento y programación
+Scene Backend & Physics,Scene Backend & Physics,Backend de escena y física
+Expert,Expert,Experto
+Headphone HRTF,Headphone HRTF,HRTF para auriculares
+HRTF,HRTF,HRTF
+Third-person Perspective,Third-person Perspective,Perspectiva de tercera persona
+Distance,Distance,Distancia
+Direct Sound,Direct Sound,Sonido directo
+Directivity,Directivity,Directividad
+Output,Output,Salida
+Performance,Performance,Rendimiento
+Occlusion,Occlusion,Oclusión
+Reflections,Reflections,Reflexiones
+Pathing,Pathing,Trazado de rutas
+Mix Levels,Mix Levels,Niveles de mezcla
+Hybrid Reverb,Hybrid Reverb,Reverberación híbrida
+Reflection,Reflection,Reflexión
+Additional Bake,Additional Bake,Horneado adicional
+Quality,Quality,Calidad
+1st Order,1st Order,Primer orden
+2nd Order,2nd Order,Segundo orden
+3rd Order,3rd Order,Tercer orden
+Centroid,Centroid,Centroide
+Uniform Floor,Uniform Floor,Suelo uniforme
+Off,Off,Apagado
+Core,Core,Núcleo
+Standard,Standard,Estándar
+Full,Full,Completo
+NORM_NONE,NORM_NONE,Sin normalización
+NORM_RMS,NORM_RMS,Normalización RMS
+RMS,RMS,RMS
+Text (.tres),Text (.tres),Texto (.tres)
+Binary (.res),Binary (.res),Binario (.res)
+Ambisonic Order,Ambisonic Order,Orden de ambisónicos
+Channel Streams,Channel Streams,Canales de flujo de audio
+Rotation Enabled,Rotation Enabled,Rotación habilitada
+Use Bed Scene Orientation,Use Bed Scene Orientation,Usar orientación de escena base
+Ambisonic Orientation Node,Ambisonic Orientation Node,Nodo de orientación de ambisónicos
+Apply Hrtf,Apply Hrtf,Aplicar HRTF
+Input Is Sn3d,Input Is Sn3d,Entrada es SN3D
+Apply Output Gain,Apply Output Gain,Aplicar ganancia de salida
+Gain Db,Gain Db,Ganancia (dB)
+Reflection Type,Reflection Type,Tipo de reflexión
+Pathing Enabled,Pathing Enabled,Trazado de rutas habilitado
+Bake Pathing Vis Range,Bake Pathing Vis Range,Rango de visibilidad para trazado horneado
+Bake Pathing Path Range,Bake Pathing Path Range,Rango de ruta para trazado horneado
+Bake Pathing Num Samples,Bake Pathing Num Samples,Muestras para trazado horneado
+Bake Pathing Radius,Bake Pathing Radius,Radio de trazado horneado
+Bake Pathing Threshold,Bake Pathing Threshold,Umbral de trazado horneado
+Static Source Enabled,Static Source Enabled,Fuente estática habilitada
+Static Listener Enabled,Static Listener Enabled,Oyente estático habilitado
+Bake Ambisonics Order,Bake Ambisonics Order,Orden ambisónico de horneado
+Bake Num Rays,Bake Num Rays,Número de rayos de horneado
+Bake Num Bounces,Bake Num Bounces,Número de rebotes de horneado
+Bake Num Threads,Bake Num Threads,Número de hilos de horneado
+Event Path,Event Path,Ruta del evento
+Auto Play,Auto Play,Reproducción automática
+Source Radius,Source Radius,Radio de la fuente
+Material,Material,Material
+Geometry Override,Geometry Override,Sobrescribir geometría
+Show Geometry Override In Viewport,Show Geometry Override In Viewport,Mostrar sobrescritura en vista
+Listener Valid,Listener Valid,Oyente válido
+Absorption Low,Absorption Low,Absorción baja
+Absorption Mid,Absorption Mid,Absorción media
+Absorption High,Absorption High,Absorción alta
+Scattering,Scattering,Dispersión
+Transmission Low,Transmission Low,Transmisión baja
+Transmission Mid,Transmission Mid,Transmisión media
+Transmission High,Transmission High,Transmisión alta
+Player Config,Player Config,Configuración del reproductor
+Pathing Probe Volume,Pathing Probe Volume,Volumen de sondas para trazado
+Exclude From Debug,Exclude From Debug,Excluir de depuración
+Physics Ray Auto Exclude Collision Bodies,Physics Ray Auto Exclude Collision Bodies,Auto-excluir cuerpos de colisión en rayos
+Convert Animation Audio Tracks At Runtime,Convert Animation Audio Tracks At Runtime,Convertir pistas de audio en ejecución
+Show Directivity Gizmo,Show Directivity Gizmo,Mostrar gizmo de directividad
+Volume Db,Volume Db,Volumen (dB)
+Norm Type,Norm Type,Tipo de normalización
+Fmod Bridge Enabled,Fmod Bridge Enabled,Puente FMOD habilitado
+Coda Bridge Enabled,Coda Bridge Enabled,Puente Coda habilitado
+Context Simd Level,Context Simd Level,Nivel SIMD del contexto
+Context Validation,Context Validation,Validación del contexto
+Enable Debug,Enable Debug,Habilitar depuración
+Debug Overlay Toggle Key,Debug Overlay Toggle Key,Tecla de depuración
+Performance Overlay Toggle Key,Performance Overlay Toggle Key,Tecla de rendimiento
+Player Overlay Toggle Key,Player Overlay Toggle Key,Tecla de reproductores
+Performance Custom Monitors,Performance Custom Monitors,Monitores de rendimiento
+Debug Occlusion,Debug Occlusion,Depurar oclusión
+Debug Reflections,Debug Reflections,Depurar reflexiones
+Debug Pathing,Debug Pathing,Depurar trazado de rutas
+Output Direct,Output Direct,Salida directa
+Output Reverb,Output Reverb,Salida de reverberación
+Reverb Bus Click Guard Enabled,Reverb Bus Click Guard Enabled,Protección contra clics en reverb
+Reverb Bus Wet Ring Underrun Zero Fill,Reverb Bus Wet Ring Underrun Zero Fill,Llenar con ceros en subdesbordamiento de reverb
+Export Hash,Export Hash,Hash de exportación
+Sample Rate Override,Sample Rate Override,Sobrescribir frecuencia de muestreo
+Audio Frame Size,Audio Frame Size,Tamaño del cuadro de audio
+Max Reverb Duration,Max Reverb Duration,Duración máxima de reverberación
+Realtime Rays,Realtime Rays,Rayos en tiempo real
+Realtime Bounces,Realtime Bounces,Rebotes en tiempo real
+Scene Type,Scene Type,Tipo de escena
+Direct Binaural,Direct Binaural,Binaural directo
+Reverb Binaural,Reverb Binaural,Binaural de reverberación
+Pathing Binaural,Pathing Binaural,Binaural de trazado
+Use Virtual Surround,Use Virtual Surround,Usar sonido envolvente virtual
+Max Simulation Sources,Max Simulation Sources,Máximo de fuentes en simulación
+Dynamic Scene Commit Min Interval,Dynamic Scene Commit Min Interval,Intervalo mínimo de commit en escena dinámica
+Reflections Sim Interval,Reflections Sim Interval,Intervalo de simulación de reflexiones
+Pathing Sim Interval,Pathing Sim Interval,Intervalo de simulación de trazado
+Direct Sim Interval,Direct Sim Interval,Intervalo de simulación directa
+Simulation Cpu Cores Percent,Simulation Cpu Cores Percent,Porcentaje de núcleos de CPU para simulación
+"No ResonanceRuntime with a valid ResonanceRuntimeConfig was found in the edited scene. Add a ResonanceRuntime node, assign a config resource, then deselect and reselect the ResonanceProbeVolume or use Bake Probes so the server can start.","No ResonanceRuntime with a valid ResonanceRuntimeConfig was found in the edited scene. Add a ResonanceRuntime node, assign a config resource, then deselect and reselect the ResonanceProbeVolume or use Bake Probes so the server can start.","No se encontró ningún ResonanceRuntime con una ResonanceRuntimeConfig válida en la escena editada. Añade un nodo ResonanceRuntime, asigna un recurso de configuración, luego deselecciona y vuelve a seleccionar el ResonanceProbeVolume o usa Hornear sondas para que el servidor pueda iniciarse."
+"ResonanceStaticScene at %s has no static_scene_asset; nested ResonanceStaticGeometry is still merged into this export. Export the sub-scene first to assign an asset, or remove the node - then parent exports will skip this subtree.","ResonanceStaticScene at %s has no static_scene_asset; nested ResonanceStaticGeometry is still merged into this export. Export the sub-scene first to assign an asset, or remove the node - then parent exports will skip this subtree.","ResonanceStaticScene en %s no tiene static_scene_asset; la geometría estática ResonanceStaticGeometry anidada todavía está fusionada en esta exportación. Exporta la subescena primero para asignar un recurso, o elimina el nodo; luego las exportaciones de los padres omitirán este subárbol."
+"This will load every .tscn under res:// from disk, convert Animation audio tracks that target ResonancePlayer into Call Method tracks, and overwrite files that change.\n\nUse version control or a backup. Save or close open scenes first so you do not lose unsaved editor changes.\n\nTracks with use blend are skipped (see Output for warnings). Continue?","This will load every .tscn under res:// from disk, convert Animation audio tracks that target ResonancePlayer into Call Method tracks, and overwrite files that change.\n\nUse version control or a backup. Save or close open scenes first so you do not lose unsaved editor changes.\n\nTracks with use blend are skipped (see Output for warnings). Continue?","Esto cargará todos los archivos .tscn bajo res:// desde el disco, convertirá las pistas de audio de animación que apuntan a ResonancePlayer en pistas de llamada de método (Call Method) y sobrescribirá los archivos que cambien.\n\nUsa control de versiones o una copia de seguridad. Guarda o cierra las escenas abiertas primero para no perder cambios sin guardar en el editor.\n\nLas pistas con uso de mezcla (use blend) se omitirán (ver salida para advertencias). ¿Continuar?"
+"Auto-converted %d animation audio track(s) on ResonancePlayer (now Call Method). If any tracks used blend, check Output for Nexus Resonance warnings.","Auto-converted %d animation audio track(s) on ResonancePlayer (now Call Method). If any tracks used blend, check Output for Nexus Resonance warnings.","Se convirtieron automáticamente %d pista(s) de audio de animación en ResonancePlayer (ahora llamada de método). Si alguna pista usaba mezcla (blend), revisa la salida para ver advertencias de Nexus Resonance."
+"Project-wide conversion: %d track(s) converted, %d scene file(s) saved, %d scene(s) failed. Skipped %d blend track(s), %d non-ResonancePlayer target(s).","Project-wide conversion: %d track(s) converted, %d scene file(s) saved, %d scene(s) failed. Skipped %d blend track(s), %d non-ResonancePlayer target(s).","Conversión en todo el proyecto: %d pista(s) convertida(s), %d archivo(s) de escena guardado(s), %d escena(s) fallida(s). Se omitieron %d pista(s) de mezcla (blend), %d objetivo(s) que no son ResonancePlayer."
+"GDExtension did not load. Native Nexus Resonance features and baking will not work. Verify addons/nexus_resonance/bin matches your OS and CPU (e.g. Linux x86_64), and check the Output panel for loader errors.","GDExtension did not load. Native Nexus Resonance features and baking will not work. Verify addons/nexus_resonance/bin matches your OS and CPU (e.g. Linux x86_64), and check the Output panel for loader errors.","GDExtension no se cargó. Las funciones nativas y el horneado de Nexus Resonance no funcionarán. Verifica que addons/nexus_resonance/bin coincida con tu sistema operativo y CPU (por ejemplo, Linux x86_64), y revisa el panel de Salida para ver errores del cargador."
+Converted %d audio track(s) on ResonancePlayer (%d AnimationPlayer node(s) scanned).,Converted %d audio track(s) on ResonancePlayer (%d AnimationPlayer node(s) scanned).,Se convirtieron %d pista(s) de audio en ResonancePlayer (%d nodo(s) AnimationPlayer escaneados).
+ Skipped %d non-ResonancePlayer target(s)., Skipped %d non-ResonancePlayer target(s)., Se omitieron %d objetivo(s) que no son ResonancePlayer.
+Convert scene failed (%s): %s,Convert scene failed (%s): %s,Falló la conversión de la escena (%s): %s
+Auto-convert skipped %d blend track(s); convert manually for Steam Audio.,Auto-convert skipped %d blend track(s); convert manually for Steam Audio.,La conversión automática omitió %d pista(s) de mezcla; conviértelas manualmente para Steam Audio.
+Nexus Resonance SOFA HRTF,Nexus Resonance SOFA HRTF,Filtro HRTF SOFA de Nexus Resonance
+None,None,Ninguno
+Nexus Resonance: ResonanceSOFAAsset not available.,Nexus Resonance: ResonanceSOFAAsset not available.,Nexus Resonance: ResonanceSOFAAsset no está disponible.
+Server Status,Server Status,Estado del servidor
+Audio Instrumentation,Audio Instrumentation,Instrumentación de audio
+Reverb Bus,Reverb Bus,Bus de reverberación
+Server Status - not loaded,Server Status - not loaded,Estado del servidor - no cargado
+Server Status - not initialized,Server Status - not initialized,Estado del servidor - no inicializado
+Server Status - waiting for geometry,Server Status - waiting for geometry,Estado del servidor - esperando geometría
+Server Status - initialized,Server Status - initialized,Estado del servidor - inicializado
+Nexus Resonance Debug,Nexus Resonance Debug,Depuración de Nexus Resonance
+Apply Occlusion To Baked Reflections,Apply Occlusion To Baked Reflections,Aplicar oclusión a reflexiones horneadas
+Baked Reverb Use Listener Probe,Baked Reverb Use Listener Probe,Reverberación horneada usa sonda del oyente
+Perspective Correction Enabled,Perspective Correction Enabled,Corrección de perspectiva habilitada
+Perspective Correction Factor,Perspective Correction Factor,Factor de corrección de perspectiva
+Reverb Influence Radius,Reverb Influence Radius,Radio de influencia de reverberación
+Reverb Transmission Amount,Reverb Transmission Amount,Cantidad de transmisión de reverberación
+Runtime,Runtime,Tiempo de ejecución
+Air Absorption Enabled,Air Absorption Enabled,Absorción de aire habilitada
+Air Absorption High,Air Absorption High,Absorción de aire alta
+Air Absorption Input,Air Absorption Input,Entrada de absorción de aire
+Air Absorption Low,Air Absorption Low,Absorción de aire baja
+Air Absorption Mid,Air Absorption Mid,Absorción de aire media
+Attenuation Curve,Attenuation Curve,Curva de atenuación
+Attenuation Mode,Attenuation Mode,Modo de atenuación
+Audio Source Node,Audio Source Node,Nodo de fuente de audio
+Batch Source Updates,Batch Source Updates,Actualizaciones de fuente en lote
+Bus,Bus,Bus
+Bus Name,Bus Name,Nombre del bus
+Bus Override,Bus Override,Sobrescribir bus
+Convolution Ir Max Samples,Convolution Ir Max Samples,Muestras máximas de IR de convolución
+Current Baked Listener,Current Baked Listener,Oyente horneado actual
+Current Baked Source,Current Baked Source,Fuente horneada actual
+Direct Binaural Override,Direct Binaural Override,Sobrescribir binaural directo
+Direct Mix Level,Direct Mix Level,Nivel de mezcla directo
+Directivity Enabled,Directivity Enabled,Directividad habilitada
+Directivity Input,Directivity Input,Entrada de directividad
+Directivity Power,Directivity Power,Potencia de directividad
+Directivity Value,Directivity Value,Valor de directividad
+Directivity Weight,Directivity Weight,Peso de directividad
+Find Alternate Paths,Find Alternate Paths,Buscar rutas alternativas
+Find Alternate Paths Override,Find Alternate Paths Override,Sobrescribir buscar rutas alternativas
+Hrtf Interpolation Bilinear,Hrtf Interpolation Bilinear,Interpolación HRTF bilineal
+Hrtf Interpolation Override,Hrtf Interpolation Override,Sobrescribir interpolación HRTF
+Hrtf Normalization Type,Hrtf Normalization Type,Tipo de normalización de HRTF
+Hrtf Sofa Assets,Hrtf Sofa Assets,Recursos SOFA de HRTF
+Hrtf Sofa Selected Index,Hrtf Sofa Selected Index,Índice de SOFA HRTF seleccionado
+Hrtf Volume Db,Hrtf Volume Db,Volumen de HRTF (dB)
+Hybrid Reverb Overlap Percent,Hybrid Reverb Overlap Percent,Porcentaje de solapamiento de reverb híbrida
+Hybrid Reverb Transition Time,Hybrid Reverb Transition Time,Tiempo de transición de reverb híbrida
+Listener Camera,Listener Camera,Cámara del oyente
+Master Mix Level,Master Mix Level,Nivel de mezcla maestro
+Max Distance,Max Distance,Distancia máxima
+Max Occlusion Samples,Max Occlusion Samples,Muestras máximas de oclusión
+Max Transmission Surfaces,Max Transmission Surfaces,Superficies de transmisión máximas
+Max Transmission Surfaces Override,Max Transmission Surfaces Override,Sobrescribir superficies de transmisión máximas
+Min Distance,Min Distance,Distancia mínima
+Occlusion Input,Occlusion Input,Entrada de oclusión
+Occlusion Samples,Occlusion Samples,Muestras de oclusión
+Occlusion Type,Occlusion Type,Tipo de oclusión
+Occlusion Type Override,Occlusion Type Override,Sobrescribir tipo de oclusión
+Occlusion Value,Occlusion Value,Valor de oclusión
+Path Validation Enabled,Path Validation Enabled,Validación de ruta habilitada
+Path Validation Override,Path Validation Override,Sobrescribir validación de ruta
+Pathing Binaural Override,Pathing Binaural Override,Sobrescribir binaural de trazado
+Pathing Enabled Override,Pathing Enabled Override,Sobrescribir trazado de rutas habilitado
+Pathing Mix Level,Pathing Mix Level,Nivel de mezcla de trazado
+Pathing Normalize Eq,Pathing Normalize Eq,Ecualización de normalización de trazado
+Pathing Num Vis Samples,Pathing Num Vis Samples,Muestras de visibilidad de trazado
+Perspective Factor,Perspective Factor,Factor de perspectiva
+Physics Ray Batch Size,Physics Ray Batch Size,Tamaño de lote de rayos de física
+Physics Ray Collision Mask,Physics Ray Collision Mask,Máscara de colisión de rayos de física
+Playback Parameter Min Interval,Playback Parameter Min Interval,Intervalo mínimo de parámetros de reproducción
+Playback Parameter Min Move,Playback Parameter Min Move,Movimiento mínimo de parámetros de reproducción
+Realtime Irradiance Min Distance,Realtime Irradiance Min Distance,Distancia mínima de irradiancia en tiempo real
+Realtime Num Diffuse Samples,Realtime Num Diffuse Samples,Muestras difusas en tiempo real
+Realtime Reflection Max Distance,Realtime Reflection Max Distance,Distancia máxima de reflexión en tiempo real
+Realtime Simulation Duration,Realtime Simulation Duration,Duración de simulación en tiempo real
+Reflections Adaptive Budget Us,Reflections Adaptive Budget Us,Presupuesto adaptativo de reflexiones (us)
+Reflections Adaptive Decay Per Sec,Reflections Adaptive Decay Per Sec,Decaimiento adaptativo de reflexiones por segundo
+Reflections Adaptive Max Extra Interval,Reflections Adaptive Max Extra Interval,Intervalo extra máximo adaptativo de reflexiones
+Reflections Adaptive Ray Min,Reflections Adaptive Ray Min,Mínimo de rayos adaptativos de reflexiones
+Reflections Adaptive Ray Recover Cap,Reflections Adaptive Ray Recover Cap,Límite de recuperación de rayos adaptativos de reflexiones
+Reflections Adaptive Ray Recover Frac,Reflections Adaptive Ray Recover Frac,Fracción de recuperación de rayos adaptativos de reflexiones
+Reflections Adaptive Step Sec,Reflections Adaptive Step Sec,Paso en segundos adaptativo de reflexiones
+Reflections Defer After Scene Commit Us,Reflections Defer After Scene Commit Us,Retrasar reflexiones tras commit de escena (us)
+Reflections Delay,Reflections Delay,Retraso de reflexiones
+Reflections Enabled,Reflections Enabled,Reflexiones habilitadas
+Reflections Eq High,Reflections Eq High,Ecualización de reflexiones alta
+Reflections Eq Low,Reflections Eq Low,Ecualización de reflexiones baja
+Reflections Eq Mid,Reflections Eq Mid,Ecualización de reflexiones media
+Reflections Mix Level,Reflections Mix Level,Nivel de mezcla de reflexiones
+Reflections Sampling Mode,Reflections Sampling Mode,Modo de muestreo de reflexiones
+Reverb Binaural Override,Reverb Binaural Override,Sobrescribir binaural de reverb
+Reverb Bus Override,Reverb Bus Override,Sobrescribir bus de reverb
+Reverb Transmission Amount Input,Reverb Transmission Amount Input,Entrada de cantidad de transmisión de reverb
+Simulation Occlusion Enabled,Simulation Occlusion Enabled,Oclusión de simulación habilitada
+Simulation Transmission Enabled,Simulation Transmission Enabled,Transmisión de simulación habilitada
+Spatial Blend,Spatial Blend,Mezcla espacial
+Transmission Input,Transmission Input,Entrada de transmisión
+Transmission Type,Transmission Type,Tipo de transmisión
+Use Ambisonics Encode,Use Ambisonics Encode,Usar codificación de ambisónicos
+0–1 damping on reverb wet when User Defined and wet occlusion applies.,0–1 damping on reverb wet when User Defined and wet occlusion applies.,Atenuación de 0 a 1 en el efecto (wet) de reverberación cuando está definido por el usuario y se aplica oclusión al efecto (wet).
+"Adaptive scheduling: when the last reflections tick exceeds this many microseconds, increase the effective reflection interval.
+0 = off.","Adaptive scheduling: when the last reflections tick exceeds this many microseconds, increase the effective reflection interval.
+0 = off.","Programación adaptativa: cuando el último ciclo de reflexiones supera este número de microsegundos, aumenta el intervalo de reflexión efectivo.
+0 = desactivado."
+"Air absorption source: Simulation Defined = physics-based, User Defined = use low/mid/high sliders.","Air absorption source: Simulation Defined = physics-based, User Defined = use low/mid/high sliders.","Origen de absorción de aire: Definido por simulación = basado en física, Definido por usuario = usa deslizadores de baja/media/alta frecuencia."
+"Ambisonic order for reverb playback (convolution effect channels, mixer/decode, pathing order)
+and for realtime reflection simulation ([code]IPLSimulationSettings.maxOrder[/code]).","Ambisonic order for reverb playback (convolution effect channels, mixer/decode, pathing order)
+and for realtime reflection simulation ([code]IPLSimulationSettings.maxOrder[/code]).","Orden de ambisónicos para la reproducción de reverberación (canales del efecto de convolución, mezcla/decodificación, orden de trazado de rutas)
+y para la simulación de reflexiones en tiempo real ([code]IPLSimulationSettings.maxOrder[/code])."
+"Ambisonics order of baked convolution IRs (Steam Audio IPLReflectionsBakeParams.order). 1 = fastest/smallest, 3 = highest spatial detail, larger bake data.","Ambisonics order of baked convolution IRs (Steam Audio IPLReflectionsBakeParams.order). 1 = fastest/smallest, 3 = highest spatial detail, larger bake data.","Orden de ambisónicos de las IRs de convolución horneadas (Steam Audio IPLReflectionsBakeParams.order). 1 = más rápido/pequeño, 3 = mayor detalle espacial, datos de horneado más grandes."
+Apply HRTF in the pathing effect (indirect paths around obstacles).,Apply HRTF in the pathing effect (indirect paths around obstacles).,Aplica HRTF en el efecto de trazado de rutas (rutas indirectas alrededor de obstáculos).
+Apply HRTF when decoding convolution / mixer Ambisonics to stereo (wet / [member reverb_bus_name]).,Apply HRTF when decoding convolution / mixer Ambisonics to stereo (wet / [member reverb_bus_name]).,Aplica HRTF al decodificar la convolución / mezcla de ambisónicos a estéreo (señal wet / [member reverb_bus_name]).
+Apply directional HRTF on the **direct** dry path (vs speaker panning). Requires a loaded HRTF.,Apply directional HRTF on the **direct** dry path (vs speaker panning). Requires a loaded HRTF.,Aplica HRTF direccional en la ruta dry **directa** (frente al paneo de altavoces). Requiere un HRTF cargado.
+"Audio processing block size (samples per channel per apply call).
+Auto is recommended. Use Manual only when you're tuning latency vs CPU and know your mix buffer size.","Audio processing block size (samples per channel per apply call).
+Auto is recommended. Use Manual only when you're tuning latency vs CPU and know your mix buffer size.","Tamaño del bloque de procesamiento de audio (muestras por canal por llamada de aplicación).
+Se recomienda Auto. Usa Manual solo cuando estés ajustando la latencia frente al uso de CPU y conozcas el tamaño del búfer de mezcla."
+Bake static listener from bake_listeners NodePath. Adds baked response at listener position.,Bake static listener from bake_listeners NodePath. Adds baked response at listener position.,Hornea el oyente estático desde la ruta de nodo (NodePath) de bake_listeners. Añade la respuesta horneada en la posición del oyente.
+Bake static source from bake_sources NodePath. Adds baked direct sound at source position.,Bake static source from bake_sources NodePath. Adds baked direct sound at source position.,Hornea la fuente estática desde la ruta de nodo (NodePath) de bake_sources. Añade el sonido directo horneado en la posición de la fuente.
+Baked REVERB probe choice: listener- vs source-centric (Use Global / override). Realtime ray origin unchanged.,Baked REVERB probe choice: listener- vs source-centric (Use Global / override). Realtime ray origin unchanged.,Elección de sonda para REVERBERACIÓN horneada: centrada en el oyente frente a centrada en la fuente (Usar global / sobrescribir). El origen de los rayos en tiempo real permanece sin cambios.
+"Baked REVERB: multiply wet by direct-path occlusion/transmission. Default [code]false[/code] - LOS occlusion does not separate “same room, blocked sight” from “sealed source”; enabling dampens both and can kill plausible diffraction. Prefer realtime reflections or STATICSOURCE bakes for hard cases; see [code]docs/baked-reflections-and-outdoor-sources.md[/code].","Baked REVERB: multiply wet by direct-path occlusion/transmission. Default [code]false[/code] - LOS occlusion does not separate “same room, blocked sight” from “sealed source”; enabling dampens both and can kill plausible diffraction. Prefer realtime reflections or STATICSOURCE bakes for hard cases; see [code]docs/baked-reflections-and-outdoor-sources.md[/code].","REVERBERACIÓN horneada: multiplica la señal wet por la oclusión/transmisión de ruta directa. Por defecto [code]false[/code] - la oclusión LOS no separa 'misma sala, vista bloqueada' de 'fuente sellada'; activarlo atenúa ambas y puede eliminar la difracción plausible. Prefiere reflexiones en tiempo real o horneados de STATICSOURCE para casos difíciles; consulta [code]docs/baked-reflections-and-outdoor-sources.md[/code]."
+Baking Path Range: Probes beyond this distance (m) have no path between them.,Baking Path Range: Probes beyond this distance (m) have no path between them.,Rango de ruta de horneado: Las sondas más allá de esta distancia (m) no tienen ruta entre ellas.
+"Baking Visibility Radius: Each probe is a sphere of this radius (m). Larger = more samples, longer bake.","Baking Visibility Radius: Each probe is a sphere of this radius (m). Larger = more samples, longer bake.","Radio de visibilidad de horneado: Cada sonda es una esfera de este radio (m). Más grande = más muestras, horneado más largo."
+Baking Visibility Range: Probes beyond this distance (m) are not considered mutually visible.,Baking Visibility Range: Probes beyond this distance (m) are not considered mutually visible.,Rango de visibilidad de horneado: Las sondas más allá de esta distancia (m) no se consideran visibles entre sí.
+"Baking Visibility Samples: Point samples per probe for visibility tests. Higher = smoother, longer bake.","Baking Visibility Samples: Point samples per probe for visibility tests. Higher = smoother, longer bake.","Muestras de visibilidad de horneado: Muestras de puntos por sonda para pruebas de visibilidad. Mayor = más suave, horneado más largo."
+"Baking Visibility Threshold: Fraction of unoccluded rays required. Lower = more paths, longer bake.","Baking Visibility Threshold: Fraction of unoccluded rays required. Lower = more paths, longer bake.","Umbral de visibilidad de horneado: Fracción de rayos no ocluidos requerida. Menor = más rutas, horneado más largo."
+"Bilinear HRTF interpolation. Smoother than nearest, slightly more CPU.","Bilinear HRTF interpolation. Smoother than nearest, slightly more CPU.","Interpolación HRTF bilineal. Más suave que la más cercana, consume un poco más de CPU."
+"Blends this node's output between 2D (0) and full 3D spatial audio (1). At 0 the sound is panned as stereo (no HRTF / room simulation on the dry path); at 1 Nexus Resonance drives full spatialization, occlusion, and bus routing like a normal 3D source. Values in between mix the two (useful for UI voices vs world-attached sources).","Blends this node's output between 2D (0) and full 3D spatial audio (1). At 0 the sound is panned as stereo (no HRTF / room simulation on the dry path); at 1 Nexus Resonance drives full spatialization, occlusion, and bus routing like a normal 3D source. Values in between mix the two (useful for UI voices vs world-attached sources).","Mezcla la salida de este nodo entre 2D (0) y audio espacial 3D completo (1). En 0 el sonido se panea como estéreo (sin HRTF ni simulación de sala en la ruta dry); en 1 Nexus Resonance controla la espacialización completa, oclusión y enrutamiento de buses como una fuente 3D normal. Los valores intermedios mezclan ambos (útil para voces de interfaz de usuario frente a fuentes acopladas al mundo)."
+Bus for Direct + Pathing when bus_override is Custom. Pick from existing buses in Audio Bus Layout.,Bus for Direct + Pathing when bus_override is Custom. Pick from existing buses in Audio Bus Layout.,Bus para Directo + Trazado de rutas cuando bus_override es Custom. Elige entre los buses existentes en el Diseño de Buses de Audio (Audio Bus Layout).
+Bus for reverb output when reverb_bus_override is Custom. Pick from existing buses in Audio Bus Layout.,Bus for reverb output when reverb_bus_override is Custom. Pick from existing buses in Audio Bus Layout.,Bus para la salida de reverberación cuando reverb_bus_override es Custom. Elige entre los buses existentes en el Diseño de Buses de Audio (Audio Bus Layout).
+Bus that hosts [ResonanceAudioEffect] (convolution / TAN wet) and the reverb activator. Empty = ResonanceReverb. Godot send for this bus follows [method get_bus_effective] (same as Direct+Pathing runtime bus).,Bus that hosts [ResonanceAudioEffect] (convolution / TAN wet) and the reverb activator. Empty = ResonanceReverb. Godot send for this bus follows [method get_bus_effective] (same as Direct+Pathing runtime bus).,Bus que aloja [ResonanceAudioEffect] (señal wet de convolución / TAN) y el activador de reverberación. Vacío = ResonanceReverb. El envío de Godot para este bus sigue a [method get_bus_effective] (el mismo que el bus en ejecución Direct+Pathing).
+Cap for per-tick ray recovery (0 = unlimited; useful to prevent big jumps after a long under-budget stretch).,Cap for per-tick ray recovery (0 = unlimited; useful to prevent big jumps after a long under-budget stretch).,Límite para la recuperación de rayos por ciclo (0 = ilimitado; útil para evitar saltos grandes tras un largo periodo por debajo del presupuesto).
+Collision mask for Godot [code]PhysicsRayQueryParameters3D[/code] when [member scene_type] is Custom. [code]-1[/code] = all physics layers.,Collision mask for Godot [code]PhysicsRayQueryParameters3D[/code] when [member scene_type] is Custom. [code]-1[/code] = all physics layers.,Máscara de colisión para [code]PhysicsRayQueryParameters3D[/code] de Godot cuando [member scene_type] es Custom. [code]-1[/code] = todas las capas físicas.
+"Convolution / hybrid / TAN apply path: clamp IR length to this many samples (min with allocated effect IR).
+0 = no cap.","Convolution / hybrid / TAN apply path: clamp IR length to this many samples (min with allocated effect IR).
+0 = no cap.","Ruta de aplicación de convolución / híbrido / TAN: limita la longitud de la IR a esta cantidad de muestras (mínimo con la IR de efecto asignada).
+0 = sin límite."
+"Custom attenuation curve. X = normalized distance (0..1), Y = volume. Used when attenuation_mode is Curve.","Custom attenuation curve. X = normalized distance (0..1), Y = volume. Used when attenuation_mode is Curve.","Curva de atenuación personalizada. X = distancia normalizada (0..1), Y = volumen. Se utiliza cuando attenuation_mode es Curve."
+Default max surfaces along the transmission path ([code]numTransmissionRays[/code]) when a [ResonancePlayerConfig] omits [member ResonancePlayerConfig.max_transmission_surfaces] or for initial simulator source state. Same range as per-source (1–256). Matches [member ResonancePlayerConfig.max_transmission_surfaces] default.,Default max surfaces along the transmission path ([code]numTransmissionRays[/code]) when a [ResonancePlayerConfig] omits [member ResonancePlayerConfig.max_transmission_surfaces] or for initial simulator source state. Same range as per-source (1–256). Matches [member ResonancePlayerConfig.max_transmission_surfaces] default.,Superficies máximas por defecto a lo largo de la ruta de transmisión ([code]numTransmissionRays[/code]) cuando una [ResonancePlayerConfig] omite [member ResonancePlayerConfig.max_transmission_surfaces] o para el estado inicial del simulador de fuentes. Mismo rango que por fuente (1–256). Coincide con el valor predeterminado de [member ResonancePlayerConfig.max_transmission_surfaces].
+"Default reflections mode for sources that use **Use Global**.
+**Baked** = probe reverbs (stored per probe; not the same as ray-traced occlusion through walls).
+**Realtime** = ray-traced simulation against the acoustic scene (requires [member realtime_rays] > 0) - use for sealed rooms / geometry-dependent indirect sound.","Default reflections mode for sources that use **Use Global**.
+**Baked** = probe reverbs (stored per probe; not the same as ray-traced occlusion through walls).
+**Realtime** = ray-traced simulation against the acoustic scene (requires [member realtime_rays] > 0) - use for sealed rooms / geometry-dependent indirect sound.","Modo de reflexiones por defecto para las fuentes que utilizan **Usar global**.
+**Baked** = reverberaciones de sonda (almacenadas por sonda; no es lo mismo que la oclusión de rayos por fuente a través de paredes).
+**Realtime** = simulación de trazado de rayos contra la escena acústica (requiere [member realtime_rays] > 0); se usa para salas selladas / sonido indirecto dependiente de la geometría."
+Default when a [ResonancePlayer] uses **Use Global** for path validation: re-check baked paths for occlusion by dynamic geometry each update (higher CPU).,Default when a [ResonancePlayer] uses **Use Global** for path validation: re-check baked paths for occlusion by dynamic geometry each update (higher CPU).,Predeterminado cuando un [ResonancePlayer] utiliza **Usar global** para la validación de rutas: vuelve a comprobar la oclusión de las rutas horneadas por geometría dinámica en cada actualización (mayor uso de CPU).
+"Default when a player uses **Use Global** for alternate paths: search realtime routes when a baked path is occluded.
+Very CPU-heavy; only effective if validation is enabled.","Default when a player uses **Use Global** for alternate paths: search realtime routes when a baked path is occluded.
+Very CPU-heavy; only effective if validation is enabled.","Predeterminado cuando un reproductor utiliza **Usar global** para rutas alternativas: busca rutas en tiempo real cuando una ruta horneada está ocluida.
+Muy costoso para la CPU; solo es efectivo si la validación está habilitada."
+"Diffuse samples per reflection point. Higher = smoother reverb, more CPU. Only when Realtime Rays > 0.","Diffuse samples per reflection point. Higher = smoother reverb, more CPU. Only when Realtime Rays > 0.","Muestras difusas por punto de reflexión. Mayor = reverberación más suave, más CPU. Solo cuando Realtime Rays > 0."
+Direct + pathing bus. Use Global = runtime bus; Custom = [member bus_name]. Setter refreshes inspector visibility for [member bus_name].,Direct + pathing bus. Use Global = runtime bus; Custom = [member bus_name]. Setter refreshes inspector visibility for [member bus_name].,Bus directo + trazado. Usar global = bus en ejecución; Custom = [member bus_name]. El setter actualiza la visibilidad en el inspector para [member bus_name].
+"Direct path without HRTF: speaker layout for IPLPanningEffect (and optional Ambisonics→speaker decode for surround).
+Godot player output stays stereo (fold-down). Use 1/2/4/6/8 only; other values become stereo at runtime.","Direct path without HRTF: speaker layout for IPLPanningEffect (and optional Ambisonics→speaker decode for surround).
+Godot player output stays stereo (fold-down). Use 1/2/4/6/8 only; other values become stereo at runtime.","Ruta directa sin HRTF: diseño de altavoces para IPLPanningEffect (y decodificación opcional de ambisónicos a altavoces para sonido envolvente).
+La salida del reproductor de Godot sigue siendo estéreo (mezcla hacia abajo). Usa solo 1/2/4/6/8; otros valores se convierten en estéreo en tiempo de ejecución."
+"Direct-effect frequency mode for transmission (Steam Audio [code]IPLTransmissionType[/code] on the direct processor): FreqIndependent (one blended coefficient) or FreqDependent (low/mid/high). This does not add “softer” material boundaries or a volumetric transmission path; Steam Audio [code]IPLSimulationInputs[/code] exposes [code]numTransmissionRays[/code] for path depth only, not an occlusion-style Raycast/Volumetric switch for transmission.","Direct-effect frequency mode for transmission (Steam Audio [code]IPLTransmissionType[/code] on the direct processor): FreqIndependent (one blended coefficient) or FreqDependent (low/mid/high). This does not add “softer” material boundaries or a volumetric transmission path; Steam Audio [code]IPLSimulationInputs[/code] exposes [code]numTransmissionRays[/code] for path depth only, not an occlusion-style Raycast/Volumetric switch for transmission.","Modo de frecuencia de efecto directo para transmisión (Steam Audio [code]IPLTransmissionType[/code] en el procesador directo): FreqIndependent (un coeficiente mezclado) o FreqDependent (baja/media/alta). Esto no añade límites de material 'más blandos' ni una ruta de transmisión volumétrica; Steam Audio [code]IPLSimulationInputs[/code] expone [code]numTransmissionRays[/code] solo para profundidad de ruta, no un interruptor de estilo Raycast/Volumétrico para transmisión."
+"Directivity attenuation (0-1). 0 = fully attenuated, 1 = no change. Only when directivity_input is User Defined.","Directivity attenuation (0-1). 0 = fully attenuated, 1 = no change. Only when directivity_input is User Defined.","Atenuación de directividad (0-1). 0 = totalmente atenuado, 1 = sin cambios. Solo cuando directivity_input es User Defined."
+"Directivity source: Simulation Defined = dipole model (weight, power). User Defined = use directivity_value (script-controlled).","Directivity source: Simulation Defined = dipole model (weight, power). User Defined = use directivity_value (script-controlled).","Origen de directividad: Definido por simulación = modelo dipolo (peso, potencia). Definido por usuario = usa directivity_value (controlado por script)."
+Distance (meters) at which sound is at full volume. Closer than this: no attenuation.,Distance (meters) at which sound is at full volume. Closer than this: no attenuation.,Distancia (metros) a la que el sonido está al volumen máximo. Más cerca que esto: sin atenuación.
+Enable distance-based air absorption. Distant sounds appear muffled.,Enable distance-based air absorption. Distant sounds appear muffled.,Habilita la absorción de aire basada en la distancia. Los sonidos lejanos sonarán apagados.
+Enable pathing (multi-path sound propagation). Requires baked pathing in Probe Volumes.,Enable pathing (multi-path sound propagation). Requires baked pathing in Probe Volumes.,Habilita el trazado de rutas (propagación de sonido por múltiples rutas). Requiere trazado de rutas horneado en los volúmenes de sondas (Probe Volumes).
+Enable pathing bake (multi-path sound propagation).,Enable pathing bake (multi-path sound propagation).,Habilita el horneado de trazado de rutas (propagación de sonido por múltiples rutas).
+Enable pathing for this source. Use Global = follow runtime pathing_enabled.,Enable pathing for this source. Use Global = follow runtime pathing_enabled.,Habilita el trazado de rutas para esta fuente. Usar global = sigue a pathing_enabled en tiempo de ejecución.
+Enable perspective correction for spatialized sound in third-person.,Enable perspective correction for spatialized sound in third-person.,Habilita la corrección de perspectiva para el sonido espacializado en tercera persona.
+Enable reflections for this source. Use Global = follow runtime.,Enable reflections for this source. Use Global = follow runtime.,Habilita las reflexiones para esta fuente. Usar global = sigue el tiempo de ejecución.
+"Encode point source to Ambisonics before binaural (HOA path). For mixing into an HOA-style chain. When enabled, [member spatial_blend] crossfades standard [code]iplBinauralEffect[/code] output (same spatialBlend HRIR behavior as when encode is off) with HOA encode+binaural: 0 = binaural only, 1 = HOA only; values in between mix both. Usually leave disabled.","Encode point source to Ambisonics before binaural (HOA path). For mixing into an HOA-style chain. When enabled, [member spatial_blend] crossfades standard [code]iplBinauralEffect[/code] output (same spatialBlend HRIR behavior as when encode is off) with HOA encode+binaural: 0 = binaural only, 1 = HOA only; values in between mix both. Usually leave disabled.","Codifica la fuente puntual a ambisónicos antes de la binaural (ruta HOA). Para mezclar en una cadena de estilo HOA. Cuando está habilitado, [member spatial_blend] realiza un desvanecimiento cruzado de la salida estándar de [code]iplBinauralEffect[/code] (mismo comportamiento de HRIR en spatialBlend que cuando la codificación está desactivada) con codificación HOA+binaural: 0 = solo binaural, 1 = solo HOA; los valores intermedios mezclan ambos. Normalmente déjalo desactivado."
+"Exponential smoothing time constant (seconds) for simulation-derived occlusion and transmission coefficients. 0 = off (instant). When greater than 0, playback parameters are pushed every frame while smoothing applies (higher CPU than [member playback_parameter_min_interval] alone). Only affects Simulation Defined occlusion/transmission, not User Defined.","Exponential smoothing time constant (seconds) for simulation-derived occlusion and transmission coefficients. 0 = off (instant). When greater than 0, playback parameters are pushed every frame while smoothing applies (higher CPU than [member playback_parameter_min_interval] alone). Only affects Simulation Defined occlusion/transmission, not User Defined.","Constante de tiempo de suavizado exponencial (segundos) para los coeficientes de oclusión y transmisión derivados de la simulación. 0 = desactivado (instantáneo). Cuando es mayor que 0, los parámetros de reproducción se actualizan cada fotograma mientras se aplica el suavizado (mayor CPU que solo [member playback_parameter_min_interval]). Solo afecta a la oclusión/transmisión de Definido por simulación, no a Definido por usuario."
+Factor for on-screen position mapping (0.5–2.0). 1.0 = calibrated for 30–32 inch monitor. Used when Enabled; ignored when Use Global.,Factor for on-screen position mapping (0.5–2.0). 1.0 = calibrated for 30–32 inch monitor. Used when Enabled; ignored when Use Global.,Factor para el mapeo de posición en pantalla (0.5–2.0). 1.0 = calibrado para un monitor de 30–32 pulgadas. Se usa cuando está habilitado; se ignora al usar global (Use Global).
+Find alternate paths when a baked path is occluded. Use Global = [member ResonanceRuntimeConfig.find_alternate_paths]. Only applies when path validation is effectively on. Very CPU-heavy.,Find alternate paths when a baked path is occluded. Use Global = [member ResonanceRuntimeConfig.find_alternate_paths]. Only applies when path validation is effectively on. Very CPU-heavy.,Busca rutas alternativas cuando una ruta horneada está ocluida. Usar global = [member ResonanceRuntimeConfig.find_alternate_paths]. Solo se aplica cuando la validación de rutas está efectivamente activada. Consume mucha CPU.
+Fraction of CPU cores for Steam Audio simulation threads (0–1). 0.15 ≈ 15% of logical cores; raise for heavier realtime reflections/pathing.,Fraction of CPU cores for Steam Audio simulation threads (0–1). 0.15 ≈ 15% of logical cores; raise for heavier realtime reflections/pathing.,Fracción de núcleos de CPU para los hilos de simulación de Steam Audio (0–1). 0.15 ≈ 15% de los núcleos lógicos; auméntalo para reflexiones/trazado de rutas en tiempo real más pesados.
+HRTF normalization for the embedded default HRTF only (None / RMS). Custom SOFA files use [member ResonanceSOFAAsset.norm_type] on the asset.,HRTF normalization for the embedded default HRTF only (None / RMS). Custom SOFA files use [member ResonanceSOFAAsset.norm_type] on the asset.,Normalización de HRTF solo para el HRTF predeterminado integrado (Ninguna / RMS). Los archivos SOFA personalizados utilizan [member ResonanceSOFAAsset.norm_type] en el recurso.
+HRTF table lookup: nearest (faster) vs bilinear (smoother motion). Use Global = [member ResonanceRuntimeConfig.hrtf_interpolation_bilinear].,HRTF table lookup: nearest (faster) vs bilinear (smoother motion). Use Global = [member ResonanceRuntimeConfig.hrtf_interpolation_bilinear].,Búsqueda en la tabla HRTF: más cercana (más rápida) frente a bilineal (movimiento más suave). Usar global = [member ResonanceRuntimeConfig.hrtf_interpolation_bilinear].
+"HRTF volume gain (dB) for the embedded default HRTF. With custom SOFA, added to each asset's [member ResonanceSOFAAsset.volume_db] (linear gain product).","HRTF volume gain (dB) for the embedded default HRTF. With custom SOFA, added to each asset's [member ResonanceSOFAAsset.volume_db] (linear gain product).","Ganancia de volumen de HRTF (dB) para el HRTF predeterminado integrado. Con SOFA personalizado, se añade a la [member ResonanceSOFAAsset.volume_db] de cada recurso (producto de ganancia lineal)."
+"High-band (≥8 kHz) EQ. 0 = fully attenuated, 1 = no change.","High-band (≥8 kHz) EQ. 0 = fully attenuated, 1 = no change.","Ecualización de banda alta (≥8 kHz). 0 = totalmente atenuada, 1 = sin cambios."
+High-band transmission (0-1). Only when transmission_input is User Defined.,High-band transmission (0-1). Only when transmission_input is User Defined.,Transmisión de banda alta (0-1). Solo cuando transmission_input es User Defined.
+How fast adaptive rays recover toward [member realtime_rays] when under budget (fraction of max rays per reflections tick).,How fast adaptive rays recover toward [member realtime_rays] when under budget (fraction of max rays per reflections tick).,Rapidez con la que los rayos adaptativos se recuperan hacia [member realtime_rays] cuando se está por debajo del presupuesto (fracción de rayos máximos por ciclo de reflexiones).
+"How much transmission damps reverb (0–1). 0 = no damping. 1 = full damping (reverb scaled by wall transparency).
+Only consulted for baked REVERB paths (see [member apply_occlusion_to_baked_reflections]); realtime reflections and
+STATICSOURCE/STATICLISTENER already encode source→listener occlusion in the IR.","How much transmission damps reverb (0–1). 0 = no damping. 1 = full damping (reverb scaled by wall transparency).
+Only consulted for baked REVERB paths (see [member apply_occlusion_to_baked_reflections]); realtime reflections and
+STATICSOURCE/STATICLISTENER already encode source→listener occlusion in the IR.","Cuánto amortigua la transmisión la reverberación (0–1). 0 = sin amortiguación. 1 = amortiguación completa (reverberación escalada por la transparencia de la pared).
+Solo se consulta para rutas de REVERBERACIÓN horneadas (ver [member apply_occlusion_to_baked_reflections]); las reflexiones en tiempo real y
+STATICSOURCE/STATICLISTENER ya codifican la oclusión de fuente→oyente en la IR."
+Hybrid reverb: length (seconds) of IR used for convolution before parametric tail. Lower = less CPU (e.g. 0.2–0.3 s for better hybrid performance). Only when reflection_type is Hybrid.,Hybrid reverb: length (seconds) of IR used for convolution before parametric tail. Lower = less CPU (e.g. 0.2–0.3 s for better hybrid performance). Only when reflection_type is Hybrid.,"Reverberación híbrida: longitud (segundos) de la IR utilizada para convolución antes de la cola paramétrica. Menor = menos CPU (por ejemplo, 0.2–0.3 s para un mejor rendimiento híbrido). Solo cuando reflection_type es Hybrid."
+Hybrid reverb: overlap percent (0–100) for crossfade between convolution and parametric parts.,Hybrid reverb: overlap percent (0–100) for crossfade between convolution and parametric parts.,Reverberación híbrida: porcentaje de superposición (0–100) para el desvanecimiento cruzado entre las partes de convolución y paramétrica.
+"If enabled, the sound source becomes directional. Projects along negative Z-axis (Forward).","If enabled, the sound source becomes directional. Projects along negative Z-axis (Forward).","Si está habilitado, la fuente de sonido se vuelve direccional. Se proyecta a lo largo del eje Z negativo (Adelante)."
+"Impulse response length (seconds) simulated each realtime tick. Longer increases CPU/memory.
+Distinct from [member max_reverb_duration] (allocation cap).","Impulse response length (seconds) simulated each realtime tick. Longer increases CPU/memory.
+Distinct from [member max_reverb_duration] (allocation cap).","Longitud de la respuesta al impulso (segundos) simulada en cada ciclo de tiempo real. Mayor longitud aumenta el uso de CPU/memoria.
+Distinto de [member max_reverb_duration] (límite de asignación)."
+Index into [member hrtf_sofa_assets] for the active SOFA (clamped at runtime).,Index into [member hrtf_sofa_assets] for the active SOFA (clamped at runtime).,Índice en [member hrtf_sofa_assets] para el SOFA activo (limitado en tiempo de ejecución).
+Inverse / Linear / Curve / Disabled. Disabled turns off sim distance attenuation on the direct path (not mute). Legacy tres may map old flags into this enum.,Inverse / Linear / Curve / Disabled. Disabled turns off sim distance attenuation on the direct path (not mute). Legacy tres may map old flags into this enum.,Inverso / Lineal / Curva / Desactivado. Desactivado desactiva la atenuación de distancia de simulación en la ruta directa (no silencia). Los archivos .tres antiguos pueden asignar banderas heredadas en este enumerador.
+"Low-band (≤800 Hz) EQ. 0 = fully attenuated, 1 = no change. Only when air_absorption_input is User Defined.","Low-band (≤800 Hz) EQ. 0 = fully attenuated, 1 = no change. Only when air_absorption_input is User Defined.","Ecualización de banda baja (≤800 Hz). 0 = totalmente atenuada, 1 = sin cambios. Solo cuando air_absorption_input es User Defined."
+Low-band transmission (0-1). Only when transmission_input is User Defined.,Low-band transmission (0-1). Only when transmission_input is User Defined.,Transmisión de banda baja (0-1). Solo cuando transmission_input es User Defined.
+Lower bound for adaptive realtime [code]numRays[/code] when [member reflections_adaptive_budget_us] > 0.,Lower bound for adaptive realtime [code]numRays[/code] when [member reflections_adaptive_budget_us] > 0.,Límite inferior para [code]numRays[/code] adaptativo en tiempo real cuando [member reflections_adaptive_budget_us] > 0.
+Max distance (meters) for attenuation. Sound reaches minimum volume at this range.,Max distance (meters) for attenuation. Sound reaches minimum volume at this range.,Distancia máxima (metros) para la atenuación. El sonido alcanza el volumen mínimo en este rango.
+"Max distance for realtime reflections (meters). 0 disables the distance cull.
+Sources farther than this omit reflections simulation flags (cheaper [code]RunReflections[/code]).","Max distance for realtime reflections (meters). 0 disables the distance cull.
+Sources farther than this omit reflections simulation flags (cheaper [code]RunReflections[/code]).","Distancia máxima para reflexiones en tiempo real (metros). 0 desactiva el descarte por distancia.
+Las fuentes más lejanas omiten las banderas de simulación de reflexiones (ejecución de [code]RunReflections[/code] más económica)."
+Max surfaces along the transmission path from listener (1–256; Steam Audio [code]numTransmissionRays[/code]). Only when [member max_transmission_surfaces_override] is User Defined. Increase for deep stacks of walls along one ray; it does not blend two materials at a lateral edge.,Max surfaces along the transmission path from listener (1–256; Steam Audio [code]numTransmissionRays[/code]). Only when [member max_transmission_surfaces_override] is User Defined. Increase for deep stacks of walls along one ray; it does not blend two materials at a lateral edge.,Superficies máximas a lo largo de la ruta de transmisión desde el oyente (1–256; Steam Audio [code]numTransmissionRays[/code]). Solo cuando [member max_transmission_surfaces_override] es User Defined. Auméntalo para pilas profundas de paredes a lo largo de un solo rayo; no mezcla dos materiales en un borde lateral.
+Maximum simultaneous sources for realtime reflection simulation (Steam Audio [code]maxNumSources[/code]). Higher values use more CPU and memory.,Maximum simultaneous sources for realtime reflection simulation (Steam Audio [code]maxNumSources[/code]). Higher values use more CPU and memory.,Máximo de fuentes simultáneas para la simulación de reflexiones en tiempo real (Steam Audio [code]maxNumSources[/code]). Valores más altos consumen más CPU y memoria.
+"Mid-band (800 Hz–8 kHz) EQ. 0 = fully attenuated, 1 = no change.","Mid-band (800 Hz–8 kHz) EQ. 0 = fully attenuated, 1 = no change.","Ecualización de banda media (800 Hz–8 kHz). 0 = totalmente atenuada, 1 = sin cambios."
+Mid-band transmission (0-1). Only when transmission_input is User Defined.,Mid-band transmission (0-1). Only when transmission_input is User Defined.,Transmisión de banda media (0-1). Solo cuando transmission_input es User Defined.
+"Min distance for irradiance sampling. Lower = finer detail at close range, more CPU. Only when Realtime Rays > 0.","Min distance for irradiance sampling. Lower = finer detail at close range, more CPU. Only when Realtime Rays > 0.","Distancia mínima para el muestreo de irradiancia. Menor = detalles más finos a corta distancia, más CPU. Solo cuando Realtime Rays > 0."
+Minimum seconds between full playback-parameter updates (occlusion/reverb readback → [code]ResonanceInternalPlayback[/code]). 0 = every frame. E.g. 0.033 ≈ 30 Hz cap. Source simulation updates still run every frame (or batched).,Minimum seconds between full playback-parameter updates (occlusion/reverb readback → [code]ResonanceInternalPlayback[/code]). 0 = every frame. E.g. 0.033 ≈ 30 Hz cap. Source simulation updates still run every frame (or batched).,"Segundos mínimos entre actualizaciones completas de parámetros de reproducción (lectura de oclusión/reverberación → [code]ResonanceInternalPlayback[/code]). 0 = cada fotograma. Por ejemplo, 0.033 ≈ límite de 30 Hz. Las actualizaciones de simulación de la fuente se siguen ejecutando cada fotograma (o en lotes)."
+Minimum seconds between worker applications of queued dynamic geometry transforms to Steam Audio (scene commit cost control).,Minimum seconds between worker applications of queued dynamic geometry transforms to Steam Audio (scene commit cost control).,Segundos mínimos entre aplicaciones del hilo de trabajo de transformaciones de geometría dinámica en cola a Steam Audio (control de costos de escena commit).
+Minimum source movement (meters) to trigger a full playback-parameter update when [member playback_parameter_min_interval] is also used; either condition can trigger. 0 = ignore movement-only gating (use interval only if set).,Minimum source movement (meters) to trigger a full playback-parameter update when [member playback_parameter_min_interval] is also used; either condition can trigger. 0 = ignore movement-only gating (use interval only if set).,Movimiento mínimo de la fuente (metros) para activar una actualización completa de los parámetros de reproducción cuando también se usa [member playback_parameter_min_interval]; cualquiera de las condiciones puede activarla. 0 = ignorar el filtro por movimiento (usar solo intervalo si está configurado).
+Number of rays per source for volumetric occlusion (1–64; Steam Audio [code]numOcclusionSamples[/code]). Editable only when [member occlusion_type_override] is **Volumetric**. Higher values stabilize the occlusion fraction near geometry boundaries; lower = less CPU.,Number of rays per source for volumetric occlusion (1–64; Steam Audio [code]numOcclusionSamples[/code]). Editable only when [member occlusion_type_override] is **Volumetric**. Higher values stabilize the occlusion fraction near geometry boundaries; lower = less CPU.,Número de rayos por fuente para la oclusión volumétrica (1–64; Steam Audio [code]numOcclusionSamples[/code]). Editable solo cuando [member occlusion_type_override] es **Volumetric**. Valores más altos estabilizan la fracción de oclusión cerca de los límites de la geometría; valores más bajos reducen el uso de CPU.
+"Occlusion attenuation (0-1). 0 = fully occluded, 1 = not occluded. Only when occlusion_input is User Defined.","Occlusion attenuation (0-1). 0 = fully occluded, 1 = not occluded. Only when occlusion_input is User Defined.","Atenuación de oclusión (0-1). 0 = totalmente ocluido, 1 = no ocluido. Solo cuando occlusion_input es User Defined."
+"Occlusion model: Raycast (binary hit) or Volumetric (fractional occlusion from samples; Steam Audio [code]numOcclusionSamples[/code]). Volumetric only affects how occlusion is computed, not how transmission coefficients are banded. Pair with [member ResonancePlayerConfig.occlusion_samples] and [member ResonancePlayerConfig.source_radius] on each source.","Occlusion model: Raycast (binary hit) or Volumetric (fractional occlusion from samples; Steam Audio [code]numOcclusionSamples[/code]). Volumetric only affects how occlusion is computed, not how transmission coefficients are banded. Pair with [member ResonancePlayerConfig.occlusion_samples] and [member ResonancePlayerConfig.source_radius] on each source.","Modelo de oclusión: Raycast (impacto binario) o Volumetric (oclusión fraccionada a partir de muestras; Steam Audio [code]numOcclusionSamples[/code]). Volumetric solo afecta a cómo se calcula la oclusión, no a cómo se agrupan los coeficientes de transmisión. Emparéjalo con [member ResonancePlayerConfig.occlusion_samples] y [member ResonancePlayerConfig.source_radius] en cada fuente."
+Occlusion source: Simulation Defined = physics-based raycast. User Defined = use occlusion_value (script-controlled).,Occlusion source: Simulation Defined = physics-based raycast. User Defined = use occlusion_value (script-controlled).,Origen de oclusión: Definido por simulación = trazado de rayos basado en física. Definido por usuario = usa occlusion_value (controlado por script).
+OpenCL device index (0 = first matching device). Useful when multiple GPUs are present.,OpenCL device index (0 = first matching device). Useful when multiple GPUs are present.,Índice del dispositivo OpenCL (0 = primer dispositivo coincidente). Útil cuando hay varias GPUs presentes.
+OpenCL device type when scene_type is Radeon Rays (or when using TAN). Helps when a GPU has OpenCL issues.,OpenCL device type when scene_type is Radeon Rays (or when using TAN). Helps when a GPU has OpenCL issues.,Tipo de dispositivo OpenCL cuando scene_type es Radeon Rays (o al usar TAN). Ayuda cuando una GPU tiene problemas con OpenCL.
+Output bus for Direct + Pathing. Empty = Master.,Output bus for Direct + Pathing. Empty = Master.,Bus de salida para Directo + Trazado de rutas. Vacío = Master.
+Overrides runtime transmission mode for the direct effect only. Frequency independent = single coefficient; frequency dependent = three bands (see simulator transmission type).,Overrides runtime transmission mode for the direct effect only. Frequency independent = single coefficient; frequency dependent = three bands (see simulator transmission type).,Sobrescribe el modo de transmisión en tiempo de ejecución solo para el efecto directo. Independiente de frecuencia = coeficiente único; dependiente de frecuencia = tres bandas (ver tipo de transmisión del simulador).
+"Parallel bake threads. More = faster bake, more CPU.","Parallel bake threads. More = faster bake, more CPU.","Hilos de horneado en paralelo. Más = horneado más rápido, más CPU."
+Path validation: Use Global = [member ResonanceRuntimeConfig.path_validation_enabled]. Disabled / Enabled = force off or on for this source.,Path validation: Use Global = [member ResonanceRuntimeConfig.path_validation_enabled]. Disabled / Enabled = force off or on for this source.,Validación de ruta: Usar global = [member ResonanceRuntimeConfig.path_validation_enabled]. Desactivado / Habilitado = fuerza el apagado o encendido para esta fuente.
+Pathing: normalize EQ on path effect output. Prevents pathing from sounding too bright.,Pathing: normalize EQ on path effect output. Prevents pathing from sounding too bright.,Trazado de rutas: ecualización de normalización en la salida del efecto de trazado. Evita que el trazado de rutas suene demasiado brillante.
+Per-second reduction of adaptive extra delay when under budget (or worker did not run reflections).,Per-second reduction of adaptive extra delay when under budget (or worker did not run reflections).,Reducción por segundo del retraso adaptativo adicional cuando se está por debajo del presupuesto (o el hilo de trabajo no ejecutó las reflexiones).
+Per-source EQ multiplier for high band. 1.0 = no change.,Per-source EQ multiplier for high band. 1.0 = no change.,Multiplicador de ecualización por fuente para la banda alta. 1.0 = sin cambios.
+Per-source EQ multiplier for low band. 1.0 = no change. Only when runtime reflection_type is Hybrid.,Per-source EQ multiplier for low band. 1.0 = no change. Only when runtime reflection_type is Hybrid.,Multiplicador de ecualización por fuente para la banda baja. 1.0 = sin cambios. Solo cuando el reflection_type en tiempo de ejecución es Hybrid.
+Per-source EQ multiplier for mid band. 1.0 = no change.,Per-source EQ multiplier for mid band. 1.0 = no change.,Multiplicador de ecualización por fuente para la banda media. 1.0 = sin cambios.
+Per-source override for [member ResonanceRuntimeConfig.direct_binaural]. Use Global = runtime default; Disabled = panning on dry path; Enabled = force HRTF.,Per-source override for [member ResonanceRuntimeConfig.direct_binaural]. Use Global = runtime default; Disabled = panning on dry path; Enabled = force HRTF.,Sobrescritura por fuente para [member ResonanceRuntimeConfig.direct_binaural]. Usar global = valor por defecto; Desactivado = paneo en la ruta dry; Habilitado = fuerza el uso de HRTF.
+Per-source override for [member ResonanceRuntimeConfig.pathing_binaural]. Disabled saves CPU when pathing runs but stereo speaker panning is enough.,Per-source override for [member ResonanceRuntimeConfig.pathing_binaural]. Disabled saves CPU when pathing runs but stereo speaker panning is enough.,Sobrescritura por fuente para [member ResonanceRuntimeConfig.pathing_binaural]. Desactivado ahorra CPU cuando el trazado se ejecuta pero el paneo estéreo es suficiente.
+Per-source override for [member ResonanceRuntimeConfig.reverb_binaural] (HRTF on convolution / mixer Ambisonics decode - reflections wet path).,Per-source override for [member ResonanceRuntimeConfig.reverb_binaural] (HRTF on convolution / mixer Ambisonics decode - reflections wet path).,Sobrescritura por fuente para [member ResonanceRuntimeConfig.reverb_binaural] (HRTF en decodificación de convolución / mezcla ambisónica - ruta wet de reflexiones).
+Per-source perspective correction. Use Global = follow RuntimeConfig. Disabled = off. Enabled = force on for this source.,Per-source perspective correction. Use Global = follow RuntimeConfig. Disabled = off. Enabled = force on for this source.,Corrección de perspectiva por fuente. Usar global = sigue RuntimeConfig. Desactivado = apagado. Habilitado = fuerza el encendido para esta fuente.
+Perspective correction factor. 1.0 = calibrated for a 30–32 inch desktop monitor.,Perspective correction factor. 1.0 = calibrated for a 30–32 inch desktop monitor.,Factor de corrección de perspectiva. 1.0 = calibrado para un monitor de escritorio de 30–32 pulgadas.
+"Preset for a few key scheduling knobs ([member reflections_sim_interval], [member pathing_sim_interval], [member direct_sim_interval]).
+The selected value is kept until you manually tweak one of those knobs, then it switches back to Custom.","Preset for a few key scheduling knobs ([member reflections_sim_interval], [member pathing_sim_interval], [member direct_sim_interval]).
+The selected value is kept until you manually tweak one of those knobs, then it switches back to Custom.","Preajuste para algunos controles clave de programación ([member reflections_sim_interval], [member pathing_sim_interval], [member direct_sim_interval]).
+El valor seleccionado se mantiene hasta que ajustes manualmente uno de esos controles, momento en el que volverá a Custom."
+Probes beyond this radius (m) do not affect listener.,Probes beyond this radius (m) do not affect listener.,Las sondas más allá de este radio (m) no afectan al oyente.
+Radius of the sound source in meters (Steam Audio occlusion radius). Affects volumetric occlusion sampling and diffraction; slightly larger radius can reduce edge flicker when [member ResonanceRuntimeConfig.occlusion_type] is Volumetric.,Radius of the sound source in meters (Steam Audio occlusion radius). Affects volumetric occlusion sampling and diffraction; slightly larger radius can reduce edge flicker when [member ResonanceRuntimeConfig.occlusion_type] is Volumetric.,Radio de la fuente de sonido en metros (radio de oclusión de Steam Audio). Afecta al muestreo de oclusión volumétrica y a la difracción; un radio ligeramente mayor puede reducir el parpadeo en los bordes cuando [member ResonanceRuntimeConfig.occlusion_type] es Volumetric.
+"Ray count for realtime reflection simulation. Off disables realtime reflections (cheapest).
+Higher values improve quality but cost more CPU; depends strongly on [member scene_type].","Ray count for realtime reflection simulation. Off disables realtime reflections (cheapest).
+Higher values improve quality but cost more CPU; depends strongly on [member scene_type].","Número de rayos para la simulación de reflexiones en tiempo real. Apagado desactiva las reflexiones en tiempo real (más económico).
+Valores más altos mejoran la calidad pero consumen más CPU; depende fuertemente de [member scene_type]."
+"Ray tracer backend. Default = built-in Phonon; Embree = Intel (often faster on CPU).
+Radeon Rays = OpenCL GPU path supported on 64-bit Windows only; other platforms fall back to Default.
+Custom = Steam Audio custom scene: raycasts use Godot 3D physics and simulation runs during the physics frame.","Ray tracer backend. Default = built-in Phonon; Embree = Intel (often faster on CPU).
+Radeon Rays = OpenCL GPU path supported on 64-bit Windows only; other platforms fall back to Default.
+Custom = Steam Audio custom scene: raycasts use Godot 3D physics and simulation runs during the physics frame.","Backend del trazador de rayos. Default = Phonon integrado; Embree = Intel (a menudo más rápido en CPU).
+Radeon Rays = ruta de GPU OpenCL soportada solo en Windows de 64 bits; otras plataformas recurren a Default.
+Custom = escena personalizada de Steam Audio: los trazados de rayos utilizan la física 3D de Godot y la simulación se ejecuta durante el fotograma de física."
+Raycast / Volumetric / Use Global ([code]2[/code]). Legacy [code]-1[/code] migrates to 2. Default export [code]= 2[/code] so new resources do not silently become Raycast.,Raycast / Volumetric / Use Global ([code]2[/code]). Legacy [code]-1[/code] migrates to 2. Default export [code]= 2[/code] so new resources do not silently become Raycast.,Raycast / Volumetric / Usar global ([code]2[/code]). El valor heredado [code]-1[/code] migra a 2. Exportación por defecto [code]= 2[/code] para que los nuevos recursos no se conviertan silenciosamente en Raycast.
+Rays per Phonon job when [member scene_type] is Custom. Values > 1 enable batched Godot ray callbacks.,Rays per Phonon job when [member scene_type] is Custom. Values > 1 enable batched Godot ray callbacks.,Rayos por tarea de Phonon cuando [member scene_type] es Custom. Valores > 1 habilitan llamadas de retorno agrupadas (callbacks) de rayos en Godot.
+"Realtime reflection bounces per ray. Higher = longer reverb, more CPU.","Realtime reflection bounces per ray. Higher = longer reverb, more CPU.","Rebotes de reflexión en tiempo real por rayo. Mayor = reverberación más larga, más CPU."
+"Reflection bounces per ray. Higher = longer reverb tail, longer bake.","Reflection bounces per ray. Higher = longer reverb tail, longer bake.","Rebotes de reflexión por rayo. Mayor = cola de reverberación más larga, horneado más largo."
+"Reflection rays per probe. Higher = better quality, longer bake.","Reflection rays per probe. Higher = better quality, longer bake.","Rayos de reflexión por sonda. Mayor = mejor calidad, horneado más largo."
+Reflections simulation: [b]Use Global[/b] = runtime [member ResonanceRuntimeConfig.default_reflections_mode] (Baked or Realtime). [b]Realtime[/b] here = per-source ray tracing (requires runtime [member ResonanceRuntimeConfig.realtime_rays] &gt; 0). Baked Reverb / Static Source / Listener = probe data modes.,Reflections simulation: [b]Use Global[/b] = runtime [member ResonanceRuntimeConfig.default_reflections_mode] (Baked or Realtime). [b]Realtime[/b] here = per-source ray tracing (requires runtime [member ResonanceRuntimeConfig.realtime_rays] &gt; 0). Baked Reverb / Static Source / Listener = probe data modes.,Simulación de reflexiones: [b]Usar global[/b] = [member ResonanceRuntimeConfig.default_reflections_mode] en tiempo de ejecución (Baked o Realtime). [b]Realtime[/b] aquí = trazado de rayos por fuente (requiere [member ResonanceRuntimeConfig.realtime_rays] &gt; 0 en tiempo de ejecución). Baked Reverb / Static Source / Listener = modos de datos de sonda.
+"Reverb algorithm for bake: Convolution (full IR), Parametric (quick), Hybrid (balanced).
+Should match ResonanceRuntimeConfig.reflection_type for consistent playback (BakeConfig has no TAN).","Reverb algorithm for bake: Convolution (full IR), Parametric (quick), Hybrid (balanced).
+Should match ResonanceRuntimeConfig.reflection_type for consistent playback (BakeConfig has no TAN).","Algoritmo de reverberación para horneado: Convolution (IR completa), Parametric (rápida), Hybrid (equilibrado).
+Debe coincidir con ResonanceRuntimeConfig.reflection_type para una reproducción consistente (BakeConfig no tiene TAN)."
+"Reverb algorithm. Parametric (fastest). Convolution uses ReflectionMixer (bundled convolutions).
+Hybrid = convolution + parametric tail (no mixer; can be slower than Convolution – reduce hybrid_reverb_transition_time and ambisonic_order for better perf).
+TrueAudio Next: Steam Audio supports TAN on 64-bit Windows only; other platforms fall back to Convolution with a warning.","Reverb algorithm. Parametric (fastest). Convolution uses ReflectionMixer (bundled convolutions).
+Hybrid = convolution + parametric tail (no mixer; can be slower than Convolution – reduce hybrid_reverb_transition_time and ambisonic_order for better perf).
+TrueAudio Next: Steam Audio supports TAN on 64-bit Windows only; other platforms fall back to Convolution with a warning.","Algoritmo de reverberación: Paramétrico (más rápido). Convolución usa ReflectionMixer (convoluciones empaquetadas).
+Híbrido = convolución + cola paramétrica (sin mezclador; puede ser más lento que Convolución; reduce hybrid_reverb_transition_time y el orden de ambisónicos para mejor rendimiento).
+TrueAudio Next: Steam Audio soporta TAN solo en Windows de 64 bits; otras plataformas recurren a Convolución con una advertencia."
+Reverb bus: Use Global or Custom ([member reverb_bus_name]). Parametric/Hybrid wet routing vs convolution mixer behavior follows runtime docs. Setter refreshes [member reverb_bus_name] in the inspector.,Reverb bus: Use Global or Custom ([member reverb_bus_name]). Parametric/Hybrid wet routing vs convolution mixer behavior follows runtime docs. Setter refreshes [member reverb_bus_name] in the inspector.,Bus de reverberación: Usar global o Custom ([member reverb_bus_name]). El enrutamiento wet paramétrico/híbrido frente al comportamiento del mezclador de convolución sigue los documentos de tiempo de ejecución. El setter actualiza [member reverb_bus_name] en el inspector.
+Reverb transmission amount: Use Global or User Defined ([member reverb_transmission_amount]). Needs wet occlusion damping active.,Reverb transmission amount: Use Global or User Defined ([member reverb_transmission_amount]). Needs wet occlusion damping active.,Cantidad de transmisión de reverberación: Usar global o Definido por usuario ([member reverb_transmission_amount]). Requiere que la atenuación de oclusión wet esté activa.
+"Runtime pathing: Steam Audio [code]numVisSamples[/code] (probe visibility rays per pathing update). 1–16. Lower = less CPU; higher ≈ closer to bake density ([ResonanceBakeConfig] [code]bake_pathing_num_samples[/code] is bake-only). With path validation / alternate paths on, this dominates pathing cost (Embree or Default tracer).","Runtime pathing: Steam Audio [code]numVisSamples[/code] (probe visibility rays per pathing update). 1–16. Lower = less CPU; higher ≈ closer to bake density ([ResonanceBakeConfig] [code]bake_pathing_num_samples[/code] is bake-only). With path validation / alternate paths on, this dominates pathing cost (Embree or Default tracer).","Trazado de rutas en tiempo de ejecución: [code]numVisSamples[/code] de Steam Audio (rayos de visibilidad de sonda por actualización de trazado). 1–16. Menor = menos CPU; mayor ≈ cercano a la densidad del horneado (el [code]bake_pathing_num_samples[/code] de [ResonanceBakeConfig] es solo para horneado). Con validación de ruta / rutas alternativas activadas, esto domina el costo de trazado (trazador Embree o Default)."
+SOFA HRTF library. [member hrtf_sofa_selected_index] picks the active entry. Empty = default embedded HRTF.,SOFA HRTF library. [member hrtf_sofa_selected_index] picks the active entry. Empty = default embedded HRTF.,Biblioteca SOFA HRTF. [member hrtf_sofa_selected_index] elige la entrada activa. Vacío = HRTF integrado por defecto.
+"Sample rate override. Use Godot Mix Rate to follow Project Settings.
+Only override when you know the whole project runs at that rate; there is no resampling and mismatches can cause artifacts.","Sample rate override. Use Godot Mix Rate to follow Project Settings.
+Only override when you know the whole project runs at that rate; there is no resampling and mismatches can cause artifacts.","Sobrescribir frecuencia de muestreo. Usa Godot Mix Rate para seguir los Ajustes del Proyecto.
+Sobrescribe solo cuando sepas que todo el proyecto se ejecuta a esa frecuencia; no hay remuestreo y las diferencias pueden causar artefactos."
+Samples before parametric part starts. -1 = use simulation value.,Samples before parametric part starts. -1 = use simulation value.,Muestras antes de que comience la parte paramétrica. -1 = usa el valor de simulación.
+"Scales [member direct_mix_level], [member reflections_mix_level], and [member pathing_mix_level] together.
+Use for overall source level when the stream has no reliable volume (e.g. AudioStreamSynchronized).","Scales [member direct_mix_level], [member reflections_mix_level], and [member pathing_mix_level] together.
+Use for overall source level when the stream has no reliable volume (e.g. AudioStreamSynchronized).","Escala en conjunto [member direct_mix_level], [member reflections_mix_level] y [member pathing_mix_level].
+Úsalo para el nivel general de la fuente cuando el flujo no tenga un volumen confiable (por ejemplo, AudioStreamSynchronized)."
+Seconds added to the effective reflection interval each time the worker exceeds [member reflections_adaptive_budget_us].,Seconds added to the effective reflection interval each time the worker exceeds [member reflections_adaptive_budget_us].,Segundos añadidos al intervalo de reflexión efectivo cada vez que el hilo de trabajo supera [member reflections_adaptive_budget_us].
+"Shape: 0 = Omnidirectional, 1 = Dipole (figure-8). Intermediate = blend. Only when directivity_input is Simulation.","Shape: 0 = Omnidirectional, 1 = Dipole (figure-8). Intermediate = blend. Only when directivity_input is Simulation.","Forma: 0 = Omnidireccional, 1 = Dipolo (figura de 8). Intermedio = mezcla. Solo cuando directivity_input es Simulation."
+"Sharpness of the directivity pattern. 0 = broad cone, 4 = narrow beam. Only when directivity_input is Simulation.","Sharpness of the directivity pattern. 0 = broad cone, 4 = narrow beam. Only when directivity_input is Simulation.","Nitidez del patrón de directividad. 0 = cono ancho, 4 = haz estrecho. Solo cuando directivity_input es Simulation."
+Simulator cap for volumetric occlusion samples (Steam Audio [code]maxNumOcclusionSamples[/code]). Per-source [member ResonancePlayerConfig.occlusion_samples] are clamped to this.,Simulator cap for volumetric occlusion samples (Steam Audio [code]maxNumOcclusionSamples[/code]). Per-source [member ResonancePlayerConfig.occlusion_samples] are clamped to this.,Límite del simulador para muestras de oclusión volumétrica (Steam Audio [code]maxNumOcclusionSamples[/code]). Las [member ResonancePlayerConfig.occlusion_samples] por fuente se limitan a esto.
+"Steam Audio processing block size in samples per channel per [code]iplAudioEffectApply[/code] call.
+For stable routing it should match Godot's mix buffer size (reverb bus frame_count).
+Auto picks the closest of 256/512/1024/2048 from [code]audio/driver/output_latency[/code] and the current mix rate.","Steam Audio processing block size in samples per channel per [code]iplAudioEffectApply[/code] call.
+For stable routing it should match Godot's mix buffer size (reverb bus frame_count).
+Auto picks the closest of 256/512/1024/2048 from [code]audio/driver/output_latency[/code] and the current mix rate.","Tamaño del bloque de procesamiento de Steam Audio en muestras por canal por llamada a [code]iplAudioEffectApply[/code].
+Para un enrutamiento estable, debe coincidir con el tamaño del búfer de mezcla de Godot (frame_count del bus de reverberación).
+Auto elige el más cercano entre 256/512/1024/2048 a partir de [code]audio/driver/output_latency[/code] y la frecuencia de mezcla actual."
+Transmission source: Simulation Defined = physics-based. User Defined = use transmission low/mid/high (script-controlled).,Transmission source: Simulation Defined = physics-based. User Defined = use transmission low/mid/high (script-controlled).,Origen de transmisión: Definido por simulación = basado en física. Definido por usuario = usa transmisión baja/media/alta (controlada por script).
+Upper bound (seconds) for extra delay from adaptive reflection scheduling.,Upper bound (seconds) for extra delay from adaptive reflection scheduling.,Límite de tiempo (segundos) para el retraso adicional de la programación de reflexiones adaptativa.
+"Upper bound for reverb IR allocation (seconds). Higher values increase memory/CPU.
+This is an allocation/mixer cap, not the per-tick realtime simulation length (see [member realtime_simulation_duration]).","Upper bound for reverb IR allocation (seconds). Higher values increase memory/CPU.
+This is an allocation/mixer cap, not the per-tick realtime simulation length (see [member realtime_simulation_duration]).","Límite superior para la asignación de IR de reverberación (segundos). Valores más altos aumentan el uso de memoria/CPU.
+Este es un límite de asignación/mezclador, no la longitud de la simulación en tiempo real por ciclo (ver [member realtime_simulation_duration])."
+Use Global vs cap [member max_transmission_surfaces]. Legacy [code]-1[/code] → Use Global.,Use Global vs cap [member max_transmission_surfaces]. Legacy [code]-1[/code] → Use Global.,Usar global frente a limitar [member max_transmission_surfaces]. El valor heredado [code]-1[/code] → Usar global.
+"Use virtual surround instead of HRTF. Simpler, less accurate.","Use virtual surround instead of HRTF. Simpler, less accurate.","Usa sonido envolvente virtual en lugar de HRTF. Más simple, menos preciso."
+Volume of pathing (multi-path propagation). Range 0-10. Requires baked pathing data.,Volume of pathing (multi-path propagation). Range 0-10. Requires baked pathing data.,Volumen del trazado de rutas (propagación por múltiples rutas). Rango 0-10. Requiere datos de trazado horneados.
+Volume of reflections and reverb. Range 0-10. 1.0 = nominal.,Volume of reflections and reverb. Range 0-10. 1.0 = nominal.,Volumen de reflexiones y reverberación. Rango 0-10. 1.0 = nominal.
+Volume of the direct (line-of-sight) sound path. Range 0-10. 1.0 = nominal.,Volume of the direct (line-of-sight) sound path. Range 0-10. 1.0 = nominal.,Volumen de la ruta de sonido directo (línea de visión). Rango 0-10. 1.0 = nominal.
+Wet occlusion on baked REVERB: Use Global / Off / On (outdoor leak vs indoor beds). See docs/baked-reflections-and-outdoor-sources.md.,Wet occlusion on baked REVERB: Use Global / Off / On (outdoor leak vs indoor beds). See docs/baked-reflections-and-outdoor-sources.md.,Oclusión de efecto (wet) en REVERBERACIÓN horneada: Usar global / Desactivado / Activado (filtrado exterior frente a lechos interiores). Consulta docs/baked-reflections-and-outdoor-sources.md.
+"When [code]iplSceneCommit[/code] took at least this many microseconds, skip reflections this wake and retry next frame.
+0 = off.","When [code]iplSceneCommit[/code] took at least this many microseconds, skip reflections this wake and retry next frame.
+0 = off.","Cuando [code]iplSceneCommit[/code] tarda al menos este número de microsegundos, omite las reflexiones en este ciclo e inténtalo en el siguiente fotograma.
+0 = desactivado."
+"When off, occlusion is not simulated for this source; use User Defined [member occlusion_input] for manual occlusion.","When off, occlusion is not simulated for this source; use User Defined [member occlusion_input] for manual occlusion.","Cuando está desactivado, no se simula la oclusión para esta fuente; usa la oclusión definida por el usuario [member occlusion_input] para oclusión manual."
+"When off, transmission through geometry is not simulated; use User Defined [member transmission_input] for manual bands.","When off, transmission through geometry is not simulated; use User Defined [member transmission_input] for manual bands.","Cuando está desactivado, no se simula la transmisión a través de la geometría; usa la transmisión definida por el usuario [member transmission_input] para bandas manuales."
+"When on, players enqueue source updates and ResonanceRuntime applies them once per frame (reduces lock contention).","When on, players enqueue source updates and ResonanceRuntime applies them once per frame (reduces lock contention).","Cuando está activado, los reproductores encolan las actualizaciones de origen y ResonanceRuntime las aplica una vez por fotograma (reduce la contienda por bloqueos)."
+When reflections_type is Baked Static Listener: reference to the node (e.g. listener/camera) whose position was baked. Leave empty to use active listener.,When reflections_type is Baked Static Listener: reference to the node (e.g. listener/camera) whose position was baked. Leave empty to use active listener.,"Cuando reflections_type es Baked Static Listener: referencia al nodo (por ejemplo, oyente/cámara) cuya posición fue horneada. Déjalo vacío para usar el oyente activo."
+When reflections_type is Baked Static Source: reference to the node whose position was baked as static source. Leave empty to use this player's position.,When reflections_type is Baked Static Source: reference to the node whose position was baked as static source. Leave empty to use this player's position.,Cuando reflections_type es Baked Static Source: referencia al nodo cuya posición fue horneada como fuente estática. Déjalo vacío para usar la posición de este reproductor.
+"[b]Direct Sim Interval[/b] - Minimum seconds between [code]iplSimulatorRunDirect[/code] on worker wakes when reflection/pathing heavy work is not scheduled for that wake (or after heavy work is skipped). Throttles **direct-path occlusion, transmission, air absorption** independently of [member reflections_sim_interval] / [member pathing_sim_interval].
+[code]0[/code] = run direct every eligible worker wake (default). Try [code]0.02[/code]–[code]0.05[/code] to lower CPU; occlusion may update slightly less often.","[b]Direct Sim Interval[/b] - Minimum seconds between [code]iplSimulatorRunDirect[/code] on worker wakes when reflection/pathing heavy work is not scheduled for that wake (or after heavy work is skipped). Throttles **direct-path occlusion, transmission, air absorption** independently of [member reflections_sim_interval] / [member pathing_sim_interval].
+[code]0[/code] = run direct every eligible worker wake (default). Try [code]0.02[/code]–[code]0.05[/code] to lower CPU; occlusion may update slightly less often.","[b]Intervalo de Sim Directo[/b] - Segundos mínimos entre ejecuciones de [code]iplSimulatorRunDirect[/code] en las activaciones del hilo de trabajo cuando no está programado trabajo pesado de reflexión/trazado para esa activación (o tras omitirse el trabajo pesado). Limita la **oclusión de ruta directa, transmisión, absorción de aire** independientemente de [member reflections_sim_interval] / [member pathing_sim_interval].
+[code]0[/code] = ejecuta directo en cada activación de trabajo elegible (por defecto). Prueba con [code]0.02[/code]–[code]0.05[/code] para reducir el uso de CPU; la oclusión podría actualizarse con menos frecuencia."
+[b]Pathing Sim Interval[/b] - Minimum seconds between scheduling pathing-heavy simulation ([code]iplSimulatorRunPathing[/code]). Same semantics as [member reflections_sim_interval]; set higher to stagger expensive pathing from reflections.,[b]Pathing Sim Interval[/b] - Minimum seconds between scheduling pathing-heavy simulation ([code]iplSimulatorRunPathing[/code]). Same semantics as [member reflections_sim_interval]; set higher to stagger expensive pathing from reflections.,[b]Intervalo de Sim de Trazado de Rutas[/b] - Segundos mínimos entre programaciones de simulación pesada de trazado de rutas ([code]iplSimulatorRunPathing[/code]). Misma semántica que [member reflections_sim_interval]; configúralo más alto para alternar el costoso trazado de rutas con las reflexiones.
+[b]Reflections Sim Interval[/b] - Minimum seconds between scheduling reflection-heavy simulation ([code]iplSimulatorRunReflections[/code]). [code]0[/code] = every worker tick (highest CPU). [code]0.1[/code] ≈ 100 ms default. Does not throttle direct occlusion/transmission - see [member direct_sim_interval].,[b]Reflections Sim Interval[/b] - Minimum seconds between scheduling reflection-heavy simulation ([code]iplSimulatorRunReflections[/code]). [code]0[/code] = every worker tick (highest CPU). [code]0.1[/code] ≈ 100 ms default. Does not throttle direct occlusion/transmission - see [member direct_sim_interval].,[b]Intervalo de Sim de Reflexiones[/b] - Segundos mínimos entre programaciones de simulación pesada de reflexiones ([code]iplSimulatorRunReflections[/code]). [code]0[/code] = en cada tick de trabajo (máximo uso de CPU). [code]0.1[/code] ≈ 100 ms por defecto. No limita la oclusión/transmisión directa - ver [member direct_sim_interval].
+"[b]Reflections sampling mode[/b]. This controls where baked REVERB chooses its probe from.
+[br][b]Listener-centric[/b] = pick the probe nearest the listener (recommended for room reverb).
+[br][b]Source-centric[/b] = pick the probe nearest the source (legacy behavior).
+[br][br]Note: currently this only affects baked REVERB probe lookup. Steam Audio realtime reflections trace rays from the listener in the core API, so this mode does not yet change realtime ray origin.","[b]Reflections sampling mode[/b]. This controls where baked REVERB chooses its probe from.
+[br][b]Listener-centric[/b] = pick the probe nearest the listener (recommended for room reverb).
+[br][b]Source-centric[/b] = pick the probe nearest the source (legacy behavior).
+[br][br]Note: currently this only affects baked REVERB probe lookup. Steam Audio realtime reflections trace rays from the listener in the core API, so this mode does not yet change realtime ray origin.","[b]Modo de muestreo de reflexiones[/b]. Esto controla de dónde elige su sonda la REVERBERACIÓN horneada.
+[br][b]Centrado en el oyente[/b] = elige la sonda más cercana al oyente (recomendado para reverberación de sala).
+[br][b]Centrado en la fuente[/b] = elige la sonda más cercana a la fuente (comportamiento heredado).
+[br][br]Nota: actualmente esto solo afecta a la búsqueda de sondas de REVERBERACIÓN horneada. Las reflexiones en tiempo real de Steam Audio trazan rayos desde el oyente en la API principal, por lo que este modo aún no cambia el origen de los rayos en tiempo real."
+_spatial_binaural_config_version,_spatial_binaural_config_version,Versión de configuración de binaural espacial
+Spatial Binaural Config Version,Spatial Binaural Config Version,Versión de configuración de binaural espacial
+baked_reflection_type,baked_reflection_type,Tipo de reflexión horneada
+Baked Reflection Type,Baked Reflection Type,Tipo de reflexión horneada
+probe_positions,probe_positions,Posiciones de sonda
+Probe Positions,Probe Positions,Posiciones de sonda
+dynamic,dynamic,Dinámico
+directivity_weight,directivity_weight,Peso de directividad
+default_reflections_mode,default_reflections_mode,Modo de reflexiones por defecto
+spatial_blend,spatial_blend,Mezcla espacial
+path_validation_override,path_validation_override,Sobrescribir validación de ruta
+bake_num_rays,bake_num_rays,Número de rayos de horneado
+reverb_transmission_amount_input,reverb_transmission_amount_input,Entrada de cantidad de transmisión de reverb
+bake_pathing_path_range,bake_pathing_path_range,Rango de ruta para trazado horneado
+show_directivity_gizmo,show_directivity_gizmo,Mostrar gizmo de directividad
+static_listener_enabled,static_listener_enabled,Oyente estático habilitado
+export_all_children,export_all_children,Exportar todos los hijos
+max_occlusion_samples,max_occlusion_samples,Muestras máximas de oclusión
+opencl_device_type,opencl_device_type,Tipo de dispositivo OpenCL
+realtime_reflection_max_distance,realtime_reflection_max_distance,Distancia máxima de reflexión en tiempo real
+physics_ray_collision_mask,physics_ray_collision_mask,Máscara de colisión de rayos de física
+output_direct,output_direct,Salida directa
+volume_db,volume_db,Volumen (dB)
+reflections_adaptive_max_extra_interval,reflections_adaptive_max_extra_interval,Intervalo extra máximo adaptativo de reflexiones
+find_alternate_paths_override,find_alternate_paths_override,Sobrescribir buscar rutas alternativas
+pathing_num_vis_samples,pathing_num_vis_samples,Muestras de visibilidad de trazado
+transmission_low,transmission_low,Transmisión baja
+bake_num_bounces,bake_num_bounces,Número de rebotes de horneado
+direct_mix_level,direct_mix_level,Nivel de mezcla directo
+hrtf_interpolation_bilinear,hrtf_interpolation_bilinear,Interpolación HRTF bilineal
+transmission_high,transmission_high,Transmisión alta
+transmission_type,transmission_type,Tipo de transmisión
+hrtf_normalization_type,hrtf_normalization_type,Tipo de normalización de HRTF
+bus,bus,Bus
+direct_speaker_channels,direct_speaker_channels,Canales de altavoz directo
+opencl_device_index,opencl_device_index,Índice de dispositivo OpenCL
+apply_occlusion_to_baked_reflections,apply_occlusion_to_baked_reflections,Aplicar oclusión a reflexiones horneadas
+reverb_binaural,reverb_binaural,Binaural de reverberación
+reflections_eq_mid,reflections_eq_mid,Ecualización de reflexiones media
+bake_influence_radius,bake_influence_radius,Radio de influencia del horneado
+event_path,event_path,Ruta del evento
+material,material,Material
+reverb_transmission_amount,reverb_transmission_amount,Cantidad de transmisión de reverberación
+hrtf_sofa_assets,hrtf_sofa_assets,Recursos SOFA de HRTF
+reflections_adaptive_ray_min,reflections_adaptive_ray_min,Mínimo de rayos adaptativos de reflexiones
+hrtf_interpolation_override,hrtf_interpolation_override,Sobrescribir interpolación HRTF
+generation_type,generation_type,Tipo de generación
+transmission_mid,transmission_mid,Transmisión media
+use_virtual_surround,use_virtual_surround,Usar sonido envolvente virtual
+absorption_mid,absorption_mid,Absorción media
+dynamic_scene_commit_min_interval,dynamic_scene_commit_min_interval,Intervalo mínimo de commit en escena dinámica
+reverb_influence_radius,reverb_influence_radius,Radio de influencia de reverberación
+reverb_bus_override,reverb_bus_override,Sobrescribir bus de reverb
+apply_hrtf,apply_hrtf,Aplicar HRTF
+bus_name,bus_name,Nombre del bus
+occlusion_type_override,occlusion_type_override,Sobrescribir tipo de oclusión
+hrtf_sofa_selected_index,hrtf_sofa_selected_index,Índice de SOFA HRTF seleccionado
+directivity_input,directivity_input,Entrada de directividad
+show_probes,show_probes,Mostrar sondas
+perspective_correction_factor,perspective_correction_factor,Factor de corrección de perspectiva
+air_absorption_enabled,air_absorption_enabled,Absorción de aire habilitada
+reflections_sim_interval,reflections_sim_interval,Intervalo de simulación de reflexiones
+perspective_correction_enabled,perspective_correction_enabled,Corrección de perspectiva habilitada
+playback_parameter_min_move,playback_parameter_min_move,Movimiento mínimo de parámetros de reproducción
+ambisonic_order,ambisonic_order,Orden de ambisónicos
+direct_sim_interval,direct_sim_interval,Intervalo de simulación directa
+reflections_delay,reflections_delay,Retraso de reflexiones
+region_size,region_size,Tamaño de la región
+reflections_adaptive_ray_recover_cap,reflections_adaptive_ray_recover_cap,Límite de recuperación de rayos adaptativos de reflexiones
+auto_play,auto_play,Reproducción automática
+simulation_transmission_enabled,simulation_transmission_enabled,Transmisión de simulación habilitada
+realtime_simulation_duration,realtime_simulation_duration,Duración de simulación en tiempo real
+reflections_sampling_mode,reflections_sampling_mode,Modo de muestreo de reflexiones
+simulation_occlusion_enabled,simulation_occlusion_enabled,Oclusión de simulación habilitada
+static_source_enabled,static_source_enabled,Fuente estática habilitada
+bake_sources,bake_sources,Fuentes de horneado
+directivity_enabled,directivity_enabled,Directividad habilitada
+realtime_irradiance_min_distance,realtime_irradiance_min_distance,Distancia mínima de irradiancia en tiempo real
+reflections_adaptive_budget_us,reflections_adaptive_budget_us,Presupuesto adaptativo de reflexiones (us)
+gain_db,gain_db,Ganancia (dB)
+mesh_asset,mesh_asset,Recurso de malla
+use_ambisonics_encode,use_ambisonics_encode,Usar codificación de ambisónicos
+reflections_defer_after_scene_commit_us,reflections_defer_after_scene_commit_us,Retrasar reflexiones tras commit de escena (us)
+current_baked_listener,current_baked_listener,Oyente horneado actual
+exclude_from_debug,exclude_from_debug,Excluir de depuración
+occlusion_samples,occlusion_samples,Muestras de oclusión
+reflections_eq_high,reflections_eq_high,Ecualización de reflexiones alta
+air_absorption_high,air_absorption_high,Absorción de aire alta
+reverb_bus_wet_ring_underrun_zero_fill,reverb_bus_wet_ring_underrun_zero_fill,Llenar con ceros en subdesbordamiento de reverb
+attenuation_curve,attenuation_curve,Curva de atenuación
+bake_num_threads,bake_num_threads,Número de hilos de horneado
+audio_source_node,audio_source_node,Nodo de fuente de audio
+pathing_binaural,pathing_binaural,Binaural de trazado
+player_config,player_config,Configuración del reproductor
+reflections_mix_level,reflections_mix_level,Nivel de mezcla de reflexiones
+air_absorption_input,air_absorption_input,Entrada de absorción de aire
+occlusion_input,occlusion_input,Entrada de oclusión
+probe_data,probe_data,Datos de las sondas
+static_scene_asset,static_scene_asset,Recurso de escena estática
+absorption_high,absorption_high,Absorción alta
+attenuation_mode,attenuation_mode,Modo de atenuación
+debug_occlusion,debug_occlusion,Depurar oclusión
+transmission,transmission,Transmisión
+absorption_low,absorption_low,Absorción baja
+ambisonic_orientation_node,ambisonic_orientation_node,Nodo de orientación de ambisónicos
+reverb_binaural_override,reverb_binaural_override,Sobrescribir binaural de reverb
+height_above_floor,height_above_floor,Altura sobre el suelo
+realtime_bounces,realtime_bounces,Rebotes en tiempo real
+reverb_bus_name,reverb_bus_name,Nombre del bus de reverberación
+input_is_sn3d,input_is_sn3d,Entrada es SN3D
+playback_parameter_min_interval,playback_parameter_min_interval,Intervalo mínimo de parámetros de reproducción
+show_geometry_override_in_viewport,show_geometry_override_in_viewport,Mostrar sobrescritura en vista
+direct_binaural_override,direct_binaural_override,Sobrescribir binaural directo
+occlusion_value,occlusion_value,Valor de oclusión
+bake_listeners,bake_listeners,Oyentes de horneado
+max_reverb_duration,max_reverb_duration,Duración máxima de reverberación
+directivity_value,directivity_value,Valor de directividad
+current_baked_source,current_baked_source,Fuente horneada actual
+master_mix_level,master_mix_level,Nivel de mezcla maestro
+reflections_adaptive_ray_recover_frac,reflections_adaptive_ray_recover_frac,Fracción de recuperación de rayos adaptativos de reflexiones
+scene_name_when_exported,scene_name_when_exported,Nombre de la escena al exportar
+hybrid_reverb_overlap_percent,hybrid_reverb_overlap_percent,Porcentaje de solapamiento de reverb híbrida
+max_transmission_surfaces_override,max_transmission_surfaces_override,Sobrescribir superficies de transmisión máximas
+bake_pathing_vis_range,bake_pathing_vis_range,Rango de visibilidad para trazado horneado
+data,data,Datos
+find_alternate_paths,find_alternate_paths,Buscar rutas alternativas
+channel_streams,channel_streams,Canales de flujo de audio
+listener_valid,listener_valid,Oyente válido
+bake_config,bake_config,Configuración de horneado
+pathing_binaural_override,pathing_binaural_override,Sobrescribir binaural de trazado
+perspective_factor,perspective_factor,Factor de perspectiva
+baked_reverb_use_listener_probe,baked_reverb_use_listener_probe,Reverberación horneada usa sonda del oyente
+hrtf_volume_db,hrtf_volume_db,Volumen de HRTF (dB)
+bake_pathing_radius,bake_pathing_radius,Radio de trazado horneado
+bake_pathing_threshold,bake_pathing_threshold,Umbral de trazado horneado
+pathing_normalize_eq,pathing_normalize_eq,Ecualización de normalización de trazado
+max_simulation_sources,max_simulation_sources,Máximo de fuentes en simulación
+hybrid_reverb_transition_time,hybrid_reverb_transition_time,Tiempo de transición de reverb híbrida
+pathing_mix_level,pathing_mix_level,Nivel de mezcla de trazado
+transmission_input,transmission_input,Entrada de transmisión
+export_hash,export_hash,Hash de exportación
+norm_type,norm_type,Tipo de normalización
+physics_ray_batch_size,physics_ray_batch_size,Tamaño de lote de rayos de física
+source_radius,source_radius,Radio de la fuente
+enable_debug,enable_debug,Habilitar depuración
+bus_override,bus_override,Sobrescribir bus
+reflections_adaptive_decay_per_sec,reflections_adaptive_decay_per_sec,Decaimiento adaptativo de reflexiones por segundo
+debug_reflections,debug_reflections,Depurar reflexiones
+realtime_num_diffuse_samples,realtime_num_diffuse_samples,Muestras difusas en tiempo real
+path_validation_enabled,path_validation_enabled,Validación de ruta habilitada
+playback_coeff_smoothing_time,playback_coeff_smoothing_time,Tiempo de suavizado de coeficientes
+batch_source_updates,batch_source_updates,Actualizaciones de fuente en lote
+reflections_enabled,reflections_enabled,Reflexiones habilitadas
+simulation_cpu_cores_percent,simulation_cpu_cores_percent,Porcentaje de núcleos de CPU para simulación
+pathing_sim_interval,pathing_sim_interval,Intervalo de simulación de trazado
+geometry_override,geometry_override,Sobrescribir geometría
+use_bed_scene_orientation,use_bed_scene_orientation,Usar orientación de escena base
+reflections_adaptive_step_sec,reflections_adaptive_step_sec,Paso en segundos adaptativo de reflexiones
+apply_output_gain,apply_output_gain,Aplicar ganancia de salida
+spacing,spacing,Espaciado
+convolution_ir_max_samples,convolution_ir_max_samples,Muestras máximas de IR de convolución
+listener_camera,listener_camera,Cámara del oyente
+rotation_enabled,rotation_enabled,Rotación habilitada
+output_reverb,output_reverb,Salida de reverberación
+scattering,scattering,Dispersión
+direct_binaural,direct_binaural,Binaural directo
+bake_ambisonics_order,bake_ambisonics_order,Orden ambisónico de horneado
+directivity_power,directivity_power,Potencia de directividad
+physics_ray_auto_exclude_collision_bodies,physics_ray_auto_exclude_collision_bodies,Auto-excluir cuerpos de colisión en rayos
+pathing_probe_volume,pathing_probe_volume,Volumen de sondas para trazado
+air_absorption_mid,air_absorption_mid,Absorción de aire media
+pathing_enabled_override,pathing_enabled_override,Sobrescribir trazado de rutas habilitado
+bake_pathing_num_samples,bake_pathing_num_samples,Muestras para trazado horneado
+max_distance,max_distance,Distancia máxima
+viz_probe_scale,viz_probe_scale,Escala de visualización de sondas
+debug_pathing,debug_pathing,Depurar trazado de rutas
+max_transmission_surfaces,max_transmission_surfaces,Superficies de transmisión máximas
+air_absorption_low,air_absorption_low,Absorción de aire baja
+reverb_bus_click_guard_enabled,reverb_bus_click_guard_enabled,Protección contra clics en reverb
+pathing_enabled,pathing_enabled,Trazado de rutas habilitado
+convert_animation_audio_tracks_at_runtime,convert_animation_audio_tracks_at_runtime,Convertir pistas de audio en ejecución
+min_distance,min_distance,Distancia mínima
+occlusion_type,occlusion_type,Tipo de oclusión
+reflections_eq_low,reflections_eq_low,Ecualización de reflexiones baja
+Baked,Baked,Baked
+Realtime,Realtime,Realtime
+Convolution,Convolution,Convolution
+Parametric,Parametric,Parametric
+Hybrid,Hybrid,Hybrid
+TrueAudio Next (AMD GPU),TrueAudio Next (AMD GPU),TrueAudio Next (AMD GPU)
+Inverse,Inverse,Inverso
+Linear,Linear,Lineal
+Curve,Curve,Curva
+Disabled,Disabled,Desactivado
+Enabled,Enabled,Habilitado
+Simulation Defined,Simulation Defined,Definido por simulación
+User Defined,User Defined,Definido por usuario
+Use Global,Use Global,Usar global
+Custom,Custom,Personalizado
+Raycast,Raycast,Raycast
+Volumetric,Volumetric,Volumétrico
+Frequency Independent,Frequency Independent,Independiente de frecuencia
+Frequency Dependent,Frequency Dependent,Dependiente de frecuencia
+Listener-centric,Listener-centric,Centrado en el oyente
+Source-centric,Source-centric,Centrado en la fuente
+"Physics-ray occlusion preview (Godot collision only - not Steam Audio / Embree geometry).
+For real audio occlusion debug, use ResonanceRuntime ""Debug Occlusion"" (native ray data).","Physics-ray occlusion preview (Godot collision only - not Steam Audio / Embree geometry).
+For real audio occlusion debug, use ResonanceRuntime ""Debug Occlusion"" (native ray data).","Vista previa de oclusión por física de rayos (solo colisiones de Godot - no geometría de Steam Audio / Embree).
+Para la depuración real de oclusión de audio, usa ""Debug Occlusion"" de ResonanceRuntime (datos de rayos nativos)."
+Baked Reverb,Baked Reverb,Reverberación horneada
+Baked Static Source,Baked Static Source,Fuente estática horneada
+Baked Static Listener,Baked Static Listener,Oyente estático horneado
+Nearest,Nearest,Más cercano
+Bilinear,Bilinear,Bilineal
+Use Godot Mix Rate,Use Godot Mix Rate,Usar frecuencia de mezcla de Godot
+Auto,Auto,Automático
+Mono,Mono,Mono
+Stereo,Stereo,Estéreo
+Quad,Quad,Quad
+5.1,5.1,5.1
+7.1,7.1,7.1
+22050 Hz,22050 Hz,22050 Hz
+44100 Hz,44100 Hz,44100 Hz
+48000 Hz,48000 Hz,48000 Hz
+96000 Hz,96000 Hz,96000 Hz
+192000 Hz,192000 Hz,192000 Hz
+256,256,256
+512,512,512
+1024,1024,1024
+2048,2048,2048
+8 Rays,8 Rays,8 rayos
+16 Rays,16 Rays,16 rayos
+32 Rays,32 Rays,32 rayos
+64 Rays,64 Rays,64 rayos
+128 Rays,128 Rays,128 rayos
+256 Rays,256 Rays,256 rayos
+512 Rays,512 Rays,512 rayos
+1024 Rays,1024 Rays,1024 rayos
+2048 Rays,2048 Rays,2048 rayos
+4096 Rays,4096 Rays,4096 rayos
+8192 Rays,8192 Rays,8192 rayos
+FreqIndependent,FreqIndependent,Indep. de frecuencia
+FreqDependent,FreqDependent,Dep. de frecuencia
+Balanced,Balanced,Equilibrado
+Default,Default,Por defecto
+Embree,Embree,Embree
+Radeon Rays,Radeon Rays,Radeon Rays
+Custom (Godot Physics),Custom (Godot Physics),Personalizado (Física de Godot)
+GPU,GPU,GPU
+CPU,CPU,CPU
+Any,Any,Cualquiera
+Transmission Type Override,Transmission Type Override,Sobrescribir tipo de transmisión
+Apply Occlusion To Baked Reflections Override,Apply Occlusion To Baked Reflections Override,Sobrescribir oclusión a reflexiones horneadas
+Reflections Sampling Mode Override,Reflections Sampling Mode Override,Sobrescribir modo de muestreo de reflexiones
+Perspective Correction Override,Perspective Correction Override,Sobrescribir corrección de perspectiva
+Apply Performance Schedule Preset,Apply Performance Schedule Preset,Aplicar preajuste de rendimiento
+AVX-512,AVX-512,AVX-512
+AVX2,AVX2,AVX2
+AVX,AVX,AVX
+ambisonic_order,ambisonic_order,Orden de ambisónicos
+direct_sim_interval,direct_sim_interval,Intervalo de simulación directa
+reflections_delay,reflections_delay,Retraso de reflexiones
+region_size,region_size,Tamaño de la región
+reflections_adaptive_ray_recover_cap,reflections_adaptive_ray_recover_cap,Límite de recuperación de rayos adaptativos de reflexiones
+auto_play,auto_play,Reproducción automática
+simulation_transmission_enabled,simulation_transmission_enabled,Transmisión de simulación habilitada
+realtime_simulation_duration,realtime_simulation_duration,Duración de simulación en tiempo real
+reflections_sampling_mode,reflections_sampling_mode,Modo de muestreo de reflexiones
+simulation_occlusion_enabled,simulation_occlusion_enabled,Oclusión de simulación habilitada
+static_source_enabled,static_source_enabled,Fuente estática habilitada
+bake_sources,bake_sources,Fuentes de horneado
+directivity_enabled,directivity_enabled,Directividad habilitada
+realtime_irradiance_min_distance,realtime_irradiance_min_distance,Distancia mínima de irradiancia en tiempo real
+reflections_adaptive_budget_us,reflections_adaptive_budget_us,Presupuesto adaptativo de reflexiones (us)
+gain_db,gain_db,Ganancia (dB)
+mesh_asset,mesh_asset,Recurso de malla
+use_ambisonics_encode,use_ambisonics_encode,Usar codificación de ambisónicos
+reflections_defer_after_scene_commit_us,reflections_defer_after_scene_commit_us,Retrasar reflexiones tras commit de escena (us)
+current_baked_listener,current_baked_listener,Oyente horneado actual
+exclude_from_debug,exclude_from_debug,Excluir de depuración
+occlusion_samples,occlusion_samples,Muestras de oclusión
+reflections_eq_high,reflections_eq_high,Ecualización de reflexiones alta
+air_absorption_high,air_absorption_high,Absorción de aire alta
+reverb_bus_wet_ring_underrun_zero_fill,reverb_bus_wet_ring_underrun_zero_fill,Llenar con ceros en subdesbordamiento de reverb
+attenuation_curve,attenuation_curve,Curva de atenuación
+bake_num_threads,bake_num_threads,Número de hilos de horneado
+audio_source_node,audio_source_node,Nodo de fuente de audio
+pathing_binaural,pathing_binaural,Binaural de trazado
+player_config,player_config,Configuración del reproductor
+reflections_mix_level,reflections_mix_level,Nivel de mezcla de reflexiones
+air_absorption_input,air_absorption_input,Entrada de absorción de aire
+occlusion_input,occlusion_input,Entrada de oclusión
+probe_data,probe_data,Datos de las sondas
+static_scene_asset,static_scene_asset,Recurso de escena estática
+absorption_high,absorption_high,Absorción alta
+attenuation_mode,attenuation_mode,Modo de atenuación
+debug_occlusion,debug_occlusion,Depurar oclusión
+transmission,transmission,Transmisión
+absorption_low,absorption_low,Absorción baja
+ambisonic_orientation_node,ambisonic_orientation_node,Nodo de orientación de ambisónicos
+reverb_binaural_override,reverb_binaural_override,Sobrescribir binaural de reverb
+height_above_floor,height_above_floor,Altura sobre el suelo
+realtime_bounces,realtime_bounces,Rebotes en tiempo real
+reverb_bus_name,reverb_bus_name,Nombre del bus de reverberación
+input_is_sn3d,input_is_sn3d,Entrada es SN3D
+playback_parameter_min_interval,playback_parameter_min_interval,Intervalo mínimo de parámetros de reproducción
+show_geometry_override_in_viewport,show_geometry_override_in_viewport,Mostrar sobrescritura en vista
+direct_binaural_override,direct_binaural_override,Sobrescribir binaural directo
+occlusion_value,occlusion_value,Valor de oclusión
+bake_listeners,bake_listeners,Oyentes de horneado
+max_reverb_duration,max_reverb_duration,Duración máxima de reverberación
+directivity_value,directivity_value,Valor de directividad
+current_baked_source,current_baked_source,Fuente horneada actual
+master_mix_level,master_mix_level,Nivel de mezcla maestro
+reflections_adaptive_ray_recover_frac,reflections_adaptive_ray_recover_frac,Fracción de recuperación de rayos adaptativos de reflexiones
+scene_name_when_exported,scene_name_when_exported,Nombre de la escena al exportar
+hybrid_reverb_overlap_percent,hybrid_reverb_overlap_percent,Porcentaje de solapamiento de reverb híbrida
+max_transmission_surfaces_override,max_transmission_surfaces_override,Sobrescribir superficies de transmisión máximas
+bake_pathing_vis_range,bake_pathing_vis_range,Rango de visibilidad para trazado horneado
+data,data,Datos
+find_alternate_paths,find_alternate_paths,Buscar rutas alternativas
+channel_streams,channel_streams,Canales de flujo de audio
+listener_valid,listener_valid,Oyente válido
+bake_config,bake_config,Configuración de horneado
+pathing_binaural_override,pathing_binaural_override,Sobrescribir binaural de trazado
+perspective_factor,perspective_factor,Factor de perspectiva
+baked_reverb_use_listener_probe,baked_reverb_use_listener_probe,Reverberación horneada usa sonda del oyente
+hrtf_volume_db,hrtf_volume_db,Volumen de HRTF (dB)
+bake_pathing_radius,bake_pathing_radius,Radio de trazado horneado
+bake_pathing_threshold,bake_pathing_threshold,Umbral de trazado horneado
+pathing_normalize_eq,pathing_normalize_eq,Ecualización de normalización de trazado
+max_simulation_sources,max_simulation_sources,Máximo de fuentes en simulación
+hybrid_reverb_transition_time,hybrid_reverb_transition_time,Tiempo de transición de reverb híbrida
+pathing_mix_level,pathing_mix_level,Nivel de mezcla de trazado
+transmission_input,transmission_input,Entrada de transmisión
+export_hash,export_hash,Hash de exportación
+norm_type,norm_type,Tipo de normalización
+physics_ray_batch_size,physics_ray_batch_size,Tamaño de lote de rayos de física
+source_radius,source_radius,Radio de la fuente
+enable_debug,enable_debug,Habilitar depuración
+bus_override,bus_override,Sobrescribir bus
+reflections_adaptive_decay_per_sec,reflections_adaptive_decay_per_sec,Decaimiento adaptativo de reflexiones por segundo
+debug_reflections,debug_reflections,Depurar reflexiones
+realtime_num_diffuse_samples,realtime_num_diffuse_samples,Muestras difusas en tiempo real
+path_validation_enabled,path_validation_enabled,Validación de ruta habilitada
+playback_coeff_smoothing_time,playback_coeff_smoothing_time,Tiempo de suavizado de coeficientes
+batch_source_updates,batch_source_updates,Actualizaciones de fuente en lote
+reflections_enabled,reflections_enabled,Reflexiones habilitadas
+simulation_cpu_cores_percent,simulation_cpu_cores_percent,Porcentaje de núcleos de CPU para simulación
+pathing_sim_interval,pathing_sim_interval,Intervalo de simulación de trazado
+geometry_override,geometry_override,Sobrescribir geometría
+use_bed_scene_orientation,use_bed_scene_orientation,Usar orientación de escena base
+reflections_adaptive_step_sec,reflections_adaptive_step_sec,Paso en segundos adaptativo de reflexiones
+apply_output_gain,apply_output_gain,Aplicar ganancia de salida
+spacing,spacing,Espaciado
+convolution_ir_max_samples,convolution_ir_max_samples,Muestras máximas de IR de convolución
+listener_camera,listener_camera,Cámara del oyente
+rotation_enabled,rotation_enabled,Rotación habilitada
+output_reverb,output_reverb,Salida de reverberación
+scattering,scattering,Dispersión
+direct_binaural,direct_binaural,Binaural directo
+bake_ambisonics_order,bake_ambisonics_order,Orden ambisónico de horneado
+directivity_power,directivity_power,Potencia de directividad
+physics_ray_auto_exclude_collision_bodies,physics_ray_auto_exclude_collision_bodies,Auto-excluir cuerpos de colisión en rayos
+pathing_probe_volume,pathing_probe_volume,Volumen de sondas para trazado
+air_absorption_mid,air_absorption_mid,Absorción de aire media
+pathing_enabled_override,pathing_enabled_override,Sobrescribir trazado de rutas habilitado
+bake_pathing_num_samples,bake_pathing_num_samples,Muestras para trazado horneado
+max_distance,max_distance,Distancia máxima
+viz_probe_scale,viz_probe_scale,Escala de visualización de sondas
+debug_pathing,debug_pathing,Depurar trazado de rutas
+max_transmission_surfaces,max_transmission_surfaces,Superficies de transmisión máximas
+air_absorption_low,air_absorption_low,Absorción de aire baja
+reverb_bus_click_guard_enabled,reverb_bus_click_guard_enabled,Protección contra clics en reverb
+pathing_enabled,pathing_enabled,Trazado de rutas habilitado
+convert_animation_audio_tracks_at_runtime,convert_animation_audio_tracks_at_runtime,Convertir pistas de audio en ejecución
+min_distance,min_distance,Distancia mínima
+occlusion_type,occlusion_type,Tipo de oclusión
+reflections_eq_low,reflections_eq_low,Ecualización de reflexiones baja
+Baked,Baked,Baked
+Realtime,Realtime,Realtime
+Convolution,Convolution,Convolution
+Parametric,Parametric,Parametric
+Hybrid,Hybrid,Hybrid
+TrueAudio Next (AMD GPU),TrueAudio Next (AMD GPU),TrueAudio Next (AMD GPU)
+Inverse,Inverse,Inverso
+Linear,Linear,Lineal
+Curve,Curve,Curva
+Disabled,Disabled,Desactivado
+Enabled,Enabled,Habilitado
+Simulation Defined,Simulation Defined,Definido por simulación
+User Defined,User Defined,Definido por usuario
+Use Global,Use Global,Usar global
+Custom,Custom,Personalizado
+Raycast,Raycast,Raycast
+Volumetric,Volumetric,Volumétrico
+Frequency Independent,Frequency Independent,Independiente de frecuencia
+Frequency Dependent,Frequency Dependent,Dependiente de frecuencia
+Listener-centric,Listener-centric,Centrado en el oyente
+Source-centric,Source-centric,Centrado en la fuente
+"Physics-ray occlusion preview (Godot collision only - not Steam Audio / Embree geometry).
+For real audio occlusion debug, use ResonanceRuntime ""Debug Occlusion"" (native ray data).","Physics-ray occlusion preview (Godot collision only - not Steam Audio / Embree geometry).
+For real audio occlusion debug, use ResonanceRuntime ""Debug Occlusion"" (native ray data).","Vista previa de oclusión por física de rayos (solo colisiones de Godot - no geometría de Steam Audio / Embree).
+Para la depuración real de oclusión de audio, usa ""Debug Occlusion"" de ResonanceRuntime (datos de rayos nativos)."
+Baked Reverb,Baked Reverb,Reverberación horneada
+Baked Static Source,Baked Static Source,Fuente estática horneada
+Baked Static Listener,Baked Static Listener,Oyente estático horneado
+Nearest,Nearest,Más cercano
+Bilinear,Bilinear,Bilineal
+Use Godot Mix Rate,Use Godot Mix Rate,Usar frecuencia de mezcla de Godot
+Auto,Auto,Automático
+Mono,Mono,Mono
+Stereo,Stereo,Estéreo
+Quad,Quad,Quad
+5.1,5.1,5.1
+7.1,7.1,7.1
+22050 Hz,22050 Hz,22050 Hz
+44100 Hz,44100 Hz,44100 Hz
+48000 Hz,48000 Hz,48000 Hz
+96000 Hz,96000 Hz,96000 Hz
+192000 Hz,192000 Hz,192000 Hz
+256,256,256
+512,512,512
+1024,1024,1024
+2048,2048,2048
+8 Rays,8 Rays,8 rayos
+16 Rays,16 Rays,16 rayos
+32 Rays,32 Rays,32 rayos
+64 Rays,64 Rays,64 rayos
+128 Rays,128 Rays,128 rayos
+256 Rays,256 Rays,256 rayos
+512 Rays,512 Rays,512 rayos
+1024 Rays,1024 Rays,1024 rayos
+2048 Rays,2048 Rays,2048 rayos
+4096 Rays,4096 Rays,4096 rayos
+8192 Rays,8192 Rays,8192 rayos
+FreqIndependent,FreqIndependent,Indep. de frecuencia
+FreqDependent,FreqDependent,Dep. de frecuencia
+Balanced,Balanced,Equilibrado
+Default,Default,Por defecto
+Embree,Embree,Embree
+Radeon Rays,Radeon Rays,Radeon Rays
+Custom (Godot Physics),Custom (Godot Physics),Personalizado (Física de Godot)
+GPU,GPU,GPU
+CPU,CPU,CPU
+Any,Any,Cualquiera
+Transmission Type Override,Transmission Type Override,Sobrescribir tipo de transmisión
+Apply Occlusion To Baked Reflections Override,Apply Occlusion To Baked Reflections Override,Sobrescribir oclusión a reflexiones horneadas
+Reflections Sampling Mode Override,Reflections Sampling Mode Override,Sobrescribir modo de muestreo de reflexiones
+Perspective Correction Override,Perspective Correction Override,Sobrescribir corrección de perspectiva
+Apply Performance Schedule Preset,Apply Performance Schedule Preset,Aplicar preajuste de rendimiento
+AVX-512,AVX-512,AVX-512
+AVX2,AVX2,AVX2
+AVX,AVX,AVX
+SSE4,SSE4,SSE4
+SSE2,SSE2,SSE2
+ResonanceServer not loaded,ResonanceServer not loaded,ResonanceServer no cargado
+ResonanceServer not available,ResonanceServer not available,ResonanceServer no disponible
+(No data),(No data),(Sin datos)
+Performance Overlay,Performance Overlay,Superposición de rendimiento
+ResonanceReverb,ResonanceReverb,ResonanceReverb
+Apply HRTF,Apply HRTF,Aplicar HRTF
+Input Is SN3D,Input Is SN3D,Entrada es SN3D
+Gain dB,Gain dB,Ganancia (dB)
+Volume dB,Volume dB,Volumen (dB)
+HRTF SOFA Assets,HRTF SOFA Assets,Recursos de SOFA de HRTF
+HRTF Interpolation Bilinear,HRTF Interpolation Bilinear,Interpolación bilineal de HRTF
+Pathing Normalize EQ,Pathing Normalize EQ,Normalización de EQ de trazado
+reflection_type,reflection_type,Tipo de reflexión
+transmission_type_override,transmission_type_override,Sobrescribir tipo de transmisión
+apply_occlusion_to_baked_reflections_override,apply_occlusion_to_baked_reflections_override,Sobrescribir oclusión a reflexiones horneadas
+reflections_sampling_mode_override,reflections_sampling_mode_override,Sobrescribir modo de muestreo de reflexiones
+perspective_correction_override,perspective_correction_override,Sobrescribir corrección de perspectiva
+sample_rate_override,sample_rate_override,Sobrescribir frecuencia de muestreo
+audio_frame_size,audio_frame_size,Tamaño de trama de audio
+realtime_rays,realtime_rays,Rayos en tiempo real
+apply_performance_schedule_preset,apply_performance_schedule_preset,Aplicar preajuste de rendimiento
+scene_type,scene_type,Tipo de escena
+nexus/nexus_resonance/logger/categories_enabled,Categories Enabled,Categorías habilitadas
+nexus/nexus_resonance/logger/output_to_debug,Output To Debug,Enviar salida a depuración
+nexus/nexus_resonance/logger/output_to_file,Output To File,Enviar salida a archivo
+nexus/nexus_resonance/logger/file_path,File Path,Ruta del archivo
+nexus/nexus_resonance/logger/steam_audio_verbose,Steam Audio Verbose,Steam Audio detallado
+nexus/nexus_resonance/editor/auto_convert_animation_audio_on_save,Auto Convert Animation Audio On Save,Convertir audio automáticamente al guardar
+nexus/nexus_resonance/bake/default_output_directory,Default Output Directory,Directorio de salida por defecto
+nexus/nexus_resonance/export/static_scene_asset_format,Static Scene Asset Format,Formato del recurso de escena estática
+nexus/nexus_resonance/export/probe_data_format,Probe Data Format,Formato de datos de sondas
+nexus/nexus_resonance/accessibility/editor_tts,Editor Text-to-Speech (TTS),TTS del Editor (Texto a voz)
+nexus/nexus_resonance/accessibility/runtime_debug_tts,Runtime Debug Text-to-Speech (TTS),TTS de depuración en ejecución
+nexus/nexus_resonance/accessibility/tts_voice,Text-to-Speech Voice,Voz del TTS
+nexus/nexus_resonance/accessibility/tts_volume,Text-to-Speech Volume,Volumen del TTS
+nexus/nexus_resonance/accessibility/tts_speed,Text-to-Speech Speed,Velocidad del TTS
+nexus/nexus_resonance/logger,Logger,Depuración y Logs
+nexus/nexus_resonance/editor,Editor,Editor
+nexus/nexus_resonance/bake,Bake,Horneado
+nexus/nexus_resonance/export,Export,Exportar
+nexus/nexus_resonance/accessibility,Accessibility,Accesibilidad
+nexus/nexus_resonance,Nexus Resonance,Nexus Resonance

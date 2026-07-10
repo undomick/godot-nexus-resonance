@@ -1,34 +1,34 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <class name="ResonanceSOFAAsset" inherits="Resource" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../class.xsd">
 	<brief_description>
-		HRTF SOFA file as Resource with volume and normalization.
+		Archivo SOFA HRTF como recurso con volumen y normalización.
 	</brief_description>
 	<description>
-		Add to [member ResonanceRuntimeConfig.hrtf_sofa_assets] for custom HRTFs with gain and norm control. Load .sofa via load_from_file() or import .sofa in editor. volume_db adjusts loudness. norm_type: None or RMS (normalize across directions).
+		Añádelo a [member ResonanceRuntimeConfig.hrtf_sofa_assets] para HRTFs personalizados con control de ganancia y normalización. Carga archivos .sofa mediante load_from_file() o importa archivos .sofa en el editor. volume_db ajusta el volumen. norm_type: None o RMS (normaliza entre direcciones).
 	</description>
 	<tutorials>
 	</tutorials>
 	<members>
 		<member name="sofa_data" type="PackedByteArray" setter="set_sofa_data" getter="get_sofa_data">
-			Raw .sofa file bytes. Set via load_from_file or importer.
+			Bytes binarios del archivo .sofa. Se establece a través de load_from_file o del importador.
 		</member>
 		<member name="volume_db" type="float" setter="set_volume_db" getter="get_volume_db" default="0.0">
-			Volume correction in dB. Different SOFA files may need adjustment for mix balance.
+			Corrección de volumen en dB. Los diferentes archivos SOFA pueden necesitar ajustes para el balance de la mezcla.
 		</member>
 		<member name="norm_type" type="int" setter="set_norm_type" getter="get_norm_type" default="0">
-			Normalization: 0 = None, 1 = RMS (equalize volume across directions).
+			Normalización: 0 = Ninguna, 1 = RMS (iguala el volumen entre direcciones).
 		</member>
 	</members>
 	<methods>
 		<method name="load_from_file">
 			<return type="Error" />
 			<param index="0" name="p_path" type="String" />
-			<description>Load .sofa file from path. Sets sofa_data. Returns OK on success.
+			<description>Carga el archivo .sofa desde la ruta especificada. Establece sofa_data. Devuelve OK en caso de éxito.
 			</description>
 		</method>
 	</methods>
 	<constants>
-		<constant name="NORM_NONE" value="0">No normalization.</constant>
-		<constant name="NORM_RMS" value="1">RMS normalization across directions.</constant>
+		<constant name="NORM_NONE" value="0">Sin normalización.</constant>
+		<constant name="NORM_RMS" value="1">Normalización RMS entre direcciones.</constant>
 	</constants>
 </class>

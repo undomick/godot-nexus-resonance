@@ -1,19 +1,19 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <class name="ResonanceAudioEffect" inherits="AudioEffect" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../class.xsd">
 	<brief_description>
-		Audio bus effect for reverb output. Auto-configured by ResonanceRuntime.
+		Efecto de bus de audio para la salida de reverberación. Configurado automáticamente por ResonanceRuntime.
 	</brief_description>
 	<description>
-		ResonanceAudioEffect is an [AudioEffect] that processes the reverb bus. It is added to [member ResonanceRuntimeConfig.reverb_bus_name] when the plugin or [url=#ResonanceRuntime]ResonanceRuntime[/url] initializes.
-		For Convolution reflection type, it pulls accumulated Ambisonics wet from the Steam Audio reflection mixer, decodes it with the listener pose (same DSP tick as [code]iplReflectionMixerApply[/code]), and adds it to the bus input buffer (prior effects / sends on this bus).
-		For Parametric/Hybrid, reverb is applied per-source in [ResonancePlayer]; when dry and wet buses differ, wet is routed to a separate child player on the effective reverb bus. With no reflection mixer, this effect passes bus audio through unchanged.
-		Adjust [member gain_db] for reverb bus volume. After this bus, Godot routes output to the same target as [method ResonanceRuntimeConfig.get_bus_effective] (runtime [member ResonanceRuntimeConfig.bus]).
+		ResonanceAudioEffect es un [AudioEffect] que procesa el bus de reverberación. Se añade a [member ResonanceRuntimeConfig.reverb_bus_name] cuando se inicializa el plugin o [url=#ResonanceRuntime]ResonanceRuntime[/url].
+		Para el tipo de reflexión por convolución, extrae el sonido procesado (wet) ambisónico acumulado del mezclador de reflexiones de Steam Audio, lo decodifica con la pose del oyente (en el mismo tick de DSP que [code]iplReflectionMixerApply[/code]) y lo añade al búfer de entrada del bus (efectos anteriores / envíos en este bus).
+		Para los tipos Paramétrico/Híbrido, la reverberación se aplica por fuente en [ResonancePlayer]; cuando los buses procesado (wet) y no procesado (dry) difieren, el procesado (wet) se enruta a un reproductor hijo separado en el bus de reverberación efectivo. Sin mezclador de reflexiones, este efecto deja pasar el audio del bus sin cambios.
+		Ajusta [member gain_db] para el volumen del bus de reverberación. Después de este bus, Godot enruta la salida al mismo destino que [method ResonanceRuntimeConfig.get_bus_effective] (el [member ResonanceRuntimeConfig.bus] del tiempo de ejecución).
 	</description>
 	<tutorials>
 	</tutorials>
 	<members>
 		<member name="gain_db" type="float" setter="set_gain_db" getter="get_gain_db" default="0.0">
-			Volume correction in dB for the reverb bus.
+			Corrección de volumen en dB para el bus de reverberación.
 		</member>
 	</members>
 </class>

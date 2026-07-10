@@ -16,7 +16,7 @@ compatibility/default_parent_skeleton_in_mesh_instance_3d=true
 
 config/name="nexus_resonance"
 run/main_scene="uid://ds10bt6elenth"
-config/features=PackedStringArray("4.6", "Forward Plus")
+config/features=PackedStringArray("4.8", "Forward Plus")
 config/icon="res://icon.svg"
 
 [audio]
@@ -25,7 +25,7 @@ buses/default_bus_layout="uid://dffti6h7rmbbp"
 
 [autoload]
 
-ResonanceLogger="*uid://bq7nrlog0001"
+ResonanceLogger="*res://addons/nexus_resonance/scripts/resonance_logger.tscn"
 
 [display]
 
@@ -33,7 +33,7 @@ window/vsync/vsync_mode=0
 
 [editor_plugins]
 
-enabled=PackedStringArray("res://addons/nexus_importer/plugin.cfg", "res://addons/nexus_resonance/plugin.cfg")
+enabled=PackedStringArray("res://addons/nexus_resonance/plugin.cfg")
 
 [input]
 
@@ -73,11 +73,15 @@ action={
 ]
 }
 
+[internationalization]
+
+locale/translations=PackedStringArray("res://addons/nexus_resonance/translations/nexus_resonance.en.translation", "res://addons/nexus_resonance/translations/nexus_resonance.es.translation")
+
 [nexus]
 
 import/scene_style="inherited"
 import/auto_assign_post_processor=true
-resonance/logger/categories_enabled={
+nexus_resonance/logger/categories_enabled={
 "bake": true,
 "init": true,
 "occlusion": true,
@@ -87,14 +91,17 @@ resonance/logger/categories_enabled={
 "source_volume": true,
 "validation": true
 }
-resonance/bake/default_output_directory="res://audio_data/"
-resonance/logger/file_path="user://nexus_resonance_log.ndjson"
-resonance/logger/output_to_debug=true
-resonance/logger/output_to_file=false
-resonance/logger/steam_audio_verbose=false
-resonance/editor/auto_convert_animation_audio_on_save=true
-resonance/export/static_scene_asset_format=1
-resonance/export/probe_data_format=1
+nexus_resonance/logger/output_to_debug=true
+nexus_resonance/logger/output_to_file=false
+nexus_resonance/logger/file_path="user://nexus_resonance_log.ndjson"
+nexus_resonance/logger/steam_audio_verbose=false
+nexus_resonance/editor/auto_convert_animation_audio_on_save=false
+nexus_resonance/bake/default_output_directory="res://audio_data/"
+nexus_resonance/accessibility/editor_tts=false
+nexus_resonance/accessibility/runtime_debug_tts=false
+nexus_resonance/accessibility/tts_voice=0
+nexus_resonance/accessibility/tts_volume=50
+nexus_resonance/accessibility/tts_speed=1.0
 
 [physics]
 

@@ -1,3 +1,13 @@
-[gd_scene format=3 uid="uid://cnxrminimalcollect"]
+[gd_scene format=3 uid="uid://clkx8bqextyf4"]
 
-[node name="Root" type="Node"]
+[ext_resource type="Script" uid="uid://l856scjpr7vq" path="res://addons/nexus_resonance/scripts/resonance_runtime_config.gd" id="1_lvk41"]
+
+[sub_resource type="Resource" id="Resource_hbsp6"]
+script = ExtResource("1_lvk41")
+reflections_sim_interval = 0.1
+pathing_sim_interval = 0.1
+
+[node name="Root" type="Node" unique_id=1387408373]
+
+[node name="ResonanceRuntime" type="ResonanceRuntime" parent="." unique_id=1883255014]
+runtime = SubResource("Resource_hbsp6")

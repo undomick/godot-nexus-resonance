@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <class name="ResonanceProbeData" inherits="Resource" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../class.xsd">
 	<brief_description>
-		Resource storing baked Steam Audio probe batch data.
+		Recurso que almacena los datos del lote (batch) de sondas de Steam Audio horneadas.
 	</brief_description>
 	<description>
-		Holds the serialized probe batch from a bake (reflections, optional pathing, optional static layers). Assign to [member ResonanceProbeVolume.probe_data]. Created and updated by the bake pipeline; save the scene or external resource after baking.
-		Default external path pattern: [code]&lt;scene&gt;_&lt;node_path&gt;_batch.tres[/code] or [code].res[/code] (Project Settings -> Nexus -> Resonance -> Export -> Probe data format).
-		[member baked_reflection_type] must be compatible with [member ResonanceRuntimeConfig.reflection_type] at runtime. When runtime pathing is on, [member pathing_params_hash] must be non-zero.
+		Contiene el lote (batch) de sondas serializado de un horneado (reflexiones, trazado de rutas opcional, capas estáticas opcionales). Asígnalo a [member ResonanceProbeVolume.probe_data]. Creado y actualizado por el pipeline de horneado; guarda la escena o el recurso externo después de hornear.
+		Patrón de ruta externa por defecto: [code]&lt;scene&gt;_&lt;node_path&gt;_batch.tres[/code] o [code].res[/code] (Project Settings -> Nexus -> Resonance -> Export -> Probe data format).
+		[member baked_reflection_type] debe ser compatible con [member ResonanceRuntimeConfig.reflection_type] en tiempo de ejecución. Cuando el trazado de rutas en tiempo real está activado, [member pathing_params_hash] no debe ser cero.
 	</description>
 	<tutorials>
 	</tutorials>
@@ -14,34 +14,34 @@
 		<method name="get_bake_layer_info">
 			<return type="Dictionary" />
 			<description>
-				Editor/debug summary of baked layers. Keys include [code]total_size[/code] (int) and [code]layers[/code] (array of per-layer info).
+				Resumen de depuración/editor de las capas horneadas. Las claves incluyen [code]total_size[/code] (int) y [code]layers[/code] (arreglo de información por capa).
 			</description>
 		</method>
 	</methods>
 	<members>
 		<member name="data" type="PackedByteArray" setter="set_data" getter="get_data">
-			Serialized Phonon probe batch bytes. Written by the bake pipeline; do not edit manually.
+			Bytes del lote de sondas de Phonon serializado. Escrito por el pipeline de horneado; no lo edites manualmente.
 		</member>
 		<member name="probe_positions" type="PackedVector3Array" setter="set_probe_positions" getter="get_probe_positions">
-			World-space probe positions stored at bake time for editor visualization.
+			Posiciones de las sondas en el espacio de coordenadas del mundo guardadas en el momento del horneado para la visualización del editor.
 		</member>
 		<member name="bake_params_hash" type="int" setter="set_bake_params_hash" getter="get_bake_params_hash">
-			Hash of volume layout and reflection bake parameters. Compared with [method ResonanceProbeVolume.get_bake_params_hash] to detect outdated reflection data.
+			Hash del diseño del volumen y de los parámetros de horneado de reflexiones. Comparado con [method ResonanceProbeVolume.get_bake_params_hash] para detectar datos de reflexiones desactualizados.
 		</member>
 		<member name="pathing_params_hash" type="int" setter="set_pathing_params_hash" getter="get_pathing_params_hash">
-			Hash of pathing bake parameters. 0 when pathing was not baked.
+			Hash de los parámetros de horneado del trazado de rutas. 0 cuando no se horneó el trazado de rutas.
 		</member>
 		<member name="static_scene_params_hash" type="int" setter="set_static_scene_params_hash" getter="get_static_scene_params_hash">
-			Hash of the static scene used for the last bake. 0 when not recorded.
+			Hash de la escena estática utilizada para el último horneado. 0 cuando no se registró.
 		</member>
 		<member name="static_source_params_hash" type="int" setter="set_static_source_params_hash" getter="get_static_source_params_hash">
-			Hash of static source bake inputs ([member ResonanceProbeVolume.bake_sources], config). 0 when no static source layer.
+			Hash de las entradas de horneado de fuente estática ([member ResonanceProbeVolume.bake_sources], configuración). 0 cuando no hay capa de fuente estática.
 		</member>
 		<member name="static_listener_params_hash" type="int" setter="set_static_listener_params_hash" getter="get_static_listener_params_hash">
-			Hash of static listener bake inputs ([member ResonanceProbeVolume.bake_listeners], config). 0 when no static listener layer.
+			Hash de las entradas de horneado de oyente estático ([member ResonanceProbeVolume.bake_listeners], configuración). 0 cuando no hay capa de oyente estático.
 		</member>
 		<member name="baked_reflection_type" type="int" setter="set_baked_reflection_type" getter="get_baked_reflection_type">
-			Baked reverb algorithm: Convolution (0), Parametric (1), Hybrid (2). -1 = legacy (compatible with any runtime reflection type).
+			Algoritmo de reverberación horneado: Convolución (0), Paramétrico (1), Híbrido (2). -1 = legado (compatible con cualquier tipo de reflexión en tiempo de ejecución).
 		</member>
 	</members>
 </class>

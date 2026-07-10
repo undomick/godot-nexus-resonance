@@ -42,16 +42,42 @@ static func get_icon(base: Control, icon_path: String, fallback_icon: String) ->
 	return base.get_theme_icon(fallback_icon, "EditorIcons")
 
 
+static func _speak(message: String) -> void:
+	if ProjectSettings.has_setting("nexus/nexus_resonance/accessibility/editor_tts") and ProjectSettings.get_setting("nexus/nexus_resonance/accessibility/editor_tts"):
+		var voice_index := 0
+		if ProjectSettings.has_setting("nexus/nexus_resonance/accessibility/tts_voice"):
+			voice_index = int(ProjectSettings.get_setting("nexus/nexus_resonance/accessibility/tts_voice"))
+		
+		var voices := DisplayServer.tts_get_voices()
+		var voice_id := ""
+		if voice_index > 0 and voice_index - 1 < voices.size():
+			voice_id = voices[voice_index - 1]["id"]
+		elif not voices.is_empty():
+			voice_id = voices[0]["id"]
+		
+		var volume := 50
+		if ProjectSettings.has_setting("nexus/nexus_resonance/accessibility/tts_volume"):
+			volume = int(ProjectSettings.get_setting("nexus/nexus_resonance/accessibility/tts_volume"))
+			
+		var speed := 1.0
+		if ProjectSettings.has_setting("nexus/nexus_resonance/accessibility/tts_speed"):
+			speed = float(ProjectSettings.get_setting("nexus/nexus_resonance/accessibility/tts_speed"))
+			
+		DisplayServer.tts_speak(message, voice_id, volume, 1.0, speed)
+
+
 ## Modal error (blocking).
 static func show_critical(
 	editor_interface: EditorInterface, message: String, title: String = ""
 ) -> void:
 	var t = title if not title.is_empty() else UIStrings.DIALOG_BAKE_FAILED_TITLE
+	_speak(t + ": " + message)
 	show_error_dialog(editor_interface, t, message)
 
 
 ## Non-blocking warning (EditorToaster when available).
 static func show_warning(editor_interface: EditorInterface, message: String) -> void:
+	_speak(message)
 	if _try_push_toast(editor_interface, message, 1):
 		return
 	push_warning(UIStrings.PREFIX + message)
@@ -59,6 +85,7 @@ static func show_warning(editor_interface: EditorInterface, message: String) -> 
 
 ## Prints colored line (no dialog).
 static func show_info(message: String) -> void:
+	_speak(message)
 	print_rich("[color=cyan]Nexus Resonance:[/color] " + message)
 
 
@@ -103,6 +130,7 @@ static func show_error_dialog(
 
 ## Success: toaster if available, else small AcceptDialog.
 static func show_success_toast(editor_interface: EditorInterface, message: String) -> void:
+	_speak(message)
 	if not editor_interface:
 		show_info(message)
 		return

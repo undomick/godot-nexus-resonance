@@ -1,62 +1,62 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <class name="ResonanceGeometry" inherits="Node3D" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../class.xsd">
 	<brief_description>
-		Base node that marks mesh surfaces for Steam Audio simulation.
+		Nodo base que marca las superficies de la malla (mesh) para la simulación de Steam Audio.
 	</brief_description>
 	<description>
-		Exposes mesh triangles to [ResonanceServer] for occlusion, transmission, and reverb. Normally must be a direct child of a [MeshInstance3D]. When [member geometry_override] is set, a [MeshInstance3D] parent is not required; a child of any [Node3D] suffices. Override mesh vertices are in this node's local space (use this node's transform).
-		Assign a [ResonanceMaterial] per surface. All [ResonanceGeometry] nodes in the scene contribute to probe baking. Prefer [ResonanceStaticGeometry] for fixed world meshes and [ResonanceDynamicGeometry] for movers.
-		For [member dynamic] objects on Embree, Default, or Radeon tracers, prefer a low-poly [member mesh_asset] from [method export_dynamic_mesh_to_asset] or [member geometry_override] over the full render mesh; scene commit cost scales with total mesh size. When [member ResonanceRuntimeConfig.scene_type] is Custom (Godot Physics), geometry is not uploaded to Phonon; use physics colliders for dynamic occlusion instead. See [member ResonanceRuntimeConfig.dynamic_scene_commit_min_interval] and [method ResonanceServer.get_simulation_worker_timing] ([code]us_simulator_commit[/code], [code]main_us_dynamic_transform_enqueue[/code]).
+		Expone los triángulos de la malla a [ResonanceServer] para la oclusión, transmisión y reverberación. Normalmente debe ser un hijo directo de un [MeshInstance3D]. Cuando [member geometry_override] está configurado, no se requiere un padre [MeshInstance3D]; es suficiente con que sea hijo de cualquier [Node3D]. Los vértices de la malla de anulación (override) están en el espacio local de este nodo (utiliza la transformación de este nodo).
+		Asigna un [ResonanceMaterial] por superficie. Todos los nodos [ResonanceGeometry] en la escena contribuyen al horneado de sondas. Prefiere [ResonanceStaticGeometry] para mallas fijas en el mundo y [ResonanceDynamicGeometry] para objetos en movimiento.
+		Para objetos en movimiento ([member dynamic]) en trazadores Embree, Default o Radeon, prefiere una malla de baja densidad de polígonos ([member mesh_asset] desde [method export_dynamic_mesh_to_asset] o [member geometry_override]) en lugar de la malla de renderizado completa; el costo del commit de la escena escala con el tamaño total de la malla. Cuando [member ResonanceRuntimeConfig.scene_type] es Custom (Godot Physics), la geometría no se carga a Phonon; utiliza colisionadores físicos (physics colliders) para la oclusión dinámica en su lugar. Consulta [member ResonanceRuntimeConfig.dynamic_scene_commit_min_interval] y [method ResonanceServer.get_simulation_worker_timing] ([code]us_simulator_commit[/code], [code]main_us_dynamic_transform_enqueue[/code]).
 	</description>
 	<tutorials>
 	</tutorials>
 	<members>
 		<member name="material" type="ResonanceMaterial" setter="set_material" getter="get_material">
-			Acoustic material for this surface. Controls absorption (low, mid, high), scattering, and transmission. Use presets under addons/nexus_resonance/materials/ (e.g. concrete, glass, wood).
+			Material acústico para esta superficie. Controla la absorción (baja, media, alta), la dispersión (scattering) y la transmisión. Utiliza los preajustes en addons/nexus_resonance/materials/ (por ejemplo, concreto, vidrio, madera).
 		</member>
 		<member name="mesh_asset" type="ResonanceGeometryAsset" setter="set_mesh_asset" getter="get_mesh_asset">
-			Pre-exported mesh bytes for dynamic geometry. When set and [member dynamic] is true, loads via iplStaticMeshLoad for faster runtime and better stability. Assigned automatically by Export Dynamic Mesh on [ResonanceDynamicGeometry].
+			Bytes de la malla pre-exportada para geometría dinámica. Cuando está configurado y [member dynamic] es true, se carga a través de iplStaticMeshLoad para un tiempo de ejecución más rápido y mejor estabilidad. Se asigna automáticamente mediante 'Export Dynamic Mesh' en [ResonanceDynamicGeometry].
 		</member>
 		<member name="geometry_override" type="Mesh" setter="set_geometry_override" getter="get_geometry_override">
-			Optional simplified mesh for Steam Audio. When set, used instead of the parent [MeshInstance3D] mesh for export and runtime (e.g. BoxMesh to cut polygon count). A [MeshInstance3D] parent is not required when this is set.
+			Malla simplificada opcional para Steam Audio. Cuando está configurada, se utiliza en lugar de la malla del padre [MeshInstance3D] para la exportación y el tiempo de ejecución (por ejemplo, un BoxMesh para reducir el número de polígonos). No se requiere un padre [MeshInstance3D] cuando esto está configurado.
 		</member>
 		<member name="show_geometry_override_in_viewport" type="bool" setter="set_show_geometry_override_in_viewport" getter="is_show_geometry_override_in_viewport" default="false">
-			When true and [member geometry_override] is set, draws the override mesh as a semi-transparent green overlay in the editor viewport only.
+			Cuando es true y [member geometry_override] está configurado, dibuja la malla de anulación como una superposición verde semitransparente solo en la vista del editor (viewport).
 		</member>
 		<member name="export_all_children" type="bool" setter="set_export_all_children" getter="get_export_all_children" default="false">
-			When true, exports acoustic geometry from all child nodes that have a [MeshInstance3D] or [member geometry_override]. Same idea as Steam Audio Export All Children. Hidden on dynamic geometry nodes.
+			Cuando es true, exporta la geometría acústica de todos los nodos hijos que tengan un [MeshInstance3D] o [member geometry_override]. Misma idea que 'Steam Audio Export All Children'. Oculto en nodos de geometría dinámica.
 		</member>
 		<member name="dynamic" type="bool" setter="set_dynamic" getter="is_dynamic" default="false">
-			When true, geometry is instanced and updated for moving objects. Enable path validation ([member ResonanceRuntimeConfig.path_validation_enabled] or [member ResonancePlayerConfig.path_validation_override] Enabled) when movers can block baked paths. [ResonanceStaticGeometry] and [ResonanceDynamicGeometry] fix this flag and hide it in the inspector.
+			Cuando es true, la geometría se instancia y se hace el commit para los objetos en movimiento. Activa la validación de rutas ([member ResonanceRuntimeConfig.path_validation_enabled] o [member ResonancePlayerConfig.path_validation_override] Enabled) cuando los objetos en movimiento puedan bloquear las rutas horneadas. [ResonanceStaticGeometry] y [ResonanceDynamicGeometry] fijan esta bandera (flag) y la ocultan en el inspector.
 		</member>
 	</members>
 	<methods>
 		<method name="get_mesh_bake_transform">
 			<return type="Transform3D" />
 			<description>
-				World transform from mesh vertex space to global space: this node's global transform when [member geometry_override] is set, otherwise the parent [MeshInstance3D] global transform (or this node's global transform if there is no mesh parent). Matches static scene export and runtime acoustic registration.
+				Transformación global desde el espacio de vértices de la malla al espacio global: la transformación global de este nodo cuando [member geometry_override] está configurado, de lo contrario, la transformación global del padre [MeshInstance3D] (o la transformación global de este nodo si no hay un padre de malla). Coincide con la exportación estática de la escena y el registro acústico en tiempo de ejecución.
 			</description>
 		</method>
 		<method name="export_dynamic_mesh_to_asset">
 			<return type="Error" />
 			<param index="0" name="p_path" type="String" />
 			<description>
-				Exports the mesh (parent [MeshInstance3D] or [member geometry_override] when set) to a [ResonanceGeometryAsset] at [param p_path] (.tres) and assigns [member mesh_asset]. Works in the editor without running the scene. Requires a [Node3D] parent; [MeshInstance3D] is only required when [member geometry_override] is unset.
+				Exporta la malla (el padre [MeshInstance3D] o [member geometry_override] cuando está configurado) a un [ResonanceGeometryAsset] en [param p_path] (.tres) y asigna [member mesh_asset]. Funciona en el editor sin necesidad de ejecutar la escena. Requiere un padre [Node3D]; [MeshInstance3D] solo se requiere cuando [member geometry_override] no está configurado.
 			</description>
 		</method>
 		<method name="refresh_geometry">
 			<description>
-				Recreates Steam Audio meshes from the current mesh source. Prefer [method sync_reflection_debug_viz] when only toggling reflection debug visualization. Use after changing [member material], [member geometry_override], or the parent mesh at runtime.
+				Recrea las mallas de Steam Audio a partir de la fuente de malla actual. Prefiere [method sync_reflection_debug_viz] cuando solo se activa o desactiva la visualización de depuración de reflexiones. Utilízalo después de cambiar [member material], [member geometry_override] o la malla del padre en tiempo de ejecución.
 			</description>
 		</method>
 		<method name="sync_reflection_debug_viz">
 			<description>
-				Updates reflection debug overlay geometry only (CPU ray-hit visualization). Does not remove or recreate Steam Audio static or instanced meshes. Prefer this over [method refresh_geometry] when toggling debug flags so dynamic Embree geometry stays valid.
+				Actualiza únicamente la geometría de superposición de depuración de reflexiones (visualización del impacto de rayos en la CPU). No elimina ni recrea mallas estáticas o instanciadas de Steam Audio. Prefiere esto antes que [method refresh_geometry] al alternar banderas (flags) de depuración para que la geometría Embree dinámica siga siendo válida.
 			</description>
 		</method>
 		<method name="flush_dynamic_acoustic_transform">
 			<description>
-				For [member dynamic] geometry with an instanced mesh: applies the current transform on the simulation thread path immediately (under [code]simulation_mutex[/code]), clears any queued worker update for this mesh, and marks the scene for commit. Call when an animation or tween finishes so dynamic occlusion and path validation match the final pose, especially when [member ResonanceRuntimeConfig.dynamic_scene_commit_min_interval] is greater than 0.
+				Para geometría dinámica ([member dynamic]) con una malla instanciada: aplica la transformación actual en la ruta del hilo de simulación de inmediato (bajo [code]simulation_mutex[/code]), borra cualquier actualización del hilo de trabajo en cola para esta malla y marca la escena para commit. Llama a esto cuando termine una animación o tween para que la oclusión dinámica y la validación de rutas coincidan con la pose final, especialmente cuando [member ResonanceRuntimeConfig.dynamic_scene_commit_min_interval] es mayor que 0.
 			</description>
 		</method>
 	</methods>

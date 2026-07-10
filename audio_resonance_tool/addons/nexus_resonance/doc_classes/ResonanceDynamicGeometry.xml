@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <class name="ResonanceDynamicGeometry" inherits="ResonanceGeometry" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../class.xsd">
 	<brief_description>
-		Dynamic acoustic geometry for doors, moving platforms, and other animated objects.
+		Geometría acústica dinámica para puertas, plataformas móviles y otros objetos animados.
 	</brief_description>
 	<description>
-		Subclass of [ResonanceGeometry] with [member dynamic] fixed to true. Excluded from the baked static scene export. Export the mesh separately via Project -> Tools -> Nexus Resonance -> Export Dynamic Objects In Active Scene, or the inspector Export Mesh button when this node is selected.
-		Assign a [ResonanceGeometryAsset] to [member mesh_asset] after export (auto-assigned by Export Dynamic Mesh). Enable path validation when movers can block baked paths: [member ResonanceRuntimeConfig.path_validation_enabled] on the runtime config, or [member ResonancePlayerConfig.path_validation_override] Enabled per source.
-		Move the geometry node (or its rigid parent chain) as one body; animating only a child transform under the subtree is not supported, matching Steam Audio Dynamic Object rules.
-		Inspector note: [member dynamic] is hidden. [member export_all_children] is hidden because dynamic subtrees are not merged this way.
+		Subclase de [ResonanceGeometry] con [member dynamic] fijado en true. Excluido de la exportación de escena estática horneada. Exporta la malla por separado a través de Proyecto -> Herramientas -> Nexus Resonance -> Exportar objetos dinámicos en la escena activa, o mediante el botón Exportar malla en el inspector cuando este nodo está seleccionado.
+		Asigna un [ResonanceGeometryAsset] a [member mesh_asset] después de exportar (se asigna automáticamente por Exportar malla dinámica). Habilita la validación de rutas cuando los objetos móviles puedan bloquear las rutas horneadas: [member ResonanceRuntimeConfig.path_validation_enabled] en la configuración de ejecución, o [member ResonancePlayerConfig.path_validation_override] Habilitado por fuente.
+		Mueve el nodo de geometría (o su cadena de padres rígidos) como un solo cuerpo; no se admite la animación de solo una transformación hija bajo el subárbol, de acuerdo con las reglas de objetos dinámicos de Steam Audio.
+		Nota del inspector: [member dynamic] está oculto. [member export_all_children] está oculto porque los subárboles dinámicos no se fusionan de esta manera.
 	</description>
 	<tutorials>
 	</tutorials>

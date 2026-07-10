@@ -37,12 +37,12 @@ func _get_editor_tree() -> SceneTree:
 
 func _try_begin_export_job() -> bool:
 	if _export_job_running:
-		_show_warning(tr(UIStrings.WARN_EXPORT_JOB_ALREADY_RUNNING))
+		_show_warning(UIStrings.localize(UIStrings.WARN_EXPORT_JOB_ALREADY_RUNNING))
 		return false
 	_export_job_running = true
 	if editor_interface:
 		ResonanceEditorDialogs.show_success_toast(
-			editor_interface, tr(UIStrings.INFO_EXPORT_JOB_RUNNING)
+			editor_interface, UIStrings.localize(UIStrings.INFO_EXPORT_JOB_RUNNING)
 		)
 	return true
 
@@ -71,8 +71,8 @@ func _show_warning(message: String) -> void:
 func _show_gdextension_error() -> void:
 	ResonanceEditorDialogs.show_critical(
 		editor_interface,
-		tr(UIStrings.ERR_GDEXTENSION_NOT_LOADED),
-		tr(UIStrings.DIALOG_GDEXTENSION_NOT_LOADED_TITLE)
+		UIStrings.localize(UIStrings.ERR_GDEXTENSION_NOT_LOADED),
+		UIStrings.localize(UIStrings.DIALOG_GDEXTENSION_NOT_LOADED_TITLE)
 	)
 
 
@@ -85,10 +85,10 @@ func get_resonance_server_or_show_error(required_method: String = "") -> Variant
 	if srv and not required_method.is_empty() and not srv.has_method(required_method):
 		ResonanceEditorDialogs.show_error_dialog(
 			editor_interface,
-			tr(UIStrings.DIALOG_EXPORT_FAILED_TITLE),
-			tr(UIStrings.ERR_SERVER_LACKS_EXPORT),
-			tr(UIStrings.ERR_GDEXTENSION_SYNC),
-			tr(UIStrings.ERR_GDEXTENSION_SYNC_SOLUTION)
+			UIStrings.localize(UIStrings.DIALOG_EXPORT_FAILED_TITLE),
+			UIStrings.localize(UIStrings.ERR_SERVER_LACKS_EXPORT),
+			UIStrings.localize(UIStrings.ERR_GDEXTENSION_SYNC),
+			UIStrings.localize(UIStrings.ERR_GDEXTENSION_SYNC_SOLUTION)
 		)
 		return null
 	return srv
@@ -100,9 +100,9 @@ func get_main_scene_path_or_show_error() -> String:
 	if main_path.is_empty():
 		ResonanceEditorDialogs.show_error_dialog(
 			editor_interface,
-			tr(UIStrings.DIALOG_EXPORT_FAILED_TITLE),
-			tr(UIStrings.ERR_NO_MAIN_SCENE),
-			tr(UIStrings.ERR_SET_MAIN_SCENE),
+			UIStrings.localize(UIStrings.DIALOG_EXPORT_FAILED_TITLE),
+			UIStrings.localize(UIStrings.ERR_NO_MAIN_SCENE),
+			UIStrings.localize(UIStrings.ERR_SET_MAIN_SCENE),
 			""
 		)
 		return ""
@@ -119,8 +119,8 @@ func ensure_audio_data_dir() -> bool:
 	if err != OK or not DirAccess.dir_exists_absolute(fs_path):
 		ResonanceEditorDialogs.show_error_dialog(
 			editor_interface,
-			tr(UIStrings.DIALOG_EXPORT_FAILED_TITLE),
-			tr(UIStrings.ERR_MKDIR_AUDIO_DATA).replace("%d", str(err)),
+			UIStrings.localize(UIStrings.DIALOG_EXPORT_FAILED_TITLE),
+			UIStrings.localize(UIStrings.ERR_MKDIR_AUDIO_DATA).replace("%d", str(err)),
 			"",
 			""
 		)
@@ -139,8 +139,8 @@ func ensure_resonance_meshes_dir() -> bool:
 	if err != OK or not DirAccess.dir_exists_absolute(fs_meshes):
 		ResonanceEditorDialogs.show_error_dialog(
 			editor_interface,
-			tr(UIStrings.DIALOG_EXPORT_FAILED_TITLE),
-			tr(UIStrings.ERR_MKDIR_RESONANCE_MESHES).replace("%d", str(err)),
+			UIStrings.localize(UIStrings.DIALOG_EXPORT_FAILED_TITLE),
+			UIStrings.localize(UIStrings.ERR_MKDIR_RESONANCE_MESHES).replace("%d", str(err)),
 			"",
 			""
 		)
@@ -213,8 +213,8 @@ func _get_scene_paths_from_build(filter_exportable_static: bool = true) -> Dicti
 	if not packed:
 		ResonanceEditorDialogs.show_critical(
 			editor_interface,
-			tr(UIStrings.ERR_FAILED_TO_LOAD_MAIN_SCENE) % main_path,
-			tr(UIStrings.DIALOG_EXPORT_FAILED_TITLE)
+			UIStrings.localize(UIStrings.ERR_FAILED_TO_LOAD_MAIN_SCENE) % main_path,
+			UIStrings.localize(UIStrings.DIALOG_EXPORT_FAILED_TITLE)
 		)
 		return {"paths": PackedStringArray(), "skipped": 0}
 	var instance: Node = packed.instantiate()
@@ -268,18 +268,18 @@ func _export_static_scenes_batch(paths: PackedStringArray) -> Dictionary:
 func _finish_static_batch_toasts(result: Dictionary) -> void:
 	if result.exported > 0:
 		ResonanceEditorDialogs.show_success_toast(
-			editor_interface, tr(UIStrings.INFO_ALL_OPEN_SCENES_EXPORTED) % result.exported
+			editor_interface, UIStrings.localize(UIStrings.INFO_ALL_OPEN_SCENES_EXPORTED) % result.exported
 		)
 	elif result.skipped > 0:
 		_show_warning(
 			(
-				tr(UIStrings.WARN_NO_SCENES_EXPORTED)
+				UIStrings.localize(UIStrings.WARN_NO_SCENES_EXPORTED)
 				+ " "
-				+ (tr(UIStrings.INFO_SCENES_FILTERED) % result.skipped)
+				+ (UIStrings.localize(UIStrings.INFO_SCENES_FILTERED) % result.skipped)
 			)
 		)
 	else:
-		_show_warning(tr(UIStrings.WARN_NO_SCENES_EXPORTED))
+		_show_warning(UIStrings.localize(UIStrings.WARN_NO_SCENES_EXPORTED))
 
 
 func _export_static_scenes_batch_async(paths: PackedStringArray) -> void:
@@ -291,7 +291,7 @@ func _export_static_scenes_batch_async(paths: PackedStringArray) -> void:
 		_end_export_job()
 		return
 	if _job_progress:
-		_job_progress.show_job(tr(UIStrings.DIALOG_EXPORT_JOB_TITLE), paths.size())
+		_job_progress.show_job(UIStrings.localize(UIStrings.DIALOG_EXPORT_JOB_TITLE), paths.size())
 	var exported: int = 0
 	var skipped: int = 0
 	var tree: SceneTree = _get_editor_tree()
@@ -376,7 +376,7 @@ func _export_active_scene_async() -> void:
 	if _job_progress and editor_interface:
 		var root: Node = editor_interface.get_edited_scene_root()
 		var label: String = root.get_scene_file_path() if root else ""
-		_job_progress.show_job(tr(UIStrings.DIALOG_EXPORT_JOB_TITLE), 1)
+		_job_progress.show_job(UIStrings.localize(UIStrings.DIALOG_EXPORT_JOB_TITLE), 1)
 		_job_progress.set_step(1, 1, label)
 	var tree: SceneTree = _get_editor_tree()
 	if tree:
@@ -388,10 +388,10 @@ func _export_active_scene_async() -> void:
 func _export_active_scene_core() -> void:
 	var root: Node = editor_interface.get_edited_scene_root()
 	if not root:
-		_show_warning(tr(UIStrings.WARN_NO_SCENE))
+		_show_warning(UIStrings.localize(UIStrings.WARN_NO_SCENE))
 		return
 	if not ResonanceSceneUtils.scene_has_exportable_resonance_content(root, "static"):
-		_show_warning(tr(UIStrings.WARN_NO_EXPORTABLE_STATIC_CONTENT))
+		_show_warning(UIStrings.localize(UIStrings.WARN_NO_EXPORTABLE_STATIC_CONTENT))
 		return
 	var srv: Variant = get_resonance_server_or_show_error("export_static_scene_to_asset")
 	if srv == null:
@@ -414,7 +414,7 @@ func _export_active_scene_core() -> void:
 		var file_exists: bool = ResonanceFsPaths.file_exists_for_path(save_path)
 		if has_valid and file_exists:
 			if _export_job_running:
-				ResonanceEditorDialogs.show_info(tr(UIStrings.INFO_STATIC_UNCHANGED))
+				ResonanceEditorDialogs.show_info(UIStrings.localize(UIStrings.INFO_STATIC_UNCHANGED))
 			return
 	if static_scene_node and static_scene_node.static_scene_asset:
 		static_scene_node.static_scene_asset = null
@@ -423,8 +423,8 @@ func _export_active_scene_core() -> void:
 	if err != OK:
 		ResonanceEditorDialogs.show_critical(
 			editor_interface,
-			tr(UIStrings.ERR_EXPORT_FAILED) % err,
-			tr(UIStrings.DIALOG_EXPORT_FAILED_TITLE)
+			UIStrings.localize(UIStrings.ERR_EXPORT_FAILED) % err,
+			UIStrings.localize(UIStrings.DIALOG_EXPORT_FAILED_TITLE)
 		)
 		return
 	if editor_interface:
@@ -443,7 +443,7 @@ func _export_active_scene_core() -> void:
 			editor_interface.mark_scene_as_unsaved()
 	if _export_job_running and editor_interface:
 		ResonanceEditorDialogs.show_success_toast(
-			editor_interface, tr(UIStrings.INFO_STATIC_EXPORTED) % save_path
+			editor_interface, UIStrings.localize(UIStrings.INFO_STATIC_EXPORTED) % save_path
 		)
 
 
@@ -451,7 +451,7 @@ func _export_active_scene_core() -> void:
 func export_all_open_scenes(_unused: Variant = null) -> void:
 	var open_scenes: PackedStringArray = editor_interface.get_open_scenes()
 	if open_scenes.is_empty():
-		_show_warning(tr(UIStrings.WARN_NO_SCENES_OPEN))
+		_show_warning(UIStrings.localize(UIStrings.WARN_NO_SCENES_OPEN))
 		return
 	_dispatch_export_async(_export_static_scenes_batch_async.bind(open_scenes))
 
@@ -460,10 +460,10 @@ func export_all_open_scenes(_unused: Variant = null) -> void:
 func export_scene_obj(_unused: Variant = null) -> void:
 	var root: Node = editor_interface.get_edited_scene_root()
 	if not root:
-		_show_warning(tr(UIStrings.WARN_NO_SCENE))
+		_show_warning(UIStrings.localize(UIStrings.WARN_NO_SCENE))
 		return
 	if not ResonanceSceneUtils.scene_has_exportable_resonance_content(root, "static"):
-		_show_warning(tr(UIStrings.WARN_NO_EXPORTABLE_STATIC_CONTENT))
+		_show_warning(UIStrings.localize(UIStrings.WARN_NO_EXPORTABLE_STATIC_CONTENT))
 		return
 	var srv: Variant = get_resonance_server_or_show_error("export_static_scene_to_obj")
 	if srv == null:
@@ -479,13 +479,13 @@ func export_scene_obj(_unused: Variant = null) -> void:
 	if err != OK:
 		ResonanceEditorDialogs.show_critical(
 			editor_interface,
-			tr(UIStrings.ERR_EXPORT_FAILED) % err,
-			tr(UIStrings.DIALOG_EXPORT_FAILED_TITLE)
+			UIStrings.localize(UIStrings.ERR_EXPORT_FAILED) % err,
+			UIStrings.localize(UIStrings.DIALOG_EXPORT_FAILED_TITLE)
 		)
 		return
 	_request_obj_reimport(PackedStringArray([save_base + ".obj"]))
 	ResonanceEditorDialogs.show_success_toast(
-		editor_interface, tr(UIStrings.INFO_SCENE_OBJ_EXPORTED) % (save_base + ".obj")
+		editor_interface, UIStrings.localize(UIStrings.INFO_SCENE_OBJ_EXPORTED) % (save_base + ".obj")
 	)
 
 
@@ -493,12 +493,12 @@ func export_scene_obj(_unused: Variant = null) -> void:
 func export_dynamic_mesh(_unused: Variant = null) -> void:
 	var root: Node = editor_interface.get_edited_scene_root()
 	if not root:
-		_show_warning(tr(UIStrings.WARN_NO_SCENE))
+		_show_warning(UIStrings.localize(UIStrings.WARN_NO_SCENE))
 		return
 	var dynamic_geoms: Array[Node] = []
 	ResonanceSceneUtils.collect_resonance_dynamic_geometry(root, dynamic_geoms)
 	if dynamic_geoms.is_empty():
-		_show_warning(tr(UIStrings.WARN_NO_DYNAMIC_GEOMETRY))
+		_show_warning(UIStrings.localize(UIStrings.WARN_NO_DYNAMIC_GEOMETRY))
 		return
 	if not ensure_resonance_meshes_dir():
 		return
@@ -517,18 +517,18 @@ func export_dynamic_mesh(_unused: Variant = null) -> void:
 		if not scene_path.is_empty():
 			var save_err: int = editor_interface.save_scene()
 			if save_err != OK:
-				_show_warning(tr(UIStrings.WARN_EXPORTED_BUT_SAVE_FAILED) % [exported, save_err])
+				_show_warning(UIStrings.localize(UIStrings.WARN_EXPORTED_BUT_SAVE_FAILED) % [exported, save_err])
 			else:
 				ResonanceEditorDialogs.show_success_toast(
-					editor_interface, tr(UIStrings.INFO_DYNAMIC_MESHES_EXPORTED) % exported
+					editor_interface, UIStrings.localize(UIStrings.INFO_DYNAMIC_MESHES_EXPORTED) % exported
 				)
 		else:
 			editor_interface.mark_scene_as_unsaved()
 			ResonanceEditorDialogs.show_success_toast(
 				editor_interface,
 				(
-					tr(UIStrings.INFO_DYNAMIC_MESHES_EXPORTED) % exported
-					+ tr(UIStrings.WARN_SAVE_SCENE_TO_PERSIST)
+					UIStrings.localize(UIStrings.INFO_DYNAMIC_MESHES_EXPORTED) % exported
+					+ UIStrings.localize(UIStrings.WARN_SAVE_SCENE_TO_PERSIST)
 				)
 			)
 
@@ -557,10 +557,10 @@ func export_dynamic_objects_in_build(_unused: Variant = null) -> void:
 		)
 		ResonanceEditorDialogs.show_success_toast(
 			editor_interface,
-			tr(UIStrings.INFO_DYNAMIC_OBJECTS_IN_BUILD_EXPORTED) % result.exported + suffix
+			UIStrings.localize(UIStrings.INFO_DYNAMIC_OBJECTS_IN_BUILD_EXPORTED) % result.exported + suffix
 		)
 	else:
-		_show_warning(tr(UIStrings.WARN_NO_DYNAMIC_EXPORTED))
+		_show_warning(UIStrings.localize(UIStrings.WARN_NO_DYNAMIC_EXPORTED))
 
 
 ## Export all ResonanceDynamicGeometry from every scene in the project.
@@ -569,7 +569,7 @@ func export_dynamic_objects_in_project(_unused: Variant = null) -> void:
 		return
 	var tscn_files: PackedStringArray = collect_project_tscn_paths()
 	if tscn_files.is_empty():
-		_show_warning(tr(UIStrings.WARN_NO_SCENE_FILES))
+		_show_warning(UIStrings.localize(UIStrings.WARN_NO_SCENE_FILES))
 		return
 	_dispatch_export_async(_export_dynamic_objects_in_project_async.bind(tscn_files))
 
@@ -598,10 +598,10 @@ func _export_dynamic_objects_in_project_async(tscn_files: PackedStringArray) -> 
 		)
 		ResonanceEditorDialogs.show_success_toast(
 			editor_interface,
-			tr(UIStrings.INFO_DYNAMIC_OBJECTS_IN_PROJECT_EXPORTED) % result.exported + suffix
+			UIStrings.localize(UIStrings.INFO_DYNAMIC_OBJECTS_IN_PROJECT_EXPORTED) % result.exported + suffix
 		)
 	else:
-		_show_warning(tr(UIStrings.WARN_NO_DYNAMIC_EXPORTED))
+		_show_warning(UIStrings.localize(UIStrings.WARN_NO_DYNAMIC_EXPORTED))
 	_end_export_job()
 
 
@@ -611,7 +611,7 @@ func _export_dynamic_objects_batch_async(
 	if not ensure_resonance_meshes_dir():
 		return {"exported": 0, "scenes_saved": 0}
 	if _job_progress:
-		_job_progress.show_job(tr(UIStrings.DIALOG_EXPORT_JOB_TITLE), paths.size())
+		_job_progress.show_job(UIStrings.localize(UIStrings.DIALOG_EXPORT_JOB_TITLE), paths.size())
 	var exported: int = 0
 	var scenes_saved: int = 0
 	var seen_geoms: Dictionary = {}
@@ -671,12 +671,17 @@ func list_probe_data_files() -> PackedStringArray:
 	d.list_dir_begin()
 	var name_str: String = d.get_next()
 	while name_str != "":
-		var ext_probe := name_str.get_extension().to_lower()
+		var clean_name := name_str
+		if clean_name.ends_with(".remap"):
+			clean_name = clean_name.trim_suffix(".remap")
+		elif clean_name.ends_with(".import"):
+			clean_name = clean_name.trim_suffix(".import")
+		var ext_probe := clean_name.get_extension().to_lower()
 		if (
 			(ext_probe == "tres" or ext_probe == "res")
-			and ("_batch" in name_str or "_baked_probes" in name_str)
+			and ("_batch" in clean_name or "_baked_probes" in clean_name)
 		):
-			out.append(logical_dir + name_str)
+			out.append(logical_dir + clean_name)
 		name_str = d.get_next()
 	d.list_dir_end()
 	return out
@@ -709,7 +714,7 @@ func _clear_unreferenced_probe_data_async() -> void:
 	var probe_files: PackedStringArray = list_probe_data_files()
 	if probe_files.is_empty():
 		ResonanceEditorDialogs.show_info(
-			tr(UIStrings.INFO_NO_PROBE_DATA_FILES) % ResonancePaths.get_audio_data_dir()
+			UIStrings.localize(UIStrings.INFO_NO_PROBE_DATA_FILES) % ResonancePaths.get_audio_data_dir()
 		)
 		_end_export_job()
 		return
@@ -719,16 +724,16 @@ func _clear_unreferenced_probe_data_async() -> void:
 		if path not in referenced:
 			to_delete.append(path)
 	if to_delete.is_empty():
-		ResonanceEditorDialogs.show_info(tr(UIStrings.INFO_ALL_PROBE_DATA_REFERENCED))
+		ResonanceEditorDialogs.show_info(UIStrings.localize(UIStrings.INFO_ALL_PROBE_DATA_REFERENCED))
 		_end_export_job()
 		return
 	var msg: String = (
-		tr(UIStrings.INFO_DELETE_UNREFERENCED_PROBE_DATA) % [to_delete.size(), "\n".join(to_delete)]
+		UIStrings.localize(UIStrings.INFO_DELETE_UNREFERENCED_PROBE_DATA) % [to_delete.size(), "\n".join(to_delete)]
 	)
 	_end_export_job()
 	ResonanceEditorDialogs.show_confirm_dialog(
 		editor_interface,
-		tr(UIStrings.DIALOG_CLEAR_UNREFERENCED_TITLE),
+		UIStrings.localize(UIStrings.DIALOG_CLEAR_UNREFERENCED_TITLE),
 		msg,
 		func() -> void:
 			var deleted: int = 0
@@ -740,7 +745,7 @@ func _clear_unreferenced_probe_data_async() -> void:
 			if deleted > 0:
 				editor_interface.get_resource_filesystem().scan()
 				ResonanceEditorDialogs.show_success_toast(
-					editor_interface, tr(UIStrings.INFO_UNREFERENCED_PROBE_DATA_CLEARED) % deleted
+					editor_interface, UIStrings.localize(UIStrings.INFO_UNREFERENCED_PROBE_DATA_CLEARED) % deleted
 				)
 	)
 
@@ -750,7 +755,7 @@ func _find_referenced_probe_data_paths_async() -> PackedStringArray:
 	var referenced: PackedStringArray = []
 	var tscn_files: PackedStringArray = collect_project_tscn_paths()
 	if _job_progress:
-		_job_progress.show_job(tr(UIStrings.DIALOG_EXPORT_JOB_TITLE), tscn_files.size())
+		_job_progress.show_job(UIStrings.localize(UIStrings.DIALOG_EXPORT_JOB_TITLE), tscn_files.size())
 	var scene_contents: Dictionary = {}
 	var tree: SceneTree = _get_editor_tree()
 	for i in tscn_files.size():

@@ -1,37 +1,37 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <class name="ResonanceMaterial" inherits="Resource" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../class.xsd">
 	<brief_description>
-		Acoustic material for Steam Audio. Controls absorption, scattering, and transmission per frequency band.
+		Material acústico para Steam Audio. Controla la absorción, dispersión y transmisión por banda de frecuencia.
 	</brief_description>
 	<description>
-		Used by [ResonanceGeometry] to define how surfaces reflect, absorb, and transmit sound. Presets in addons/nexus_resonance/materials/ are aligned with Steam Audio/Valve reference presets from phonon.h. Standard variants (approx. 30 cm): concrete, glass, wood, metal, fabric, carpet, marble_tile, brick, drywall, plaster, rubber, water, acoustic_ceiling_tile, gravel_sand, plastic, ceramic. Thin variants (5-10 cm): same names with "_thin" suffix, higher transmission.
+		Utilizado por [ResonanceGeometry] para definir cómo las superficies reflejan, absorben y transmiten el sonido. Los preajustes en addons/nexus_resonance/materials/ están alineados con los preajustes de referencia de Steam Audio/Valve de phonon.h. Variantes estándar (aprox. 30 cm): concreto (concrete), vidrio (glass), madera (wood), metal (metal), tela (fabric), alfombra (carpet), baldosa de mármol (marble_tile), ladrillo (brick), paneles de yeso (drywall), yeso (plaster), caucho (rubber), agua (water), placas acústicas para techo (acoustic_ceiling_tile), grava y arena (gravel_sand), plástico (plastic), cerámica (ceramic). Variantes delgadas (5-10 cm): mismos nombres con el sufijo '_thin', mayor transmisión.
 	</description>
 	<tutorials>
 	</tutorials>
 	<members>
 		<member name="absorption_high" type="float" setter="set_high_freq_absorption" getter="get_high_freq_absorption" default="0.3">
-			High frequency absorption (8 kHz and above). 0 = none, 1 = full absorption.
+			Absorción de alta frecuencia (8 kHz y superior). 0 = ninguna, 1 = absorción total.
 		</member>
 		<member name="absorption_low" type="float" setter="set_low_freq_absorption" getter="get_low_freq_absorption" default="0.1">
-			Low frequency absorption (up to 800 Hz). 0 = none, 1 = full absorption.
+			Absorción de baja frecuencia (hasta 800 Hz). 0 = ninguna, 1 = absorción total.
 		</member>
 		<member name="absorption_mid" type="float" setter="set_mid_freq_absorption" getter="get_mid_freq_absorption" default="0.2">
-			Mid frequency absorption (800 Hz to 8 kHz). 0 = none, 1 = full absorption.
+			Absorción de media frecuencia (800 Hz a 8 kHz). 0 = ninguna, 1 = absorción total.
 		</member>
 		<member name="scattering" type="float" setter="set_scattering" getter="get_scattering" default="0.05">
-			Surface roughness for reflections. 0 = mirror-like, 1 = diffuse.
+			Rugosidad de la superficie para las reflexiones. 0 = tipo espejo, 1 = difuso.
 		</member>
 		<member name="transmission_low" type="float" setter="set_transmission_low" getter="get_transmission_low" default="0.01">
-			Low frequency transmission (up to 800 Hz). How much sound passes through. 0 = blocked, 1 = full.
+			Transmisión de baja frecuencia (hasta 800 Hz). Cuánto sonido pasa a través. 0 = bloqueado, 1 = total.
 		</member>
 		<member name="transmission_mid" type="float" setter="set_transmission_mid" getter="get_transmission_mid" default="0.01">
-			Mid frequency transmission (800 Hz to 8 kHz). How much sound passes through. 0 = blocked, 1 = full.
+			Transmisión de media frecuencia (800 Hz a 8 kHz). Cuánto sonido pasa a través. 0 = bloqueado, 1 = total.
 		</member>
 		<member name="transmission_high" type="float" setter="set_transmission_high" getter="get_transmission_high" default="0.01">
-			High frequency transmission (8 kHz and above). How much sound passes through. 0 = blocked, 1 = full.
+			Transmisión de alta frecuencia (8 kHz y superior). Cuánto sonido pasa a través. 0 = bloqueado, 1 = total.
 		</member>
 		<member name="transmission" type="float" setter="set_transmission" getter="get_transmission" default="0.01">
-			Convenience setter: sets low/mid/high transmission to the same value. For per-band control use transmission_low/mid/high.
+			Asignador (setter) de conveniencia: establece la transmisión baja/media/alta al mismo valor. Para control por banda utiliza transmission_low/mid/high.
 		</member>
 	</members>
 </class>

@@ -347,7 +347,7 @@ func _on_bake_pipeline_finished(success: bool, probe_data_ref, volumes: Array[No
 		srv.set_bake_pipeline_pathing(false)
 	if success and probe_data_ref:
 		if _progress_ui:
-			_progress_ui.set_bake_status(tr("Saving probe data..."))
+			_progress_ui.set_bake_status(UIStrings.localize("Saving probe data..."))
 
 		if save_to_disk:
 			match probe_data_ref:
@@ -405,8 +405,8 @@ func _save_and_reload_probe_data(probe_data_ref: Resource, volumes: Array[Node])
 			if Engine.is_editor_hint() and editor_interface:
 				resonance_editor_dialogs.show_error_dialog(
 					editor_interface,
-					tr(UIStrings.DIALOG_SAVE_FAILED_TITLE),
-					tr(UIStrings.ERR_FAILED_TO_SAVE) % err,
+					UIStrings.localize(UIStrings.DIALOG_SAVE_FAILED_TITLE),
+					UIStrings.localize(UIStrings.ERR_FAILED_TO_SAVE) % err,
 					"ResourceSaver.save returned non-OK.",
 					"Ensure res://audio_data/ is writable."
 				)
@@ -460,7 +460,7 @@ func _show_bake_complete_dialog(volumes: Array) -> void:
 	if has_backups:
 		msg += "\n\nYou can Undo to restore the previous Probe Volume data."
 	var dialog = AcceptDialog.new()
-	dialog.title = tr(UIStrings.ADDON_NAME)
+	dialog.title = UIStrings.localize(UIStrings.ADDON_NAME)
 	dialog.dialog_text = msg
 	dialog.theme = editor_interface.get_editor_theme()
 	# True if user chose Undo; otherwise on_dialog_close discards .bak files.
@@ -472,7 +472,7 @@ func _show_bake_complete_dialog(volumes: Array) -> void:
 	dialog.confirmed.connect(on_dialog_close)
 	dialog.close_requested.connect(on_dialog_close)
 	if has_backups:
-		var undo_btn = dialog.add_button(tr(UIStrings.BTN_UNDO), false, "undo")
+		var undo_btn = dialog.add_button(UIStrings.localize(UIStrings.BTN_UNDO), false, "undo")
 		undo_btn.pressed.connect(
 			func():
 				undo_invoked[0] = true

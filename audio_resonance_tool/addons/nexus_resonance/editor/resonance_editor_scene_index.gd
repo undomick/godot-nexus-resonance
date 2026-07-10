@@ -52,11 +52,16 @@ static func _collect_tscn_dir_walk(
 		if name_str.begins_with("."):
 			name_str = d.get_next()
 			continue
-		var path_str: String = dir.path_join(name_str)
+		var clean_name := name_str
+		if clean_name.ends_with(".remap"):
+			clean_name = clean_name.trim_suffix(".remap")
+		elif clean_name.ends_with(".import"):
+			clean_name = clean_name.trim_suffix(".import")
+		var path_str: String = dir.path_join(clean_name)
 		if d.current_is_dir():
-			if name_str not in SKIP_DIRS:
+			if clean_name not in SKIP_DIRS:
 				_collect_tscn_dir_walk(path_str, out)
-		elif name_str.get_extension().to_lower() == "tscn":
+		elif clean_name.get_extension().to_lower() == "tscn":
 			out.append(path_str)
 		name_str = d.get_next()
 	d.list_dir_end()

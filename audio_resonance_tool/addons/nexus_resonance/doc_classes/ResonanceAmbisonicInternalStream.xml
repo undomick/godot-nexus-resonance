@@ -1,20 +1,20 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <class name="ResonanceAmbisonicInternalStream" inherits="AudioStream" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../class.xsd">
 	<brief_description>
-		Higher-order Ambisonics audio stream for ResonanceAmbisonicPlayer.
+		Flujo de audio (stream) ambisónico de orden superior para ResonanceAmbisonicPlayer.
 	</brief_description>
 	<description>
-		AudioStream resource that supplies multi-channel Ambisonics data. Supports first-order (4 channels), second-order (9 channels), and third-order (16 channels) Ambisonics.
-		Set [member ambisonic_order] first; [member channel_streams] is resized to [code](order+1)²[/code] slots (4, 9, or 16) so the inspector matches the active order. Assign one [AudioStream] per Ambisonic channel in ACN order with SN3D normalization: 0=W, 1=Y, 2=Z, 3=X, 4=V, 5=T, 6=R, 7=S, 8=U, 9=K, 10=L, 11=M, 12=N, 13=O, 14=P, 15=Q.
+		Recurso AudioStream que proporciona datos ambisónicos multicanal. Soporta ambisónicos de primer orden (4 canales), segundo orden (9 canales) y tercer orden (16 canales).
+		Configura [member ambisonic_order] primero; [member channel_streams] cambia su tamaño a [code](order+1)²[/code] ranuras (4, 9 o 16) para que el inspector coincida con el orden activo. Asigna un [AudioStream] por canal ambisónico en orden ACN con normalización SN3D: 0=W, 1=Y, 2=Z, 3=X, 4=V, 5=T, 6=R, 7=S, 8=U, 9=K, 10=L, 11=M, 12=N, 13=O, 14=P, 15=Q.
 	</description>
 	<tutorials>
 	</tutorials>
 	<members>
 		<member name="ambisonic_order" type="int" setter="set_ambisonic_order" getter="get_ambisonic_order" default="1">
-			Ambisonic order: 1st (4 channels), 2nd (9), or 3rd (16). Drives how many [member channel_streams] entries are used; lowering order truncates extra channels.
+			Orden ambisónico: 1º (4 canales), 2º (9) o 3º (16). Determina cuántas entradas de [member channel_streams] se utilizan; reducir el orden trunca los canales adicionales.
 		</member>
 		<member name="channel_streams" type="Array" setter="set_channel_streams" getter="get_channel_streams">
-			Array of [AudioStream] resources, one per Ambisonic channel. Length is kept equal to [code](ambisonic_order+1)²[/code] after load and when order changes. Order: ACN/SN3D (W,Y,Z,X,V,T,R,S,U,K,L,M,N,O,P,Q).
+			Arreglo de recursos [AudioStream], uno por canal ambisónico. La longitud se mantiene igual a [code](ambisonic_order+1)²[/code] después de la carga y cuando cambia el orden. Orden: ACN/SN3D (W,Y,Z,X,V,T,R,S,U,K,L,M,N,O,P,Q).
 		</member>
 	</members>
 </class>

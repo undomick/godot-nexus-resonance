@@ -120,19 +120,19 @@ func _build_ui() -> void:
 
 	var fold_server := FoldableContainer.new()
 	_fold_server = fold_server
-	fold_server.title = "Server Status"
+	fold_server.title = tr("Server Status")
 	fold_server.folded = false
 	_folds.append(fold_server)
 	_status_label = RichTextLabel.new()
 	_status_label.bbcode_enabled = true
 	_status_label.fit_content = true
 	_status_label.add_theme_font_size_override("normal_font_size", 12)
-	_status_label.text = "Nexus Resonance Debug"
+	_status_label.text = tr("Nexus Resonance Debug")
 	fold_server.add_child(_status_label)
 	_vbox.add_child(fold_server)
 
 	var fold_audio := FoldableContainer.new()
-	fold_audio.title = "Audio Instrumentation"
+	fold_audio.title = tr("Audio Instrumentation")
 	fold_audio.folded = true
 	_folds.append(fold_audio)
 	_audio_instrumentation_label = RichTextLabel.new()
@@ -144,7 +144,7 @@ func _build_ui() -> void:
 	_vbox.add_child(fold_audio)
 
 	var fold_reverb := FoldableContainer.new()
-	fold_reverb.title = "Reverb Bus"
+	fold_reverb.title = tr("Reverb Bus")
 	fold_reverb.folded = true
 	_folds.append(fold_reverb)
 	var reverb_vbox := VBoxContainer.new()
@@ -234,7 +234,7 @@ func _refresh_status() -> void:
 		return
 	if not ResonanceServerAccess.has_server():
 		_status_label.text = "[color=%s]ResonanceServer not loaded[/color]" % COLOR_ERROR
-		_fold_server.title = "Server Status - not loaded"
+		_fold_server.title = tr("Server Status - not loaded")
 		_fold_server.add_theme_color_override(
 			"title_font_color", Color.from_string(COLOR_ERROR, Color.RED)
 		)
@@ -245,17 +245,17 @@ func _refresh_status() -> void:
 	var sim_ok: bool = srv.is_simulating() if init_ok else false
 	# FoldableContainer.title has no BBCode; color the whole title via theme.
 	if not init_ok:
-		_fold_server.title = "Server Status - not initialized"
+		_fold_server.title = tr("Server Status - not initialized")
 		_fold_server.add_theme_color_override(
 			"title_font_color", Color.from_string(COLOR_WARNING, Color.ORANGE)
 		)
 	elif not sim_ok:
-		_fold_server.title = "Server Status - waiting for geometry"
+		_fold_server.title = tr("Server Status - waiting for geometry")
 		_fold_server.add_theme_color_override(
 			"title_font_color", Color.from_string(COLOR_WARNING, Color.ORANGE)
 		)
 	else:
-		_fold_server.title = "Server Status - initialized"
+		_fold_server.title = tr("Server Status - initialized")
 		_fold_server.add_theme_color_override(
 			"title_font_color", Color.from_string(COLOR_OK, Color.LIME_GREEN)
 		)

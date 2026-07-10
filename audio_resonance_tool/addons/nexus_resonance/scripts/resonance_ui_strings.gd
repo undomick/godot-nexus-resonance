@@ -189,3 +189,27 @@ const DOC_BASE_URL := "https://github.com/nexus-resonance/docs"
 const DOC_BAKE_WORKFLOW := DOC_BASE_URL + "#bake-workflow"
 const DOC_PROBE_VOLUME := DOC_BASE_URL + "#probe-volume"
 const DOC_EXPORT := DOC_BASE_URL + "#export"
+
+static var _translation_en: Translation = null
+static var _translation_es: Translation = null
+
+static func localize(key: String) -> String:
+	if _translation_en == null:
+		_translation_en = load("res://addons/nexus_resonance/translations/nexus_resonance.en.translation") as Translation
+	if _translation_es == null:
+		_translation_es = load("res://addons/nexus_resonance/translations/nexus_resonance.es.translation") as Translation
+	
+	var locale: String = "en"
+	if Engine.is_editor_hint():
+		locale = TranslationServer.get_tool_locale()
+	else:
+		locale = TranslationServer.get_locale()
+	
+	var is_es = locale.begins_with("es")
+	var trans_res = _translation_es if is_es else _translation_en
+	if trans_res:
+		var msg = trans_res.get_message(key)
+		if not msg.is_empty():
+			return msg
+	return key
+

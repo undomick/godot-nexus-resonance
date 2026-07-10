@@ -3,16 +3,17 @@
 extends Resource
 class_name ResonancePlayerConfig
 
-## Per-source preset for ResonancePlayer (Resource). **Use Global** = follow runtime unless noted.
+## Configuración por fuente para ResonancePlayer. Asígnalo desde ResonancePlayer como player_config para preajustes reutilizables. Guárdalo como .tres para compartirlo entre escenas. Recurre a las variables miembro del nodo cuando es nulo. pathing_probe_volume permanece en el nodo reproductor (específico de la escena).
 
 # --- Distance / Attenuation ---
 @export_group("Distance")
-## Distance (meters) at which sound is at full volume. Closer than this: no attenuation.
+## Distancia (metros) a la cual el sonido está al volumen máximo en la ruta de reproducción directa y en el [code]distanceAttenuationModel[/code] de Phonon cuando la atenuación de distancia de simulación está activa.
 @export_range(0.1, 100.0, 0.1) var min_distance: float = 1.0
-## Max distance (meters) for attenuation. Sound reaches minimum volume at this range.
+## Distancia máxima (metros) para la atenuación directa de la reproducción y para el modelo de distancia de la simulación (fin de atenuación lineal o por curva; corte inverso en la corrección de respuestas al impulso (IR)).
+## Inverse (0) = atenuación de distancia inversa de Steam en reproducción directa; la simulación puede aplicar [code]distanceAttenuationModel[/code] a las reflexiones (corrección de IR) cuando está activado. Linear (1) y Curve (2) comparten la atenuación en la directa y en la simulación. Disabled (3) = sin atenuación por distancia en la reproducción directa; modelo de distancia de simulación desactivado. El comportamiento legado [code]distance_attenuation_simulation_enabled = false[/code] con el modo 0 se trata como Disabled (3). La señal procesada (wet) de las reflexiones en reproducción no se multiplica por esta curva (paridad con Unity Spatialize); utiliza únicamente [member reflections_mix_level] y la oclusión wet horneada.
 @export_range(1.0, 2000.0, 1.0) var max_distance: float = 500.0
 var _attenuation_mode: int = 0
-## Inverse / Linear / Curve / Disabled. Disabled turns off sim distance attenuation on the direct path (not mute). Legacy tres may map old flags into this enum.
+## Inverse (0) = atenuación de distancia inversa de Steam en reproducción directa; la simulación puede aplicar [code]distanceAttenuationModel[/code] a las reflexiones (corrección de IR) cuando está activado. Linear (1) y Curve (2) comparten la atenuación en la directa y en la simulación. Disabled (3) = sin atenuación por distancia en la reproducción directa; modelo de distancia de simulación desactivado. El comportamiento legado [code]distance_attenuation_simulation_enabled = false[/code] con el modo 0 se trata como Disabled (3). La señal procesada (wet) de las reflexiones en reproducción no se multiplica por esta curva (paridad con Unity Spatialize); utiliza únicamente [member reflections_mix_level] y la oclusión wet horneada.
 @export_enum("Inverse:0", "Linear:1", "Curve:2", "Disabled:3") var attenuation_mode: int:
 	get:
 		return _attenuation_mode
@@ -20,15 +21,16 @@ var _attenuation_mode: int = 0
 		if _attenuation_mode != v:
 			_attenuation_mode = v
 			notify_property_list_changed()
-## Custom attenuation curve. X = normalized distance (0..1), Y = volume. Used when attenuation_mode is Curve.
+## Curva de atenuación personalizada. Se utiliza cuando attenuation_mode es Curve.
 @export var attenuation_curve: Curve = null
 
 # --- Direct Sound ---
 @export_group("Direct Sound")
-## Radius of the sound source in meters (Steam Audio occlusion radius). Affects volumetric occlusion sampling and diffraction; slightly larger radius can reduce edge flicker when [member ResonanceRuntimeConfig.occlusion_type] is Volumetric.
+## Radio de la fuente de sonido en metros.
+## Activa la absorción del aire basada en la distancia.
 @export_range(0.1, 10.0, 0.1) var source_radius: float = 1.0
 var _air_absorption_enabled: bool = true
-## Enable distance-based air absorption. Distant sounds appear muffled.
+## Activa la absorción del aire basada en la distancia.
 @export var air_absorption_enabled: bool = true:
 	get:
 		return _air_absorption_enabled
@@ -36,8 +38,9 @@ var _air_absorption_enabled: bool = true
 		if _air_absorption_enabled != v:
 			_air_absorption_enabled = v
 			notify_property_list_changed()
+## Origen de la absorción del aire: Simulation (0) = basado en física, User Defined (1) = utiliza los deslizadores de baja/media/alta.
 var _air_absorption_input: int = 0
-## Air absorption source: Simulation Defined = physics-based, User Defined = use low/mid/high sliders.
+## Origen de la absorción del aire: Simulation (0) = basado en física, User Defined (1) = utiliza los deslizadores de baja/media/alta.
 @export_enum("Simulation Defined:0", "User Defined:1") var air_absorption_input: int:
 	get:
 		return _air_absorption_input
@@ -45,17 +48,18 @@ var _air_absorption_input: int = 0
 		if _air_absorption_input != v:
 			_air_absorption_input = v
 			notify_property_list_changed()
-## Low-band (≤800 Hz) EQ. 0 = fully attenuated, 1 = no change. Only when air_absorption_input is User Defined.
+## Ecualización de banda baja (≤800 Hz). 0 = completamente atenuado, 1 = sin cambios. Solo cuando air_absorption_input es User Defined.
 @export_range(0.0, 1.0, 0.01) var air_absorption_low: float = 1.0
-## Mid-band (800 Hz–8 kHz) EQ. 0 = fully attenuated, 1 = no change.
+## Ecualización de banda media (800 Hz–8 kHz).
 @export_range(0.0, 1.0, 0.01) var air_absorption_mid: float = 1.0
-## High-band (≥8 kHz) EQ. 0 = fully attenuated, 1 = no change.
+## Ecualización de banda alta (≥8 kHz).
 @export_range(0.0, 1.0, 0.01) var air_absorption_high: float = 1.0
 
 # --- Directivity ---
+## Activa la fuente de sonido direccional.
 @export_group("Directivity")
 var _directivity_enabled: bool = false
-## If enabled, the sound source becomes directional. Projects along negative Z-axis (Forward).
+## Activa la fuente de sonido direccional.
 @export var directivity_enabled: bool:
 	get:
 		return _directivity_enabled
@@ -63,8 +67,9 @@ var _directivity_enabled: bool = false
 		if _directivity_enabled != v:
 			_directivity_enabled = v
 			notify_property_list_changed()
+## Origen de la directividad: 0 = Simulation (dipolo), 1 = User Defined (utiliza directivity_value).
 var _directivity_input: int = 0
-## Directivity source: Simulation Defined = dipole model (weight, power). User Defined = use directivity_value (script-controlled).
+## Origen de la directividad: 0 = Simulation (dipolo), 1 = User Defined (utiliza directivity_value).
 @export_enum("Simulation Defined:0", "User Defined:1") var directivity_input: int:
 	get:
 		return _directivity_input
@@ -72,17 +77,18 @@ var _directivity_input: int = 0
 		if _directivity_input != v:
 			_directivity_input = v
 			notify_property_list_changed()
-## Shape: 0 = Omnidirectional, 1 = Dipole (figure-8). Intermediate = blend. Only when directivity_input is Simulation.
+## Shape: 0 = Omnidirectional, 1 = Dipole.
 @export_range(0.0, 1.0, 0.01) var directivity_weight: float = 0.0
-## Sharpness of the directivity pattern. 0 = broad cone, 4 = narrow beam. Only when directivity_input is Simulation.
+## Nitidez del patrón de directividad (0-4). Solo cuando directivity_input es Simulation.
 @export_range(0.0, 4.0, 0.1) var directivity_power: float = 1.0
-## Directivity attenuation (0-1). 0 = fully attenuated, 1 = no change. Only when directivity_input is User Defined.
+## Atenuación de directividad (0-1). Solo cuando directivity_input es User Defined.
 @export_range(0.0, 1.0, 0.01) var directivity_value: float = 1.0
 
 # --- Output ---
+## Bus para Direct + Pathing. -1 = Usar Global (RuntimeConfig.bus), 0 = Personalizado (utiliza bus_name).
 @export_group("Output")
 var _bus_override: int = -1
-## Direct + pathing bus. Use Global = runtime bus; Custom = [member bus_name]. Setter refreshes inspector visibility for [member bus_name].
+## Bus para Direct + Pathing. -1 = Usar Global (RuntimeConfig.bus), 0 = Personalizado (utiliza bus_name).
 @export_enum("Use Global:-1", "Custom:0") var bus_override: int = -1:
 	get:
 		return _bus_override
@@ -90,10 +96,11 @@ var _bus_override: int = -1
 		if _bus_override != v:
 			_bus_override = v
 			notify_property_list_changed()
-## Bus for Direct + Pathing when bus_override is Custom. Pick from existing buses in Audio Bus Layout.
+## Bus para Direct + Pathing cuando bus_override is Custom. Must exist in Audio Bus Layout.
+## Anulación de bus de reverberación. -1 = Usar Global (RuntimeConfig.reverb_bus_name), 0 = Personalizado (utiliza reverb_bus_name). Para Paramétrico/Híbrido, esto selecciona el bus de salida wet de división cuando difiere del bus dry. Para Convolución/TAN, el mezclador de reflexiones de Steam sigue siendo global; este campo no crea un mezclador de convolución adicional por fuente.
 @export var bus_name: StringName = &"Master"
 var _reverb_bus_override: int = -1
-## Reverb bus: Use Global or Custom ([member reverb_bus_name]). Parametric/Hybrid wet routing vs convolution mixer behavior follows runtime docs. Setter refreshes [member reverb_bus_name] in the inspector.
+## Anulación de bus de reverberación. -1 = Usar Global (RuntimeConfig.reverb_bus_name), 0 = Personalizado (utiliza reverb_bus_name). Para Paramétrico/Híbrido, esto selecciona el bus de salida wet de división cuando difiere del bus dry. Para Convolución/TAN, el mezclador de reflexiones de Steam sigue siendo global; este campo no crea un mezclador de convolución adicional por fuente.
 @export_enum("Use Global:-1", "Custom:0") var reverb_bus_override: int = -1:
 	get:
 		return _reverb_bus_override
@@ -102,24 +109,25 @@ var _reverb_bus_override: int = -1
 			_reverb_bus_override = v
 			notify_property_list_changed()
 
-## Bus for reverb output when reverb_bus_override is Custom. Pick from existing buses in Audio Bus Layout.
+## Bus para la señal procesada (wet) dividida de Paramétrico/Híbrido cuando reverb_bus_override es Custom (debe existir en el diseño de buses de audio). Cuando los buses dry y wet difieren, wet se reproduce en este bus. El wet de Convolución/TAN permanece en el bus [member ResonanceRuntimeConfig.reverb_bus_name] del tiempo de ejecución; su envío de Godot sigue a [member ResonanceRuntimeConfig.bus].
 @export var reverb_bus_name: StringName = &"ResonanceReverb"
 
 # --- Performance ---
 @export_group("Performance")
-## Minimum seconds between full playback-parameter updates (occlusion/reverb readback → [code]ResonanceInternalPlayback[/code]). 0 = every frame. E.g. 0.033 ≈ 30 Hz cap. Source simulation updates still run every frame (or batched).
+## Segundos mínimos entre actualizaciones completas de parámetros de reproducción. 0 = cada fotograma (sujeto a otros filtros de paso).
 @export_range(0.0, 0.5, 0.005) var playback_parameter_min_interval: float = 0.0
-## Minimum source movement (meters) to trigger a full playback-parameter update when [member playback_parameter_min_interval] is also used; either condition can trigger. 0 = ignore movement-only gating (use interval only if set).
+## Movimiento mínimo de la fuente (metros) para activar una actualización completa cuando se combina con playback_parameter_min_interval.
 @export_range(0.0, 50.0, 0.05) var playback_parameter_min_move: float = 0.0
-## Exponential smoothing time constant (seconds) for simulation-derived occlusion and transmission coefficients. 0 = off (instant). When greater than 0, playback parameters are pushed every frame while smoothing applies (higher CPU than [member playback_parameter_min_interval] alone). Only affects Simulation Defined occlusion/transmission, not User Defined.
+## Constante de tiempo de suavizado exponencial (segundos) para la oclusión y transmisión derivadas de la simulación. 0 = desactivado. Cuando es mayor que 0, los parámetros de reproducción se envían en cada fotograma mientras se aplica el suavizado. Solo para oclusión/transmisión definidas por simulación (Simulation Defined).
 @export_range(0.0, 0.5, 0.005) var playback_coeff_smoothing_time: float = 0.0
 
 # --- Occlusion ---
 @export_group("Occlusion")
-## When off, occlusion is not simulated for this source; use User Defined [member occlusion_input] for manual occlusion.
+## Cuando es [code]false[/code], no se simulan los rayos de oclusión; utiliza [member occlusion_input] definido por el usuario y [member occlusion_value] para oclusión manual.
+## Origen de la oclusión: 0 = Simulation (física), 1 = User Defined (utiliza occlusion_value).
 @export var simulation_occlusion_enabled: bool = true
 var _occlusion_input: int = 0
-## Occlusion source: Simulation Defined = physics-based raycast. User Defined = use occlusion_value (script-controlled).
+## Origen de la oclusión: 0 = Simulation (física), 1 = User Defined (utiliza occlusion_value).
 @export_enum("Simulation Defined:0", "User Defined:1") var occlusion_input: int:
 	get:
 		return _occlusion_input
@@ -127,10 +135,11 @@ var _occlusion_input: int = 0
 		if _occlusion_input != v:
 			_occlusion_input = v
 			notify_property_list_changed()
-## Occlusion attenuation (0-1). 0 = fully occluded, 1 = not occluded. Only when occlusion_input is User Defined.
+## Atenuación de oclusión (0-1). Solo cuando occlusion_input es User Defined.
+## [code]2[/code] = Usar Global ([member ResonanceRuntimeConfig.occlusion_type]). [code]0[/code] = Raycast. [code]1[/code] = Volumétrico ([member occlusion_samples]). Se aplica cuando se utiliza la oclusión por simulación. Los valores no negativos mantienen fiable la enumeración del inspector de Godot; los recursos más antiguos pueden almacenar [code]-1[/code] para usar global (normalizado al cargar).
 @export_range(0.0, 1.0, 0.01) var occlusion_value: float = 1.0
 var _occlusion_type_override: int = 2
-## Raycast / Volumetric / Use Global ([code]2[/code]). Legacy [code]-1[/code] migrates to 2. Default export [code]= 2[/code] so new resources do not silently become Raycast.
+## [code]2[/code] = Usar Global ([member ResonanceRuntimeConfig.occlusion_type]). [code]0[/code] = Raycast. [code]1[/code] = Volumétrico ([member occlusion_samples]). Se aplica cuando se utiliza la oclusión por simulación. Los valores no negativos mantienen fiable la enumeración del inspector de Godot; los recursos más antiguos pueden almacenar [code]-1[/code] para usar global (normalizado al cargar).
 @export_enum("Use Global:2", "Raycast:0", "Volumetric:1") var occlusion_type_override: int = 2:
 	get:
 		return _occlusion_type_override
@@ -143,15 +152,16 @@ var _occlusion_type_override: int = 2
 		if _occlusion_type_override != nv:
 			_occlusion_type_override = nv
 			notify_property_list_changed()
-## Number of rays per source for volumetric occlusion (1–64; Steam Audio [code]numOcclusionSamples[/code]). Editable only when [member occlusion_type_override] is **Volumetric**. Higher values stabilize the occlusion fraction near geometry boundaries; lower = less CPU.
+## Rayos por fuente para oclusión volumétrica (1–64, [code]numOcclusionSamples[/code] de Steam Audio). El deslizador del inspector es editable solo cuando [member occlusion_type_override] es **Volumetric** ([code]1[/code]); de lo contrario, utiliza el tipo de oclusión global/tiempo de ejecución sin cantidad de muestras por fuente en la interfaz de usuario. Valores mayores equivalen a una fracción de oclusión más estable cerca de los límites.
 @export_range(1, 64, 1) var occlusion_samples: int = 64
 
 # --- Transmission ---
 @export_group("Transmission")
-## When off, transmission through geometry is not simulated; use User Defined [member transmission_input] for manual bands.
+## Cuando es [code]false[/code], no se simula la transmisión a través de la geometría; utiliza [member transmission_input] definido por el usuario para bandas manuales.
+## Origen de la transmisión: 0 = Simulation, 1 = User Defined (utiliza transmisión baja/media/alta).
 @export var simulation_transmission_enabled: bool = true
 var _transmission_input: int = 0
-## Transmission source: Simulation Defined = physics-based. User Defined = use transmission low/mid/high (script-controlled).
+## Origen de la transmisión: 0 = Simulation, 1 = User Defined (utiliza transmisión baja/media/alta).
 @export_enum("Simulation Defined:0", "User Defined:1") var transmission_input: int:
 	get:
 		return _transmission_input
@@ -159,17 +169,18 @@ var _transmission_input: int = 0
 		if _transmission_input != v:
 			_transmission_input = v
 			notify_property_list_changed()
-## Low-band transmission (0-1). Only when transmission_input is User Defined.
+## Transmisión de banda baja (0-1). Solo cuando transmission_input es User Defined.
 @export_range(0.0, 1.0, 0.01) var transmission_low: float = 1.0
-## Mid-band transmission (0-1). Only when transmission_input is User Defined.
+## Transmisión de banda media (0-1). Solo cuando transmission_input es User Defined.
 @export_range(0.0, 1.0, 0.01) var transmission_mid: float = 1.0
-## High-band transmission (0-1). Only when transmission_input is User Defined.
+## Transmisión de banda alta (0-1). Solo cuando transmission_input es User Defined.
 @export_range(0.0, 1.0, 0.01) var transmission_high: float = 1.0
-## Overrides runtime transmission mode for the direct effect only. Frequency independent = single coefficient; frequency dependent = three bands (see simulator transmission type).
+## -1 = usar tipo de transmisión del tiempo de ejecución. 0 = independiente de la frecuencia. 1 = dependiente de la frecuencia (3 bandas), solo para el efecto directo.
 @export_enum("Use Global:-1", "Frequency Independent:0", "Frequency Dependent:1")
 var transmission_type_override: int = -1
+## [code]0[/code] = Usar Global ([member ResonanceRuntimeConfig.max_transmission_surfaces]), por defecto. [code]1[/code] = User Defined: utiliza [member max_transmission_surfaces]. Los recursos antiguos pueden tener [code]-1[/code] para usar global; el reproductor nativo lo normaliza a [code]0[/code].
 var _max_transmission_surfaces_override: int = 0
-## Use Global vs cap [member max_transmission_surfaces]. Legacy [code]-1[/code] → Use Global.
+## [code]0[/code] = Usar Global ([member ResonanceRuntimeConfig.max_transmission_surfaces]), por defecto. [code]1[/code] = User Defined: utiliza [member max_transmission_surfaces]. Los recursos antiguos pueden tener [code]-1[/code] para usar global; el reproductor nativo lo normaliza a [code]0[/code].
 @export_enum("Use Global:0", "User Defined:1") var max_transmission_surfaces_override: int = 0:
 	get:
 		return _max_transmission_surfaces_override
@@ -182,13 +193,14 @@ var _max_transmission_surfaces_override: int = 0
 		if _max_transmission_surfaces_override != nv:
 			_max_transmission_surfaces_override = nv
 			notify_property_list_changed()
-## Max surfaces along the transmission path from listener (1–256; Steam Audio [code]numTransmissionRays[/code]). Only when [member max_transmission_surfaces_override] is User Defined. Increase for deep stacks of walls along one ray; it does not blend two materials at a lateral edge.
+## Superficies máximas a lo largo de la ruta de transmisión desde el oyente (1–256; [code]numTransmissionRays[/code] de Steam Audio). El deslizador del inspector es editable solo cuando [member max_transmission_surfaces_override] es User Defined ([code]1[/code]). Limita la profundidad de superficies apiladas en la ruta, no la mezcla lateral entre materiales en un borde.
 @export_range(1, 256, 1) var max_transmission_surfaces: int = 16
 
 # --- Reflections (per-source) ---
+## Simulación de reflexiones: -1 = Usar Global (reverberación horneada), 0 = Tiempo real, 1 = Reverberación horneada, 2 = Fuente estática horneada (Baked Static Source), 3 = Oyente estático horneado (Baked Static Listener).
 @export_group("Reflections")
 var _reflections_type: int = -1
-## Reflections simulation: [b]Use Global[/b] = runtime [member ResonanceRuntimeConfig.default_reflections_mode] (Baked or Realtime). [b]Realtime[/b] here = per-source ray tracing (requires runtime [member ResonanceRuntimeConfig.realtime_rays] &gt; 0). Baked Reverb / Static Source / Listener = probe data modes.
+## Simulación de reflexiones: -1 = Usar Global (reverberación horneada), 0 = Tiempo real, 1 = Reverberación horneada, 2 = Fuente estática horneada (Baked Static Source), 3 = Oyente estático horneado (Baked Static Listener).
 @export_enum(
 	"Use Global:-1",
 	"Realtime:0",
@@ -203,22 +215,23 @@ var reflections_type: int = -1:
 		if _reflections_type != v:
 			_reflections_type = v
 			notify_property_list_changed()
-## When reflections_type is Baked Static Source: reference to the node whose position was baked as static source. Leave empty to use this player's position.
+## Cuando reflections_type es Baked Static Source: nodo cuya posición fue horneada. Vacío = usar la posición del reproductor.
 @export var current_baked_source: NodePath = NodePath()
-## When reflections_type is Baked Static Listener: reference to the node (e.g. listener/camera) whose position was baked. Leave empty to use active listener.
+## Cuando reflections_type es Baked Static Listener: nodo (por ejemplo, el oyente) cuya posición fue horneada. Vacío = usar el oyente activo.
 @export var current_baked_listener: NodePath = NodePath()
-## Enable reflections for this source. Use Global = follow runtime.
+## Activa las reflexiones para esta fuente. -1 = Usar Global, 0 = Desactivado, 1 = Activado.
 @export_enum("Use Global:-1", "Disabled:0", "Enabled:1") var reflections_enabled: int = -1
-## Enable pathing for this source. Use Global = follow runtime pathing_enabled.
+## Activa el trazado de rutas para esta fuente. -1 = Usar Global, 0 = Desactivado, 1 = Activado.
 @export_enum("Use Global:-1", "Disabled:0", "Enabled:1") var pathing_enabled_override: int = -1
-## Wet occlusion on baked REVERB: Use Global / Off / On (outdoor leak vs indoor beds). See docs/baked-reflections-and-outdoor-sources.md.
+## Anulación por fuente de [member ResonanceRuntimeConfig.apply_occlusion_to_baked_reflections]. -1 = Usar Global, 0 = Desactivado, 1 = Activado. Activado = amortigua la entrada wet de REVERBERACIÓN horneada de esta fuente según la oclusión/transmisión de su ruta directa. Desactivado = mantiene la entrada wet sin atenuar independientemente de la bandera global. Consulta [code]docs/baked-reflections-and-outdoor-sources.md[/code] para guía sobre el flujo de trabajo.
 @export_enum("Use Global:-1", "Disabled:0", "Enabled:1")
 var apply_occlusion_to_baked_reflections_override: int = -1
-## Baked REVERB probe choice: listener- vs source-centric (Use Global / override). Realtime ray origin unchanged.
+## Anulación por fuente para [member ResonanceRuntimeConfig.reflections_sampling_mode]. -1 = Usar Global, 0 = Centrado en el oyente (selecciona la sonda de REVERBERACIÓN horneada más cercana al oyente), 1 = Centrado en la fuente (selecciona la sonda más cercana a la fuente; comportamiento legado). Nota: actualmente esto solo afecta a la búsqueda de sondas de REVERBERACIÓN horneadas; no cambia el origen del rayo de reflexión en tiempo real.
 @export_enum("Use Global:-1", "Listener-centric:0", "Source-centric:1")
 var reflections_sampling_mode_override: int = -1
+## 0 = Usar Global ([member ResonanceRuntimeConfig.reverb_transmission_amount]), 1 = User Defined (utiliza [member reverb_transmission_amount]). Solo efectivo cuando la amortiguación de oclusión de la ruta wet está activada (global o [member apply_occlusion_to_baked_reflections_override]).
 var _reverb_transmission_amount_input: int = 0
-## Reverb transmission amount: Use Global or User Defined ([member reverb_transmission_amount]). Needs wet occlusion damping active.
+## 0 = Usar Global ([member ResonanceRuntimeConfig.reverb_transmission_amount]), 1 = User Defined (utiliza [member reverb_transmission_amount]). Solo efectivo cuando la amortiguación de oclusión de la ruta wet está activada (global o [member apply_occlusion_to_baked_reflections_override]).
 @export_enum("Use Global:0", "User Defined:1") var reverb_transmission_amount_input: int = 0:
 	get:
 		return _reverb_transmission_amount_input
@@ -226,55 +239,55 @@ var _reverb_transmission_amount_input: int = 0
 		if _reverb_transmission_amount_input != v:
 			_reverb_transmission_amount_input = v
 			notify_property_list_changed()
-## 0–1 damping on reverb wet when User Defined and wet occlusion applies.
+## Amortiguación de transmisión por fuente en la reverberación (0-1). 0 = sin amortiguación, 1 = amortiguación total. Solo se utiliza cuando [member reverb_transmission_amount_input] es User Defined y la amortiguación de oclusión de la ruta wet está activada.
 @export_range(0.0, 1.0, 0.01) var reverb_transmission_amount: float = 1.0
 
 # --- Pathing ---
 @export_group("Pathing")
-## Path validation: Use Global = [member ResonanceRuntimeConfig.path_validation_enabled]. Disabled / Enabled = force off or on for this source.
+## Validación de rutas (oclusión dinámica de rutas horneadas). [code]-1[/code] = Usar Global ([member ResonanceRuntimeConfig.path_validation_enabled]). [code]0[/code] = Desactivado. [code]1[/code] = Activado. Los costos se escalan con [member ResonanceRuntimeConfig.pathing_num_vis_samples] y el trazador de rayos; ajusta [member ResonanceRuntimeConfig.pathing_sim_interval] (y [member ResonanceRuntimeConfig.reflections_sim_interval]) y utiliza [method ResonanceServer.get_simulation_worker_timing] para [code]us_run_pathing[/code].
 @export_enum("Use Global:-1", "Disabled:0", "Enabled:1") var path_validation_override: int = -1
-## Find alternate paths when a baked path is occluded. Use Global = [member ResonanceRuntimeConfig.find_alternate_paths]. Only applies when path validation is effectively on. Very CPU-heavy.
+## Buscar rutas alternativas cuando una ruta horneada está ocluida. [code]-1[/code] = Usar Global ([member ResonanceRuntimeConfig.find_alternate_paths]). [code]0[/code] = Desactivado. [code]1[/code] = Activado. Solo es efectivo cuando la validación de rutas está activa para esta fuente. Consume mucha CPU; ajusta [member ResonanceRuntimeConfig.pathing_sim_interval] y [member ResonanceRuntimeConfig.pathing_num_vis_samples] si se activa.
 @export_enum("Use Global:-1", "Disabled:0", "Enabled:1") var find_alternate_paths_override: int = -1
 
 # --- Mix Levels ---
 @export_group("Mix Levels")
-## Scales [member direct_mix_level], [member reflections_mix_level], and [member pathing_mix_level] together.
-## Use for overall source level when the stream has no reliable volume (e.g. AudioStreamSynchronized).
+## Escala conjuntamente [member direct_mix_level], [member reflections_mix_level] y [member pathing_mix_level] juntos. Utilízalo cuando el flujo no tiene un control de volumen fiable (por ejemplo, [AudioStreamSynchronized]).
 @export_range(0.0, 10.0, 0.01) var master_mix_level: float = 1.0
-## Volume of the direct (line-of-sight) sound path. Range 0-10. 1.0 = nominal.
+## Volumen de la ruta de sonido directo (0-10).
 @export_range(0.0, 10.0, 0.01) var direct_mix_level: float = 1.0
-## Volume of reflections and reverb. Range 0-10. 1.0 = nominal.
+## Volumen de las reflexiones y reverberación (0-10).
 @export_range(0.0, 10.0, 0.01) var reflections_mix_level: float = 1.0
-## Volume of pathing (multi-path propagation). Range 0-10. Requires baked pathing data.
+## Volumen del trazado de rutas (0-10).
 @export_range(0.0, 10.0, 0.01) var pathing_mix_level: float = 1.0
 
 # --- Hybrid Reverb ---
 @export_group("Hybrid Reverb")
-## Per-source EQ multiplier for low band. 1.0 = no change. Only when runtime reflection_type is Hybrid.
+## Multiplicador de ecualización por fuente para la banda baja.
 @export_range(0.0, 4.0, 0.1) var reflections_eq_low: float = 1.0
-## Per-source EQ multiplier for mid band. 1.0 = no change.
+## Multiplicador de ecualización por fuente para la banda media.
 @export_range(0.0, 4.0, 0.1) var reflections_eq_mid: float = 1.0
-## Per-source EQ multiplier for high band. 1.0 = no change.
+## Multiplicador de ecualización por fuente para la banda alta.
 @export_range(0.0, 4.0, 0.1) var reflections_eq_high: float = 1.0
-## Samples before parametric part starts. -1 = use simulation value.
+## Muestras antes de que comience la parte paramétrica. -1 = usar valor de simulación.
 @export var reflections_delay: int = -1
 
 # --- Spatialization ---
 @export_group("Spatialization")
-## Per-source override for [member ResonanceRuntimeConfig.direct_binaural]. Use Global = runtime default; Disabled = panning on dry path; Enabled = force HRTF.
+## Anulación por fuente de [member ResonanceRuntimeConfig.direct_binaural]. -1 = Usar Global, 0 = Desactivado (paneo en la ruta dry), 1 = Activado (fuerza HRTF).
 @export_enum("Use Global:-1", "Disabled:0", "Enabled:1") var direct_binaural_override: int = -1
-## Per-source override for [member ResonanceRuntimeConfig.reverb_binaural] (HRTF on convolution / mixer Ambisonics decode - reflections wet path).
+## Anulación por fuente de [member ResonanceRuntimeConfig.reverb_binaural] (decodificación ambisónica wet de reflexión / mezclador). -1 = Usar Global, 0 = Desactivado, 1 = Activado.
 @export_enum("Use Global:-1", "Disabled:0", "Enabled:1") var reverb_binaural_override: int = -1
-## Per-source override for [member ResonanceRuntimeConfig.pathing_binaural]. Disabled saves CPU when pathing runs but stereo speaker panning is enough.
+## Anulación por fuente de [member ResonanceRuntimeConfig.pathing_binaural]. -1 = Usar Global, 0 = Desactivado (menos CPU), 1 = Activado.
 @export_enum("Use Global:-1", "Disabled:0", "Enabled:1") var pathing_binaural_override: int = -1
-## Blends this node's output between 2D (0) and full 3D spatial audio (1). At 0 the sound is panned as stereo (no HRTF / room simulation on the dry path); at 1 Nexus Resonance drives full spatialization, occlusion, and bus routing like a normal 3D source. Values in between mix the two (useful for UI voices vs world-attached sources).
+## Mezcla la salida entre 2D (0, paneo estéreo sin HRTF en la ruta dry) y audio espacial 3D completo (1). Los valores intermedios mezclan ambos (por ejemplo, interfaz de usuario vs. fuentes asociadas al mundo).
 @export_range(0.0, 1.0, 0.01) var spatial_blend: float = 1.0
-## Encode point source to Ambisonics before binaural (HOA path). For mixing into an HOA-style chain. When enabled, [member spatial_blend] crossfades standard [code]iplBinauralEffect[/code] output (same spatialBlend HRIR behavior as when encode is off) with HOA encode+binaural: 0 = binaural only, 1 = HOA only; values in between mix both. Usually leave disabled.
+## Codifica la fuente puntual a ambisónicos antes de la binaural.
 @export var use_ambisonics_encode: bool = false
-## HRTF table lookup: nearest (faster) vs bilinear (smoother motion). Use Global = [member ResonanceRuntimeConfig.hrtf_interpolation_bilinear].
+## -1 = usar [member ResonanceRuntimeConfig.hrtf_interpolation_bilinear]. 0 = HRTF más cercano (más rápido). 1 = bilineal (movimiento más suave).
+## Corrección de perspectiva por fuente. -1 = usar global, 0 = desactivado, 1 = activado.
 @export_enum("Use Global:-1", "Nearest:0", "Bilinear:1") var hrtf_interpolation_override: int = -1
 var _perspective_correction_override: int = -1
-## Per-source perspective correction. Use Global = follow RuntimeConfig. Disabled = off. Enabled = force on for this source.
+## Corrección de perspectiva por fuente. -1 = usar global, 0 = desactivado, 1 = activado.
 @export_enum("Use Global:-1", "Disabled:0", "Enabled:1")
 var perspective_correction_override: int = -1:
 	get:
@@ -283,7 +296,7 @@ var perspective_correction_override: int = -1:
 		if _perspective_correction_override != v:
 			_perspective_correction_override = v
 			notify_property_list_changed()
-## Factor for on-screen position mapping (0.5–2.0). 1.0 = calibrated for 30–32 inch monitor. Used when Enabled; ignored when Use Global.
+## Factor para mapeo de posición en pantalla (0.5–2.0). Se utiliza cuando la anulación está activada.
 @export_range(0.5, 2.0, 0.1) var perspective_factor: float = 1.0
 
 

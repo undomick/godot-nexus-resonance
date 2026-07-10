@@ -58,7 +58,7 @@ func run_bake_pipeline_main_thread(volumes: Array[Node]) -> void:
 		progress_ui.clear_details()
 		progress_ui.set_stage(0, volumes.size())
 
-	_update_status(tr(UIStrings.PROGRESS_PREPARING))
+	_update_status(UIStrings.localize(UIStrings.PROGRESS_PREPARING))
 
 	var root: Node = null
 	if _runner and _runner.has_method("_get_edited_scene_root"):
@@ -116,7 +116,7 @@ func run_bake_pipeline_main_thread(volumes: Array[Node]) -> void:
 				_BakeEstimates.estimate_bake_time(vol, bc) if vol_index == 1 else ""
 			)
 
-		_update_status(tr(UIStrings.PROGRESS_PROCESSING) + ctx.vol_info)
+		_update_status(UIStrings.localize(UIStrings.PROGRESS_PROCESSING) + ctx.vol_info)
 
 		if tree:
 			await tree.process_frame
@@ -226,7 +226,7 @@ func _skip_if_up_to_date(ctx: Variant) -> bool:
 
 func _bake_reflections(ctx: Variant) -> bool:
 	var srv = ResonanceServerAccess.get_server()
-	_update_status(tr(UIStrings.PROGRESS_BAKING_REVERB) + ctx.vol_info)
+	_update_status(UIStrings.localize(UIStrings.PROGRESS_BAKING_REVERB) + ctx.vol_info)
 	_prepare_probe_data_for_bake(ctx.vol, ctx.probe_data, ctx.root)
 	var volume_transform = ctx.vol.global_transform
 	var extents = ctx.vol.get("region_size") * 0.5
@@ -283,7 +283,7 @@ func _bake_pathing(ctx: Variant) -> void:
 	var do_pathing = func() -> bool: return srv.bake_pathing(ctx.probe_data)
 	await _run_bake_step(
 		ctx,
-		tr(UIStrings.PROGRESS_BAKING_PATHING),
+		UIStrings.localize(UIStrings.PROGRESS_BAKING_PATHING),
 		do_pathing,
 		"set_pathing_params_hash",
 		_BakeHashes.compute_pathing_hash(ctx.bc)
@@ -369,7 +369,7 @@ func _run_bake_for_volume(ctx: Variant) -> bool:
 	srv.set_bake_params(ctx.bc.get_bake_params())
 	srv.set_bake_pipeline_pathing(ctx.need_pathing)
 	if _skip_if_up_to_date(ctx):
-		_update_status(tr(UIStrings.PROGRESS_SKIPPING) + ctx.vol_info)
+		_update_status(UIStrings.localize(UIStrings.PROGRESS_SKIPPING) + ctx.vol_info)
 		return true
 	if not await _bake_reflections(ctx):
 		return false
@@ -388,6 +388,28 @@ func _update_status(msg: String) -> void:
 		pui.set_bake_status(msg)
 	elif _runner and _runner.has_signal("bake_progress_updated"):
 		_runner.emit_signal("bake_progress_updated", msg)
+	
+	if ProjectSettings.has_setting("nexus/nexus_resonance/accessibility/editor_tts") and ProjectSettings.get_setting("nexus/nexus_resonance/accessibility/editor_tts"):
+		var voice_index := 0
+		if ProjectSettings.has_setting("nexus/nexus_resonance/accessibility/tts_voice"):
+			voice_index = int(ProjectSettings.get_setting("nexus/nexus_resonance/accessibility/tts_voice"))
+		
+		var voices := DisplayServer.tts_get_voices()
+		var voice_id := ""
+		if voice_index > 0 and voice_index - 1 < voices.size():
+			voice_id = voices[voice_index - 1]["id"]
+		elif not voices.is_empty():
+			voice_id = voices[0]["id"]
+		
+		var volume := 50
+		if ProjectSettings.has_setting("nexus/nexus_resonance/accessibility/tts_volume"):
+			volume = int(ProjectSettings.get_setting("nexus/nexus_resonance/accessibility/tts_volume"))
+			
+		var speed := 1.0
+		if ProjectSettings.has_setting("nexus/nexus_resonance/accessibility/tts_speed"):
+			speed = float(ProjectSettings.get_setting("nexus/nexus_resonance/accessibility/tts_speed"))
+			
+		DisplayServer.tts_speak(msg, voice_id, volume, 1.0, speed)
 
 
 func _is_canceled() -> bool:
@@ -399,7 +421,7 @@ func _is_canceled() -> bool:
 
 
 func _multi_pass_status(ui_key: String, ctx: Variant, index: int, total: int) -> String:
-	var s: String = tr(ui_key) + str(ctx.vol_info)
+	var s: String = UIStrings.localize(ui_key) + str(ctx.vol_info)
 	if total <= 1:
 		return s
 	return s + (" [%d/%d]" % [index + 1, total])

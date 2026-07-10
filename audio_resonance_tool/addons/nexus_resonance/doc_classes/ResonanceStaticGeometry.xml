@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <class name="ResonanceStaticGeometry" inherits="ResonanceGeometry" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../class.xsd">
 	<brief_description>
-		Static acoustic geometry for walls, floors, and other non-moving objects.
+		Geometría acústica estática para paredes, suelos y otros objetos inmóviles.
 	</brief_description>
 	<description>
-		Subclass of [ResonanceGeometry] with [member dynamic] fixed to false. Included in the baked static scene export (Project -> Tools -> Nexus Resonance -> Export Active Scene). At runtime, geometry comes from [ResonanceStaticScene] when a valid static scene asset is loaded; individual static geometry nodes do not register themselves in that case.
-		Use for walls, floors, ceilings, and other objects that never move. For doors, platforms, and other animated objects, use [ResonanceDynamicGeometry] instead.
-		Inspector note: [member dynamic] and [member mesh_asset] are hidden on this type. [member export_all_children] is available for subtree export.
+		Subclase de [ResonanceGeometry] con [member dynamic] fijado en false. Incluido en la exportación de escena estática horneada (Proyecto -> Herramientas -> Nexus Resonance -> Exportar escena activa). En tiempo de ejecución, la geometría proviene de [ResonanceStaticScene] cuando se carga un recurso de escena estática válido; los nodos de geometría estática individuales no se registran en ese caso.
+		Úsalo para paredes, suelos, techos y otros objetos que nunca se mueven. Para puertas, plataformas y otros objetos animados, utiliza [ResonanceDynamicGeometry] en su lugar.
+		Nota del inspector: [member dynamic] y [member mesh_asset] están ocultos en este tipo. [member export_all_children] está disponible para la exportación de subárboles.
 	</description>
 	<tutorials>
 	</tutorials>

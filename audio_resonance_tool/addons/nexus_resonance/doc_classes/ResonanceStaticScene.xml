@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <class name="ResonanceStaticScene" inherits="Node3D" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../class.xsd">
 	<brief_description>
-		Scene-level component holding the exported static geometry for bake and runtime.
+		Componente a nivel de escena que contiene la geometría estática exportada para el horneado y tiempo de ejecución.
 	</brief_description>
 	<description>
-		ResonanceStaticScene holds the merged static geometry asset produced by Export Meshes to Steam Audio. The bake uses only this asset (excluding dynamic objects). At runtime, the static scene is loaded from this asset; static ResonanceGeometry nodes skip adding themselves when a valid asset is present.
-		Multiple ResonanceStaticScene nodes in one level are supported: [ResonanceRuntime] loads each valid asset additively (same set again after [method ResonanceServer.reinit_audio_engine]). Probe bake invalidation hashes combine every such node’s asset and global transform so changing any pack can mark data outdated.
+		ResonanceStaticScene almacena el recurso de geometría estática fusionada producido por Exportar mallas a Steam Audio. El horneado utiliza únicamente este recurso (excluyendo objetos dinámicos). En tiempo de ejecución, la escena estática se carga desde este recurso; los nodos estáticos ResonanceGeometry omiten agregarse a sí mismos cuando hay un recurso válido presente.
+		Se admiten varios nodos ResonanceStaticScene en un mismo nivel: [ResonanceRuntime] carga cada recurso válido de forma aditiva (el mismo conjunto de nuevo después de [method ResonanceServer.reinit_audio_engine]). Los hashes de invalidación del horneado de sondas combinan el recurso de cada nodo de este tipo y su transformación global, por lo que cambiar cualquier paquete puede marcar los datos como desactualizados.
 	</description>
 	<tutorials>
 	</tutorials>
@@ -13,19 +13,19 @@
 		<method name="has_valid_asset">
 			<return type="bool" />
 			<description>
-				Returns true if static_scene_asset is assigned and valid. Used by bake and export to skip when no geometry is present.
+				Devuelve true si static_scene_asset está asignado y es válido. Utilizado por el horneado y la exportación para omitir cuando no hay geometría presente.
 			</description>
 		</method>
 	</methods>
 	<members>
 		<member name="static_scene_asset" type="ResonanceGeometryAsset" setter="set_static_scene_asset" getter="get_static_scene_asset">
-			The exported merged static mesh. Assigned automatically by Export Meshes to Steam Audio.
+			La malla estática fusionada exportada. Se asigna automáticamente al exportar mallas a Steam Audio.
 		</member>
 		<member name="scene_name_when_exported" type="String" setter="set_scene_name_when_exported" getter="get_scene_name_when_exported">
-			Scene name at export time (for reference).
+			Nombre de la escena al momento de la exportación (como referencia).
 		</member>
 		<member name="export_hash" type="int" setter="set_export_hash" getter="get_export_hash" default="0">
-			Hash of geometry at last export. Used to skip re-export when unchanged. Assigned automatically.
+			Hash de la geometría en la última exportación. Se utiliza para omitir la reexportación cuando no ha cambiado. Asignado automáticamente.
 		</member>
 	</members>
 </class>

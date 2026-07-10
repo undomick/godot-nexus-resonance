@@ -6,10 +6,10 @@ uid="uid://cbuj63rujrtwp"
 
 [deps]
 
-files=["res://addons/nexus_resonance/translations/nexus_resonance.en.translation"]
+files=["res://addons/nexus_resonance/translations/nexus_resonance.en.translation", "res://addons/nexus_resonance/translations/nexus_resonance.es.translation"]
 
 source_file="res://addons/nexus_resonance/translations/nexus_resonance.csv"
-dest_files=["res://addons/nexus_resonance/translations/nexus_resonance.en.translation"]
+dest_files=["res://addons/nexus_resonance/translations/nexus_resonance.en.translation", "res://addons/nexus_resonance/translations/nexus_resonance.es.translation"]
 
 [params]
 

@@ -61,25 +61,57 @@ var steam_audio_export_plugin: EditorExportPlugin = null
 const _tool_submenu_name := "Nexus Resonance"
 var _tool_submenu: PopupMenu = null
 var _gizmo_refresh_pending: bool = false
+var _is_updating_settings: bool = false
+var _translation_en: Translation = null
+var _translation_es: Translation = null
+
 
 ## Project settings root: Nexus → Resonance (bundles with other Nexus addons under [nexus]).
-const SETTINGS_PREFIX := "nexus/resonance/"
+const SETTINGS_PREFIX := "nexus/nexus_resonance/"
 const LEGACY_SETTINGS_PREFIX := "audio/nexus_resonance/"
 
 
 func _enter_tree() -> void:
 	_editor_plugin_ui_active = true
+	
+	# Load and register plugin translations for editor UI
+	_translation_en = load("res://addons/nexus_resonance/translations/nexus_resonance.en.translation") as Translation
+	_translation_es = load("res://addons/nexus_resonance/translations/nexus_resonance.es.translation") as Translation
+	if _translation_en:
+		TranslationServer.add_translation(_translation_en)
+	if _translation_es:
+		TranslationServer.add_translation(_translation_es)
+
+	# Connect to settings changed to dynamically update read-only properties
+	ProjectSettings.settings_changed.connect(_on_project_settings_changed)
+
 	# Export format keys before any other registration (avoids "nonexistent project setting" if the engine
 	# touches keys during later steps). Idempotent with _register_export_project_settings.
-	_ensure_export_format_project_settings()
-	_migrate_legacy_project_settings()
-	_migrate_nexus_bake_output_dir()
-	_clear_obsolete_resonance_project_settings()
-	_clear_bus_project_settings()
-	_register_logger_project_settings()
-	_register_editor_project_settings()
-	_register_bake_project_settings()
-	_register_export_project_settings()
+	var save_needed := false
+	if _ensure_export_format_project_settings():
+		save_needed = true
+	if _migrate_legacy_project_settings():
+		save_needed = true
+	if _migrate_nexus_bake_output_dir():
+		save_needed = true
+	if _clear_obsolete_resonance_project_settings():
+		save_needed = true
+	if _clear_bus_project_settings():
+		save_needed = true
+	if _register_logger_project_settings():
+		save_needed = true
+	if _register_editor_project_settings():
+		save_needed = true
+	if _register_bake_project_settings():
+		save_needed = true
+	if _register_export_project_settings():
+		save_needed = true
+	if _register_accessibility_project_settings():
+		save_needed = true
+		
+	if save_needed:
+		ProjectSettings.save()
+		
 	_init_editor_plugin_ui()
 	_warn_if_gdextension_missing()
 
@@ -87,7 +119,7 @@ func _enter_tree() -> void:
 func _warn_if_gdextension_missing() -> void:
 	if ResonanceServerAccess.has_server():
 		return
-	var msg := (
+	var msg := tr(
 		"GDExtension did not load. Native Nexus Resonance features and baking will not work. "
 		+ "Verify addons/nexus_resonance/bin matches your OS and CPU (e.g. Linux x86_64), "
 		+ "and check the Output panel for loader errors."
@@ -95,7 +127,8 @@ func _warn_if_gdextension_missing() -> void:
 	ResonanceEditorDialogs.show_warning(get_editor_interface(), msg)
 
 
-func _migrate_legacy_project_settings() -> void:
+func _migrate_legacy_project_settings() -> bool:
+	var changed := false
 	var keys: Array[String] = [
 		"logger/categories_enabled",
 		"logger/output_to_file",
@@ -119,39 +152,77 @@ func _migrate_legacy_project_settings() -> void:
 			continue
 		if not ProjectSettings.has_setting(new_key):
 			ProjectSettings.set_setting(new_key, ProjectSettings.get_setting(old_key))
+			changed = true
 		ProjectSettings.clear(old_key)
+		changed = true
 
 	# Legacy bake/output_dir -> nexus/.../bake/default_output_directory (not the old bus keys).
 	var legacy_bake := LEGACY_SETTINGS_PREFIX + "bake/output_dir"
 	var new_bake := SETTINGS_PREFIX + "bake/default_output_directory"
 	if ProjectSettings.has_setting(legacy_bake) and not ProjectSettings.has_setting(new_bake):
 		ProjectSettings.set_setting(new_bake, ProjectSettings.get_setting(legacy_bake))
+		changed = true
 	if ProjectSettings.has_setting(legacy_bake):
 		ProjectSettings.clear(legacy_bake)
+		changed = true
+	return changed
 
 
-func _clear_obsolete_resonance_project_settings() -> void:
+func _clear_obsolete_resonance_project_settings() -> bool:
+	var changed := false
 	var amb_order_key := SETTINGS_PREFIX + "bake_ambisonics_order"
 	if ProjectSettings.has_setting(amb_order_key):
 		ProjectSettings.clear(amb_order_key)
+		changed = true
+	
+	# Clear settings starting with legacy nexus/resonance/
+	var legacy_keys := [
+		"nexus/resonance/logger/categories_enabled",
+		"nexus/resonance/logger/output_to_file",
+		"nexus/resonance/logger/file_path",
+		"nexus/resonance/logger/steam_audio_verbose",
+		"nexus/resonance/bake/default_output_directory",
+		"nexus/resonance/logger/output_to_debug",
+		"nexus/resonance/editor/auto_convert_animation_audio_on_save",
+		"nexus/resonance/accessibility/editor_tts",
+		"nexus/resonance/accessibility/runtime_debug_tts",
+		"nexus/resonance/export/static_scene_asset_format",
+		"nexus/resonance/export/probe_data_format",
+		"nexus/resonance/accessibility/tts_voice",
+		"nexus/resonance/accessibility/tts_volume",
+		"nexus/resonance/accessibility/tts_speed"
+	]
+	for k in legacy_keys:
+		if ProjectSettings.has_setting(k):
+			ProjectSettings.clear(k)
+			changed = true
+	return changed
 
 
-func _migrate_nexus_bake_output_dir() -> void:
+func _migrate_nexus_bake_output_dir() -> bool:
+	var changed := false
 	var old_k := SETTINGS_PREFIX + "bake/output_dir"
 	var new_k := SETTINGS_PREFIX + "bake/default_output_directory"
 	if ProjectSettings.has_setting(old_k) and not ProjectSettings.has_setting(new_k):
 		ProjectSettings.set_setting(new_k, ProjectSettings.get_setting(old_k))
+		changed = true
 	if ProjectSettings.has_setting(old_k):
 		ProjectSettings.clear(old_k)
+		changed = true
+	return changed
 
 
-func _clear_bus_project_settings() -> void:
+func _clear_bus_project_settings() -> bool:
+	var changed := false
 	for k in [SETTINGS_PREFIX + "bus", SETTINGS_PREFIX + "reverb_bus_name"]:
 		if ProjectSettings.has_setting(k):
 			ProjectSettings.clear(k)
+			changed = true
 	for k in [LEGACY_SETTINGS_PREFIX + "bus", LEGACY_SETTINGS_PREFIX + "reverb_bus_name"]:
 		if ProjectSettings.has_setting(k):
 			ProjectSettings.clear(k)
+			changed = true
+	return changed
 
 
 func _init_editor_plugin_ui() -> void:
@@ -192,49 +263,49 @@ func _init_editor_plugin_ui() -> void:
 	var icon_bake: Texture2D = ResonanceEditorDialogs.get_icon(base, UIStrings.ICON_BAKE, "Bake")
 	var icon_clear: Texture2D = ResonanceEditorDialogs.get_icon(base, UIStrings.ICON_CLEAR, "Clear")
 	_tool_submenu.add_icon_item(
-		icon_export, tr(UIStrings.MENU_EXPORT_ACTIVE_SCENE), ToolMenuId.EXPORT_ACTIVE_SCENE
+		icon_export, UIStrings.localize(UIStrings.MENU_EXPORT_ACTIVE_SCENE), ToolMenuId.EXPORT_ACTIVE_SCENE
 	)
 	_tool_submenu.add_icon_item(
-		icon_export, tr(UIStrings.MENU_EXPORT_ALL_OPEN_SCENES), ToolMenuId.EXPORT_ALL_OPEN_SCENES
+		icon_export, UIStrings.localize(UIStrings.MENU_EXPORT_ALL_OPEN_SCENES), ToolMenuId.EXPORT_ALL_OPEN_SCENES
 	)
 	_tool_submenu.add_icon_item(
-		icon_export, tr(UIStrings.MENU_EXPORT_ACTIVE_SCENE_OBJ), ToolMenuId.EXPORT_ACTIVE_SCENE_OBJ
+		icon_export, UIStrings.localize(UIStrings.MENU_EXPORT_ACTIVE_SCENE_OBJ), ToolMenuId.EXPORT_ACTIVE_SCENE_OBJ
 	)
 	_tool_submenu.add_icon_item(
 		icon_export,
-		tr(UIStrings.MENU_EXPORT_DYNAMIC_OBJECTS_ACTIVE),
+		UIStrings.localize(UIStrings.MENU_EXPORT_DYNAMIC_OBJECTS_ACTIVE),
 		ToolMenuId.EXPORT_DYNAMIC_OBJECTS_ACTIVE
 	)
 	_tool_submenu.add_icon_item(
 		icon_export,
-		tr(UIStrings.MENU_EXPORT_DYNAMIC_OBJECTS_IN_BUILD),
+		UIStrings.localize(UIStrings.MENU_EXPORT_DYNAMIC_OBJECTS_IN_BUILD),
 		ToolMenuId.EXPORT_DYNAMIC_OBJECTS_IN_BUILD
 	)
 	_tool_submenu.add_icon_item(
 		icon_export,
-		tr(UIStrings.MENU_EXPORT_DYNAMIC_OBJECTS_IN_PROJECT),
+		UIStrings.localize(UIStrings.MENU_EXPORT_DYNAMIC_OBJECTS_IN_PROJECT),
 		ToolMenuId.EXPORT_DYNAMIC_OBJECTS_IN_PROJECT
 	)
 	_tool_submenu.add_icon_item(
-		icon_bake, tr(UIStrings.MENU_BAKE_ALL_PROBE_VOLUMES), ToolMenuId.BAKE_ALL_PROBE_VOLUMES
+		icon_bake, UIStrings.localize(UIStrings.MENU_BAKE_ALL_PROBE_VOLUMES), ToolMenuId.BAKE_ALL_PROBE_VOLUMES
 	)
 	_tool_submenu.add_icon_item(
-		icon_clear, tr(UIStrings.MENU_CLEAR_PROBE_BATCHES), ToolMenuId.CLEAR_PROBE_BATCHES
+		icon_clear, UIStrings.localize(UIStrings.MENU_CLEAR_PROBE_BATCHES), ToolMenuId.CLEAR_PROBE_BATCHES
 	)
 	_tool_submenu.add_icon_item(
 		icon_clear,
-		tr(UIStrings.MENU_CLEAR_UNREFERENCED_PROBE_DATA),
+		UIStrings.localize(UIStrings.MENU_CLEAR_UNREFERENCED_PROBE_DATA),
 		ToolMenuId.CLEAR_UNREFERENCED_PROBE_DATA
 	)
 	_tool_submenu.add_item(
-		tr(UIStrings.MENU_UNLINK_PROBE_VOLUME_REFS), ToolMenuId.UNLINK_PROBE_VOLUME_REFS
+		UIStrings.localize(UIStrings.MENU_UNLINK_PROBE_VOLUME_REFS), ToolMenuId.UNLINK_PROBE_VOLUME_REFS
 	)
 	_tool_submenu.add_item(
-		tr(UIStrings.MENU_CONVERT_ANIMATION_AUDIO_RESONANCE),
+		UIStrings.localize(UIStrings.MENU_CONVERT_ANIMATION_AUDIO_RESONANCE),
 		ToolMenuId.CONVERT_ANIMATION_AUDIO_RESONANCE
 	)
 	_tool_submenu.add_item(
-		tr(UIStrings.MENU_CONVERT_ANIMATION_AUDIO_ALL_SCENES),
+		UIStrings.localize(UIStrings.MENU_CONVERT_ANIMATION_AUDIO_ALL_SCENES),
 		ToolMenuId.CONVERT_ANIMATION_AUDIO_ALL_SCENES
 	)
 	_tool_submenu.id_pressed.connect(_on_tool_submenu_id_pressed)
@@ -364,6 +435,16 @@ func _refresh_player_gizmos_recursive(n: Node) -> void:
 
 
 func _exit_tree() -> void:
+	# Clean up settings changed signal
+	if ProjectSettings.settings_changed.is_connected(_on_project_settings_changed):
+		ProjectSettings.settings_changed.disconnect(_on_project_settings_changed)
+
+	# Clean up translations on exit
+	if _translation_en:
+		TranslationServer.remove_translation(_translation_en)
+	if _translation_es:
+		TranslationServer.remove_translation(_translation_es)
+
 	# Mirrors _init_editor_plugin_ui: inspectors, import/export plugins, 3D gizmo, tool submenu,
 	# scene_changed. (Autoload is removed in _disable_plugin; ProjectSettings.add_property_info persists.)
 	_editor_plugin_ui_active = false
@@ -508,13 +589,15 @@ func _get_plugin_icon() -> Texture2D:
 	)
 
 
-func _register_logger_project_settings() -> void:
+func _register_logger_project_settings() -> bool:
+	var changed := false
 	const PREFIX := SETTINGS_PREFIX + "logger/"
 	if not ProjectSettings.has_setting(PREFIX + "categories_enabled"):
 		ProjectSettings.set_setting(
 			PREFIX + "categories_enabled",
 			ResonanceLoggerScript.get_default_categories_enabled_dict()
 		)
+		changed = true
 	else:
 		var ce: Variant = ProjectSettings.get_setting(PREFIX + "categories_enabled")
 		if ce is Dictionary and (ce as Dictionary).is_empty():
@@ -522,6 +605,7 @@ func _register_logger_project_settings() -> void:
 				PREFIX + "categories_enabled",
 				ResonanceLoggerScript.get_default_categories_enabled_dict()
 			)
+			changed = true
 	(
 		ProjectSettings
 		. add_property_info(
@@ -534,6 +618,7 @@ func _register_logger_project_settings() -> void:
 	)
 	if not ProjectSettings.has_setting(PREFIX + "output_to_debug"):
 		ProjectSettings.set_setting(PREFIX + "output_to_debug", true)
+		changed = true
 	(
 		ProjectSettings
 		. add_property_info(
@@ -546,6 +631,7 @@ func _register_logger_project_settings() -> void:
 	)
 	if not ProjectSettings.has_setting(PREFIX + "output_to_file"):
 		ProjectSettings.set_setting(PREFIX + "output_to_file", false)
+		changed = true
 	(
 		ProjectSettings
 		. add_property_info(
@@ -558,6 +644,7 @@ func _register_logger_project_settings() -> void:
 	)
 	if not ProjectSettings.has_setting(PREFIX + "file_path"):
 		ProjectSettings.set_setting(PREFIX + "file_path", "user://nexus_resonance_log.ndjson")
+		changed = true
 	(
 		ProjectSettings
 		. add_property_info(
@@ -570,6 +657,7 @@ func _register_logger_project_settings() -> void:
 	)
 	if not ProjectSettings.has_setting(PREFIX + "steam_audio_verbose"):
 		ProjectSettings.set_setting(PREFIX + "steam_audio_verbose", false)
+		changed = true
 	(
 		ProjectSettings
 		. add_property_info(
@@ -580,13 +668,16 @@ func _register_logger_project_settings() -> void:
 			}
 		)
 	)
+	return changed
 
 
-func _register_editor_project_settings() -> void:
+func _register_editor_project_settings() -> bool:
+	var changed := false
 	const EDITOR_PREFIX := SETTINGS_PREFIX + "editor/"
 	var k := EDITOR_PREFIX + "auto_convert_animation_audio_on_save"
 	if not ProjectSettings.has_setting(k):
 		ProjectSettings.set_setting(k, false)
+		changed = true
 	(
 		ProjectSettings
 		. add_property_info(
@@ -597,13 +688,134 @@ func _register_editor_project_settings() -> void:
 			}
 		)
 	)
+	return changed
 
 
-func _register_bake_project_settings() -> void:
+func _on_project_settings_changed() -> void:
+	if _is_updating_settings:
+		return
+	_is_updating_settings = true
+	_register_accessibility_project_settings()
+	_is_updating_settings = false
+
+
+func _register_accessibility_project_settings() -> bool:
+	var changed := false
+	const ACC_PREFIX := SETTINGS_PREFIX + "accessibility/"
+	
+	var k_editor_tts := ACC_PREFIX + "editor_tts"
+	if not ProjectSettings.has_setting(k_editor_tts):
+		ProjectSettings.set_setting(k_editor_tts, false)
+		changed = true
+	(
+		ProjectSettings
+		. add_property_info(
+			{
+				"name": k_editor_tts,
+				"type": TYPE_BOOL,
+				"hint": PROPERTY_HINT_NONE,
+			}
+		)
+	)
+	
+	# Determine read-only status for dependent properties based on editor_tts toggle
+	var editor_tts_active := false
+	if ProjectSettings.has_setting(k_editor_tts):
+		editor_tts_active = ProjectSettings.get_setting(k_editor_tts)
+		
+	var usage := PROPERTY_USAGE_DEFAULT
+	if not editor_tts_active:
+		usage |= PROPERTY_USAGE_READ_ONLY
+		
+	var k_runtime_tts := ACC_PREFIX + "runtime_debug_tts"
+	if not ProjectSettings.has_setting(k_runtime_tts):
+		ProjectSettings.set_setting(k_runtime_tts, false)
+		changed = true
+	(
+		ProjectSettings
+		. add_property_info(
+			{
+				"name": k_runtime_tts,
+				"type": TYPE_BOOL,
+				"hint": PROPERTY_HINT_NONE,
+				"usage": usage,
+			}
+		)
+	)
+	
+	var k_tts_voice := ACC_PREFIX + "tts_voice"
+	if not ProjectSettings.has_setting(k_tts_voice) or typeof(ProjectSettings.get_setting(k_tts_voice)) != TYPE_INT:
+		ProjectSettings.set_setting(k_tts_voice, 0)
+		changed = true
+	
+	var voices := DisplayServer.tts_get_voices()
+	var hint_options: Array[String] = []
+	var default_label := "Default (First Available)"
+	var locale := TranslationServer.get_tool_locale()
+	if locale.begins_with("es"):
+		default_label = "Por defecto (Primera disponible)"
+	hint_options.append(default_label)
+	for v in voices:
+		var name_str: String = v.get("name", "Unknown Voice")
+		var lang_str: String = v.get("language", "Unknown")
+		hint_options.append(name_str + " (" + lang_str + ")")
+	
+	(
+		ProjectSettings
+		. add_property_info(
+			{
+				"name": k_tts_voice,
+				"type": TYPE_INT,
+				"hint": PROPERTY_HINT_ENUM,
+				"hint_string": ",".join(hint_options),
+				"usage": usage,
+			}
+		)
+	)
+	
+	var k_tts_volume := ACC_PREFIX + "tts_volume"
+	if not ProjectSettings.has_setting(k_tts_volume):
+		ProjectSettings.set_setting(k_tts_volume, 50)
+		changed = true
+	(
+		ProjectSettings
+		. add_property_info(
+			{
+				"name": k_tts_volume,
+				"type": TYPE_INT,
+				"hint": PROPERTY_HINT_RANGE,
+				"hint_string": "0,100,1,slider",
+				"usage": usage,
+			}
+		)
+	)
+	
+	var k_tts_speed := ACC_PREFIX + "tts_speed"
+	if not ProjectSettings.has_setting(k_tts_speed):
+		ProjectSettings.set_setting(k_tts_speed, 1.0)
+		changed = true
+	(
+		ProjectSettings
+		. add_property_info(
+			{
+				"name": k_tts_speed,
+				"type": TYPE_FLOAT,
+				"hint": PROPERTY_HINT_RANGE,
+				"hint_string": "0.1,10.0,0.1,slider",
+				"usage": usage,
+			}
+		)
+	)
+	return changed
+
+
+func _register_bake_project_settings() -> bool:
+	var changed := false
 	const BAKE_PREFIX := SETTINGS_PREFIX + "bake/"
 	const KEY := "default_output_directory"
 	if not ProjectSettings.has_setting(BAKE_PREFIX + KEY):
 		ProjectSettings.set_setting(BAKE_PREFIX + KEY, "res://audio_data/")
+		changed = true
 	(
 		ProjectSettings
 		. add_property_info(
@@ -614,6 +826,7 @@ func _register_bake_project_settings() -> void:
 			}
 		)
 	)
+	return changed
 
 
 ## Ensures export asset format keys exist with defaults (no save). Returns whether [method ProjectSettings.save] is recommended.
@@ -656,7 +869,7 @@ func _ensure_int_enum_project_setting(key: String, default_value: int) -> bool:
 	return needs_save
 
 
-func _register_export_project_settings() -> void:
+func _register_export_project_settings() -> bool:
 	const EXPORT_PREFIX := SETTINGS_PREFIX + "export/"
 	const KEY_STATIC := "static_scene_asset_format"
 	const KEY_PROBE := "probe_data_format"
@@ -683,8 +896,7 @@ func _register_export_project_settings() -> void:
 			}
 		)
 	)
-	if save_needed:
-		ProjectSettings.save()
+	return save_needed
 
 
 func _register_tool_shortcuts() -> void:
@@ -758,13 +970,13 @@ func _on_tool_convert_animation_audio_resonance() -> void:
 		return
 	var r: Dictionary = ResonanceAnimationAudioConverter.convert_all_animation_players(root)
 	var msg := (
-		"Converted %d audio track(s) on ResonancePlayer (%d AnimationPlayer node(s) scanned)."
+		tr("Converted %d audio track(s) on ResonancePlayer (%d AnimationPlayer node(s) scanned).")
 		% [int(r.get("tracks_converted", 0)), int(r.get("animation_players", 0))]
 	)
 	if int(r.get("skipped_blend", 0)) > 0:
 		msg += tr(UIStrings.INFO_CONVERT_SKIPPED_BLEND) % int(r.get("skipped_blend", 0))
 	if int(r.get("skipped_target", 0)) > 0:
-		msg += " Skipped %d non-ResonancePlayer target(s)." % int(r.get("skipped_target", 0))
+		msg += tr(" Skipped %d non-ResonancePlayer target(s).") % int(r.get("skipped_target", 0))
 	get_editor_interface().mark_scene_as_unsaved()
 	ResonanceEditorDialogs.show_success_toast(get_editor_interface(), msg)
 
@@ -808,7 +1020,7 @@ func _run_convert_animation_audio_all_scenes_confirmed() -> void:
 			push_warning(
 				(
 					UIStrings.PREFIX
-					+ "Convert scene failed (%s): %s" % [String(p), String(one.get("error", ""))]
+					+ tr("Convert scene failed (%s): %s") % [String(p), String(one.get("error", ""))]
 				)
 			)
 			continue
@@ -860,7 +1072,7 @@ func _on_editor_pre_save_animation_audio() -> void:
 			(
 				(
 					UIStrings.PREFIX
-					+ "Auto-convert skipped %d blend track(s); convert manually for Steam Audio."
+					+ tr("Auto-convert skipped %d blend track(s); convert manually for Steam Audio.")
 				)
 				% int(r.get("skipped_blend", 0))
 			)

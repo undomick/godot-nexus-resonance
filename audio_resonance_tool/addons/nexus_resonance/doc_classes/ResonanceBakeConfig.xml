@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <class name="ResonanceBakeConfig" inherits="Resource" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../class.xsd">
 	<brief_description>
-		Per-volume bake settings for Steam Audio probes.
+		Ajustes de horneado por volumen para las sondas de Steam Audio.
 	</brief_description>
 	<description>
-		GDScript resource assigned to [member ResonanceProbeVolume.bake_config]. Save as .tres for reusable presets. When null on the volume, [method create_default] is used.
-		Controls reflection algorithm, pathing bake, static source/listener passes, and bake quality. [member reflection_type] should match [member ResonanceRuntimeConfig.reflection_type] for playback (BakeConfig has no TrueAudio Next).
-		Pathing visibility fields ([member bake_pathing_vis_range], [member bake_pathing_radius], [member bake_pathing_threshold], etc.) are also read at runtime from the first loaded probe volume with a bake config.
+		Recurso de GDScript asignado a [member ResonanceProbeVolume.bake_config]. Guárdalo como .tres para preajustes reutilizables. Cuando es nulo en el volumen, se utiliza [method create_default].
+		Controla el algoritmo de reflexión, el horneado del trazado de rutas, los pases estáticos de fuente/oyente y la calidad del horneado. [member reflection_type] debe coincidir con [member ResonanceRuntimeConfig.reflection_type] para la reproducción (BakeConfig no tiene TrueAudio Next).
+		Los campos de visibilidad del trazado de rutas ([member bake_pathing_vis_range], [member bake_pathing_radius], [member bake_pathing_threshold], etc.) también se leen en tiempo de ejecución desde el primer volumen de sonda cargado que tenga una configuración de horneado.
 	</description>
 	<tutorials>
 	</tutorials>
@@ -14,55 +14,55 @@
 		<method name="get_bake_params">
 			<return type="Dictionary" />
 			<description>
-				Returns the bake parameter dictionary passed to the native baker (rays, bounces, pathing ranges, reflection type). Used internally by the bake pipeline.
+				Devuelve el diccionario de parámetros de horneado que se pasa al horneador nativo (rayos, rebotes, rangos de trazado de rutas, tipo de reflexión). Utilizado internamente por el pipeline de horneado.
 			</description>
 		</method>
 		<method name="create_default" qualifiers="static">
 			<return type="ResonanceBakeConfig" />
 			<description>
-				Creates a new config with project defaults. Used when [member ResonanceProbeVolume.bake_config] is null.
+				Crea una nueva configuración con los valores predeterminados del proyecto. Se utiliza cuando [member ResonanceProbeVolume.bake_config] es nulo.
 			</description>
 		</method>
 	</methods>
 	<members>
 		<member name="reflection_type" type="int" default="2">
-			Reverb algorithm for the reflection bake: Convolution (0), Parametric (1), Hybrid (2, default). Should match [member ResonanceRuntimeConfig.reflection_type] at runtime.
+			Algoritmo de reverberación para el horneado de reflexiones: Convolución (0), Paramétrico (1), Híbrido (2, por defecto). Debe coincidir con [member ResonanceRuntimeConfig.reflection_type] en tiempo de ejecución.
 		</member>
 		<member name="pathing_enabled" type="bool" default="false">
-			Bakes pathing connectivity between probes. Required when runtime pathing is enabled. When false, pathing sub-properties are read-only in the inspector.
+			Hornea la conectividad del trazado de rutas entre sondas. Requerido cuando el trazado de rutas en tiempo real está activado. Cuando es false, las subpropiedades del trazado de rutas son de solo lectura en el inspector.
 		</member>
 		<member name="bake_pathing_vis_range" type="float" default="500.0">
-			Maximum distance in meters (10-2000) for mutual probe visibility during pathing bake and runtime pathing. Higher values cost more CPU.
+			Distancia máxima en metros (10-2000) para la visibilidad mutua de las sondas durante el horneado del trazado de rutas y el trazado de rutas en tiempo real. Los valores más altos consumen más CPU.
 		</member>
 		<member name="bake_pathing_path_range" type="float" default="100.0">
-			Maximum path length in meters (10-500) between probes for pathing bake.
+			Longitud máxima de ruta en metros (10-500) entre sondas para el horneado del trazado de rutas.
 		</member>
 		<member name="bake_pathing_num_samples" type="int" default="16">
-			Visibility samples per probe (4-128) for pathing bake. Higher values are smoother but slower; runtime may use [member ResonanceRuntimeConfig.pathing_num_vis_samples] separately.
+			Muestras de visibilidad por sonda (4-128) para el horneado del trazado de rutas. Los valores más altos son más suaves pero más lentos; el tiempo de ejecución puede usar [member ResonanceRuntimeConfig.pathing_num_vis_samples] por separado.
 		</member>
 		<member name="bake_pathing_radius" type="float" default="0.5">
-			Probe sphere radius in meters (0.1-2.0) for pathing visibility tests. Used at bake and runtime.
+			Radio de la esfera de la sonda en metros (0.1-2.0) para las pruebas de visibilidad del trazado de rutas. Se utiliza en el horneado y en tiempo de ejecución.
 		</member>
 		<member name="bake_pathing_threshold" type="float" default="0.1">
-			Fraction of unoccluded rays required to link probes (0.01-1.0). Lower values admit more paths and increase bake time. Used at bake and runtime.
+			Fracción de rayos no ocluidos requerida para enlazar sondas (0.01-1.0). Los valores más bajos admiten más rutas e incrementan el tiempo de horneado. Se utiliza en el horneado y en tiempo de ejecución.
 		</member>
 		<member name="static_source_enabled" type="bool" default="false">
-			Bakes Static Source layers from [member ResonanceProbeVolume.bake_sources] on the owning volume (one pass per valid NodePath).
+			Hornea capas de fuentes estáticas (Static Source) a partir de [member ResonanceProbeVolume.bake_sources] en el volumen propietario (un pase por cada NodePath válido).
 		</member>
 		<member name="static_listener_enabled" type="bool" default="false">
-			Bakes Static Listener layers from [member ResonanceProbeVolume.bake_listeners] on the owning volume (one pass per valid NodePath).
+			Hornea capas de oyentes estáticos (Static Listener) a partir de [member ResonanceProbeVolume.bake_listeners] en el volumen propietario (un pase por cada NodePath válido).
 		</member>
 		<member name="bake_ambisonics_order" type="int" default="1">
-			Ambisonics order (1-3) for baked convolution IRs. Higher order improves spatial detail and increases bake size and time.
+			Orden de ambisónicos (1-3) para las respuestas al impulso (IR) de convolución horneadas. Un orden más alto mejora el detalle espacial e incrementa el tamaño y el tiempo de horneado.
 		</member>
 		<member name="bake_num_rays" type="int" default="4096">
-			Reflection rays per probe (256-16384). More rays improve quality and lengthen the bake.
+			Rayos de reflexión por sonda (256-16384). Más rayos mejoran la calidad y prolongan el horneado.
 		</member>
 		<member name="bake_num_bounces" type="int" default="4">
-			Reflection bounces per ray (1-32). More bounces lengthen the reverb tail and the bake.
+			Rebotes de reflexión por rayo (1-32). Más rebotes prolongan la cola de reverberación y el horneado.
 		</member>
 		<member name="bake_num_threads" type="int" default="2">
-			Parallel bake worker threads (1-64). Affects bake duration only; not included in probe outdated hashes.
+			Hilos de trabajo de horneado en paralelo (1-64). Afecta únicamente a la duración del horneado; no se incluye en los hashes de sondas desactualizadas.
 		</member>
 	</members>
 </class>

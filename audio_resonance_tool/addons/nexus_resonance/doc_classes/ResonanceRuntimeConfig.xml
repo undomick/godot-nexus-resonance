@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <class name="ResonanceRuntimeConfig" inherits="Resource" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../class.xsd">
 	<brief_description>
-		Runtime configuration resource for Nexus Resonance. Structure aligned with Steam Audio Settings.
+		Recurso de configuración en tiempo de ejecución para Nexus Resonance. Estructura alineada con Steam Audio Settings.
 	</brief_description>
 	<description>
-		Nexus Resonance runtime configuration resource. Create or link in ResonanceRuntime node (Add Child Node > ResonanceRuntime). Structure and group order follow Steam Audio Settings: HRTF Settings, Ray Tracer Settings, Occlusion Settings, Real-time Reflections, Baked Reverb, Baked Pathing, Simulation Update, Reflection Effect, Hybrid Reverb, Reverb Output, Physics. Emits reflection_type_changed, pathing_enabled_changed, and audio_frame_size_changed when those settings change. Godot routing: [member bus] and [member reverb_bus_name]; the reverb effect bus sends to the same target as [method get_bus_effective].
+		Recurso de configuración en tiempo de ejecución para Nexus Resonance. Créalo o enlázalo en el nodo ResonanceRuntime (Añadir nodo hijo > ResonanceRuntime). La estructura y el orden de los grupos siguen las opciones de configuración de Steam Audio: HRTF Settings, Ray Tracer Settings, Occlusion Settings, Real-time Reflections, Baked Reverb, Baked Pathing, Simulation Update, Reflection Effect, Hybrid Reverb, Reverb Output, Physics. Emits reflection_type_changed, pathing_enabled_changed y audio_frame_size_changed cuando cambian esos ajustes. Enrutamiento de Godot: [member bus] y [member reverb_bus_name]; el bus del efecto de reverberación envía al mismo destino que [method get_bus_effective].
 	</description>
 	<tutorials>
 	</tutorials>
@@ -12,19 +12,19 @@
 		<signal name="reflection_type_changed">
 			<param index="0" name="new_type" type="int" />
 			<description>
-				Emitted when reflection_type changes.
+				Se emite cuando cambia reflection_type.
 			</description>
 		</signal>
 		<signal name="pathing_enabled_changed">
 			<param index="0" name="enabled" type="bool" />
 			<description>
-				Emitted when pathing_enabled changes.
+				Se emite cuando cambia pathing_enabled.
 			</description>
 		</signal>
 		<signal name="audio_frame_size_changed">
 			<param index="0" name="new_size" type="int" />
 			<description>
-				Emitted when audio_frame_size changes (inspector value: 0 = Auto, or 256 / 512 / 1024 / 2048). In the editor, [ResonanceRuntime] reconnects the native audio engine when the server is already initialized (brief audio interruption).
+				Se emite cuando cambia audio_frame_size (valor en el inspector: 0 = Auto, o 256 / 512 / 1024 / 2048). En el editor, [ResonanceRuntime] reconecta el motor de audio nativo cuando el servidor ya está inicializado (provocando una breve interrupción del audio).
 			</description>
 		</signal>
 	</signals>
@@ -34,196 +34,196 @@
 			<param index="0" name="realtime_rays" type="int" />
 			<param index="1" name="os_name" type="String" />
 			<description>
-				Returns [param realtime_rays] unchanged on all platforms. [param os_name] is reserved for future per-OS caps; pass [method OS.get_name] when calling.
+				Devuelve [param realtime_rays] sin cambios en todas las plataformas. [param os_name] está reservado para límites futuros por sistema operativo; pasa [method OS.get_name] al llamarlo.
 			</description>
 		</method>
 		<method name="get_bus_effective">
 			<return type="StringName" />
 			<description>
-				Returns effective bus for Direct + Pathing (player output). Empty config = Master.
+				Devuelve el bus efectivo para Direct + Pathing (salida del reproductor). Configuración vacía = Master.
 			</description>
 		</method>
 		<method name="get_reverb_bus_name_effective">
 			<return type="StringName" />
 			<description>
-				Returns effective reverb bus name. Empty config = ResonanceReverb.
+				Devuelve el nombre del bus de reverberación efectivo. Configuración vacía = ResonanceReverb.
 			</description>
 		</method>
 		<method name="get_hrtf_sofa_effective">
 			<return type="ResonanceSOFAAsset" />
 			<description>
-				Returns the active custom SOFA for engine init: entry from [member hrtf_sofa_assets] at [member hrtf_sofa_selected_index], or the first list entry with SOFA data if that slot is empty. Returns null if the list is empty or no entry has valid data (default embedded HRTF).
+				Devuelve el recurso SOFA personalizado activo para la inicialización del motor: la entrada de [member hrtf_sofa_assets] en [member hrtf_sofa_selected_index], o la primera entrada de la lista con datos SOFA si esa ranura está vacía. Devuelve null si la lista está vacía o si ninguna entrada tiene datos válidos (recurre al HRTF predeterminado integrado).
 			</description>
 		</method>
 		<method name="get_config">
 			<return type="Dictionary" />
 			<description>
-				Returns config dictionary for [method ResonanceServer.init_audio_engine]. Includes sample_rate from AudioServer. Does not include [member bus] or [member reverb_bus_name]; Godot bus routing is handled by [ResonanceRuntime] only.
+				Devuelve el diccionario de configuración para [method ResonanceServer.init_audio_engine]. Incluye sample_rate de AudioServer. No incluye [member bus] ni [member reverb_bus_name]; el enrutamiento de buses de Godot es controlado únicamente por [ResonanceRuntime].
 			</description>
 		</method>
 		<method name="create_default" qualifiers="static">
 			<return type="ResonanceRuntimeConfig" />
 			<description>
-				Creates a default runtime config for editor/fallback when no ResonanceRuntime in scene.
+				Crea una configuración en tiempo de ejecución por defecto para el editor o como respaldo cuando no hay un ResonanceRuntime en la escena.
 			</description>
 		</method>
 	</methods>
 	<members>
 		<member name="sample_rate_override" type="int" default="0">
-			Sample rate override. 0 = Use Godot Mix Rate (follow project settings). Other values = override; mismatch may cause audio issues (no resampling).
+			Anulación de la frecuencia de muestreo (sample rate). 0 = usar la frecuencia de mezcla de Godot (sigue la configuración del proyecto). Otros valores = anulación manual; un desajuste puede causar problemas de audio (no realiza remuestreo).
 		</member>
 		<member name="audio_frame_size" type="int" default="0">
-			Steam Audio processing block size (samples per channel per effect apply). Should match Godot’s mix buffer for stable reverb routing. Auto (0) = closest of 256 / 512 / 1024 / 2048 from Project Settings [code]audio/driver/output_latency[/code] and mix rate. Manual = override for latency vs CPU; wrong values risk dropouts. After changing while the game runs from the editor, [ResonanceRuntime] triggers [method ResonanceServer.reinit_audio_engine] via [signal audio_frame_size_changed].
+			Tamaño del bloque de procesamiento de Steam Audio (muestras por canal por aplicación del efecto). Debe coincidir con el búfer de mezcla de Godot para un enrutamiento de reverberación estable. Auto (0) = el valor más cercano a 256 / 512 / 1024 / 2048 a partir de la opción [code]audio/driver/output_latency[/code] de la configuración del proyecto y la frecuencia de mezcla. Manual = anulación manual para priorizar latencia frente a uso de CPU; los valores incorrectos corren el riesgo de producir pérdidas de datos (dropouts). Después de cambiarlo mientras el juego se ejecuta desde el editor, [ResonanceRuntime] activa [method ResonanceServer.reinit_audio_engine] a través del señal [signal audio_frame_size_changed].
 		</member>
 		<member name="ambisonic_order" type="int" default="1">
-			Ambisonic order for reverb encoding: 1st Order, 2nd Order, or 3rd Order. Higher = more spatial detail, more CPU.
+			Orden de ambisónicos para la codificación de reverberación: 1st Order (primer orden), 2nd Order (segundo orden) o 3rd Order (tercer orden). Valores más altos equivalen a mayor detalle espacial, pero mayor uso de CPU.
 		</member>
 		<member name="max_reverb_duration" type="float" default="2.0">
-			Upper bound for simulator / ReflectionMixer IR allocation (seconds): caps [code]simulation_settings.maxDuration[/code] and bundled convolution IR size. Not the per-run simulation length (see [member realtime_simulation_duration]).
+			Límite superior para la asignación de IR del simulador / ReflectionMixer (segundos): limita [code]simulation_settings.maxDuration[/code] y el tamaño de la IR de convolución empaquetada. No es la longitud de la simulación por cada ejecución (ver [member realtime_simulation_duration]).
 		</member>
 		<member name="realtime_rays" type="int" default="0">
-			[code]IPLSimulationSharedInputs.numRays[/code] for realtime reflection simulation. [code]0[/code] = Off (no realtime rays). Presets include 8, 16, 32, 64, … up to 8192; higher counts cost more CPU. Uses [member scene_type]; without Embree/OpenCL features the native layer may use the built-in (Default) tracer.
+			[code]IPLSimulationSharedInputs.numRays[/code] para la simulación de reflexiones en tiempo real. [code]0[/code] = Desactivado (sin rayos en tiempo real). Los preajustes incluyen 8, 16, 32, 64, … hasta 8192; conteos mayores consumen más CPU. Utiliza [member scene_type]; sin características de Embree/OpenCL, la capa nativa puede recurrir al trazador integrado (Default).
 		</member>
 		<member name="realtime_bounces" type="int" default="4">
-			Realtime reflection bounces (1–64).
+			Rebotes de reflexión en tiempo real (1–64).
 		</member>
 		<member name="scene_type" type="int" default="1">
-			Ray tracer backend: Default (0) = built-in Phonon; Embree (1) = Intel CPU; Radeon Rays (2) = OpenCL (Windows 64-bit oriented); Custom (3) = [code]IPL_SCENETYPE_CUSTOM[/code] using Godot 3D physics [code]intersect_ray[/code] ([member physics_ray_collision_mask]). Custom runs Steam Audio simulation on the main thread; [ResonanceGeometry] meshes are not uploaded. Bakes and mesh assets still use the built-in tracer. Avoid [code]physics/3d/run_on_separate_thread[/code] if possible (see Godot physics threading notes).
+			Backend del trazador de rayos: Default (0) = Phonon integrado; Embree (1) = CPU Intel; Radeon Rays (2) = OpenCL (orientado a Windows de 64 bits); Custom (3) = [code]IPL_SCENETYPE_CUSTOM[/code] utilizando el método [code]intersect_ray[/code] de la física 3D de Godot ([member physics_ray_collision_mask]). Custom ejecuta la simulación de Steam Audio en el hilo principal; las mallas de [ResonanceGeometry] no se cargan. Los horneados y recursos de malla siguen utilizando el trazador integrado. Evita [code]physics/3d/run_on_separate_thread[/code] si es posible (consulta las notas sobre hilos de física de Godot).
 		</member>
 		<member name="physics_ray_collision_mask" type="int" default="-1">
-			Physics ray collision mask when [member scene_type] is Custom. [code]-1[/code] means all layers. Same semantics as [code]PhysicsRayQueryParameters3D.collision_mask[/code].
+			Máscara de colisión de rayos de física cuando [member scene_type] es Custom. [code]-1[/code] significa todas las capas. Misma semántica que [code]PhysicsRayQueryParameters3D.collision_mask[/code].
 		</member>
 		<member name="physics_ray_batch_size" type="int" default="16">
-			When [member scene_type] is Custom: [code]IPLSimulationSettings.rayBatchSize[/code] and batched Godot trace callbacks when [code]&gt; 1[/code] (Phonon BatchedReflectionSimulator). Clamped to 1–256 in the native layer. Ignored for Default/Embree/Radeon (Nexus passes batch size 1).
+			Cuando [member scene_type] es Custom: [code]IPLSimulationSettings.rayBatchSize[/code] y devoluciones de llamadas (callbacks) de traza de Godot agrupadas en lote cuando es [code]&gt; 1[/code] (Phonon BatchedReflectionSimulator). Limitado a 1–256 en la capa nativa. Ignorado para Default/Embree/Radeon (Nexus pasa un tamaño de lote de 1).
 		</member>
 		<member name="opencl_device_type" type="int" default="0">
-			OpenCL device type when scene_type is Radeon Rays or reflection_type is TrueAudio Next: GPU (0), CPU (1), or Any (2). Helps when GPU has OpenCL issues.
+			Tipo de dispositivo OpenCL cuando scene_type es Radeon Rays o reflection_type es TrueAudio Next: GPU (0), CPU (1) o Any (2). Ayuda cuando la GPU presenta problemas con OpenCL.
 		</member>
 		<member name="opencl_device_index" type="int" default="0">
-			OpenCL device index (0 = first matching device). Use when multiple GPUs present.
+			Índice del dispositivo OpenCL (0 = primer dispositivo coincidente). Utilízalo cuando haya varias GPU presentes.
 		</member>
 		<member name="realtime_irradiance_min_distance" type="float" default="0.1">
-			Min distance for irradiance sampling (0.05–10.0 m). Only when Realtime Rays > 0.
+			Distancia mínima para el muestreo de irradiancia (0.05–10.0 m). Solo cuando Realtime Rays > 0.
 		</member>
 		<member name="realtime_simulation_duration" type="float" default="2.0">
-			Impulse response length (seconds) for real-time simulation shared inputs ([code]IPLSimulationSharedInputs.duration[/code]) each run. Distinct from [member max_reverb_duration] (allocator / mixer IR cap). Range 0.1–10.0 s.
+			Longitud de la respuesta al impulso (segundos) para las entradas compartidas de simulación en tiempo real ([code]IPLSimulationSharedInputs.duration[/code]) en cada ejecución. Distinto de [member max_reverb_duration] (límite de IR del asignador / mezclador). Rango de 0.1 a 10.0 s.
 		</member>
 		<member name="realtime_num_diffuse_samples" type="int" default="32">
-			Diffuse samples per reflection point (8–64).
+			Muestras difusas por punto de reflexión (8–64).
 		</member>
 		<member name="default_reflections_mode" type="int" default="0">
-			Applies only to [ResonancePlayer] sources with reflections type Use Global. Other players can override per source. [code]0[/code] = Baked (probe reverbs): indirect energy is stored per probe and is not the same as per-source ray occlusion through walls. [code]1[/code] = Realtime (set [member realtime_rays] &gt; 0): ray-traced reflections follow the acoustic scene (Embree/Default/Radeon) or Godot physics (Custom), so sealed rooms and geometry affect indirect paths like Steam Audio realtime. Each source uses one path per update.
+			Se aplica únicamente a las fuentes [ResonancePlayer] con tipo de reflexiones 'Use Global'. Otros reproductores pueden anularlo por fuente. [code]0[/code] = Baked (reverberaciones de sonda): la energía indirecta se almacena por sonda y no es lo mismo que la oclusión de rayos por fuente a través de paredes. [code]1[/code] = Realtime (configura [member realtime_rays] &gt; 0): las reflexiones trazadas por rayos siguen la escena acústica (Embree/Default/Radeon) o la física de Godot (Custom), de modo que las salas selladas y la geometría afectan a las rutas indirectas como en Steam Audio en tiempo real. Cada fuente utiliza una ruta por actualización.
 		</member>
 		<member name="reflection_type" type="int" default="0">
-			Reverb algorithm: Convolution (0), Parametric (1), Hybrid (2), TrueAudio Next (3, AMD GPU only).
+			Algoritmo de reverberación: Convolución (0), Paramétrico (1), Híbrido (2), TrueAudio Next (3, solo GPU AMD).
 		</member>
 		<member name="hybrid_reverb_transition_time" type="float" default="1.0">
-			Hybrid reverb: length (seconds) of IR used for convolution before parametric tail. Only when reflection_type is Hybrid.
+			Reverberación híbrida: longitud (segundos) de la IR utilizada para convolución antes de la cola paramétrica. Solo cuando reflection_type es Hybrid.
 		</member>
 		<member name="hybrid_reverb_overlap_percent" type="int" default="25">
-			Hybrid reverb: overlap percent (0–100) for crossfade between convolution and parametric parts.
+			Reverberación híbrida: porcentaje de superposición (0–100) para el desvanecimiento cruzado (crossfade) entre la parte de convolución y la paramétrica.
 		</member>
 		<member name="direct_binaural" type="bool" default="true">
-			When [ResonancePlayerConfig] uses global direct binaural, apply HRTF on the dry / direct path (vs speaker panning). Requires a loaded HRTF.
+			Cuando [ResonancePlayerConfig] utiliza direct binaural global, aplica HRTF en la ruta dry / directa (frente al paneo de altavoces). Requiere un HRTF cargado.
 		</member>
 		<member name="reverb_binaural" type="bool" default="true">
-			Apply HRTF when decoding Ambisonic convolution / mixer output to stereo (reflection / reverb wet path).
+			Aplica HRTF al decodificar la salida de la convolución ambisónica / mezclador a estéreo (ruta wet de reflexiones / reverberación).
 		</member>
 		<member name="pathing_binaural" type="bool" default="true">
-			Apply HRTF in the pathing effect (indirect paths). When [ResonancePlayerConfig] pathing HRTF uses global, this value is the default.
+			Aplica HRTF en el efecto de trazado de rutas (rutas indirectas). Cuando el HRTF de trazado de rutas de [ResonancePlayerConfig] utiliza el valor global, este valor es el predeterminado.
 		</member>
 		<member name="use_virtual_surround" type="bool" default="false">
-			Use virtual surround instead of HRTF.
+			Utiliza sonido envolvente virtual (virtual surround) en lugar de HRTF.
 		</member>
 		<member name="direct_speaker_channels" type="int" default="2">
-			Direct path without HRTF: [code]IPLSpeakerLayout[/code] channel count (1 Mono, 2 Stereo, 4 Quad, 6 5.1, 8 7.1). With surround and Ambisonics encode, non-HRTF sources use [code]iplAmbisonicsPanningEffect[/code]; otherwise [code]iplPanningEffect[/code]. Godot [code]AudioStreamPlayback[/code] output remains stereo (fold-down inside the player). Invalid values become stereo at runtime. Requires [method ResonanceServer.reinit_audio_engine] after change while running.
+			Ruta directa sin HRTF: recuento de canales de [code]IPLSpeakerLayout[/code] (1 Mono, 2 Estéreo, 4 Quad, 6 5.1, 8 7.1). Con codificación de sonido envolvente y ambisónicos, las fuentes sin HRTF utilizan [code]iplAmbisonicsPanningEffect[/code]; de lo contrario, utilizan [code]iplPanningEffect[/code]. La salida de [code]AudioStreamPlayback[/code] de Godot sigue siendo estéreo (mezcla hacia abajo en el reproductor). Los valores no válidos se convierten en estéreo en tiempo de ejecución. Requiere [method ResonanceServer.reinit_audio_engine] después de cambiarlo en funcionamiento.
 		</member>
 		<member name="hrtf_volume_db" type="float" default="0.0">
-			HRTF gain in dB for the embedded default HRTF. With custom SOFA, added (in dB) to each asset's volume before gain conversion.
+			Ganancia del HRTF en dB para el HRTF predeterminado integrado. Con SOFA personalizado, se añade (en dB) al volumen de cada recurso antes de la conversión de ganancia.
 		</member>
 		<member name="hrtf_normalization_type" type="int" default="0">
-			Normalization for embedded default HRTF only: None (0) or RMS (1). Custom SOFA uses [member ResonanceSOFAAsset.norm_type] on the asset.
+			Normalización únicamente para el HRTF predeterminado integrado: None (0) o RMS (1). El recurso SOFA personalizado utiliza [member ResonanceSOFAAsset.norm_type] en el recurso.
 		</member>
 		<member name="hrtf_sofa_assets" type="Array" default="[]">
-			SOFA HRTF resources. [member hrtf_sofa_selected_index] selects the active file. Empty = default embedded HRTF.
+			Recursos SOFA HRTF. [member hrtf_sofa_selected_index] selecciona el archivo activo. Vacío = HRTF integrado predeterminado.
 		</member>
 		<member name="hrtf_sofa_selected_index" type="int" default="0">
-			Index into [member hrtf_sofa_assets] for the active SOFA (clamped at runtime).
+			Índice en [member hrtf_sofa_assets] para el SOFA activo (limitado en tiempo de ejecución).
 		</member>
 		<member name="hrtf_interpolation_bilinear" type="bool" default="false">
-			Use bilinear HRTF interpolation.
+			Utiliza interpolación HRTF bilineal.
 		</member>
 		<member name="reverb_influence_radius" type="float" default="10000.0">
-			Baked reverb influence radius in meters.
+			Radio de influencia de la reverberación horneada en metros.
 		</member>
 		<member name="bus" type="StringName" default="Master">
-			Target bus for Direct + Pathing (player output). Empty = Master. Fallback when players use Global bus override.
+			Bus de destino para Direct + Pathing (salida del reproductor). Vacío = Master. Respaldo cuando los reproductores utilizan la anulación de bus global (Global).
 		</member>
 		<member name="reverb_bus_name" type="StringName" default="ResonanceReverb">
-			Bus that hosts [ResonanceAudioEffect] for convolution / TAN wet and the reverb activator. Empty = ResonanceReverb. Godot send for this bus follows [method get_bus_effective] (same as Direct + Pathing runtime bus).
+			Bus que aloja el [ResonanceAudioEffect] para la señal wet de convolución / TAN y el activador de reverberación. Vacío = ResonanceReverb. El envío de Godot para este bus sigue a [method get_bus_effective] (el mismo que el bus de tiempo de ejecución de Direct + Pathing).
 		</member>
 		<member name="reverb_transmission_amount" type="float" default="1.0">
-			How much transmission damps reverb (0–1). 0 = no damping, 1 = full damping (reverb scaled by material transmission). Only consulted for baked REVERB paths when the wet-path occlusion damping is on (see [member apply_occlusion_to_baked_reflections] and [member ResonancePlayerConfig.apply_occlusion_to_baked_reflections_override]). Realtime reflections and STATICSOURCE/STATICLISTENER already encode source→listener occlusion in the IR. A per-source value can be set via [member ResonancePlayerConfig.reverb_transmission_amount_input].
+			Cuánto amortigua la transmisión a la reverberación (0–1). 0 = sin amortiguación, 1 = amortiguación total (reverberación escalada por la transmisión del material). Solo se consulta para las rutas de REVERBERACIÓN horneada cuando la amortiguación de oclusión de la ruta wet está activada (ver [member apply_occlusion_to_baked_reflections] y [member ResonancePlayerConfig.apply_occlusion_to_baked_reflections_override]). Las reflexiones en tiempo real y STATICSOURCE/STATICLISTENER ya codifican la oclusión de fuente→oyente en la IR. Se puede establecer un valor por fuente a través de [member ResonancePlayerConfig.reverb_transmission_amount_input].
 		</member>
 		<member name="apply_occlusion_to_baked_reflections" type="bool" default="false">
-			When on, baked REVERB reflections also scale their wet input by the direct-path occlusion/transmission factor. Default is off: direct-line occlusion cannot distinguish "source around a corner in the same open room" (listener room still excited via openings/diffraction; realtime convolution stays loud) from "source truly sealed away". Turning this on dampens both cases uniformly, making baked REVERB sound less plausible than realtime for the common "around the corner" case. Prefer per-source [code]reflections_type = Realtime[/code] or the STATICSOURCE bake workflow for accurate outdoor-to-indoor reflections. Can be overridden per source via [member ResonancePlayerConfig.apply_occlusion_to_baked_reflections_override] (e.g. enable it just for outdoor thunder / rain sources while indoor sources keep plausible wet feeds). Has no effect on realtime, STATICSOURCE or STATICLISTENER paths.
+			Cuando está activado, las reflexiones de REVERBERACIÓN horneada también escalan su entrada wet según el factor de oclusión/transmisión de la ruta directa. Por defecto está desactivado: la oclusión de línea directa no puede distinguir una 'fuente a la vuelta de la esquina en la misma habitación abierta' (la habitación del oyente sigue excitada a través de aberturas/difracción; la convolución en tiempo real sigue sonando fuerte) de una 'fuente verdaderamente aislada'. Activar esto amortigua ambos casos de manera uniforme, lo que hace que la REVERBERACIÓN horneada suene menos plausible que la de tiempo real para el caso común de 'a la vuelta de la esquina'. Prefiere [code]reflections_type = Realtime[/code] por fuente o el flujo de trabajo de horneado STATICSOURCE para reflexiones precisas de exteriores a interiores. Se puede anular por fuente a través de [member ResonancePlayerConfig.apply_occlusion_to_baked_reflections_override] (por ejemplo, activándolo solo para fuentes de truenos o lluvia en exteriores mientras que las fuentes de interiores conservan alimentaciones wet plausibles). No tiene efecto en las rutas de tiempo real, STATICSOURCE o STATICLISTENER.
 		</member>
 		<member name="reflections_sampling_mode" type="int" default="0">
-			Reflections sampling mode (where baked REVERB chooses its probe from). 0=Listener-centric (probe nearest the listener; recommended), 1=Source-centric (probe nearest the source; legacy behavior). Note: currently this only affects baked REVERB probe lookup. Steam Audio realtime reflections trace rays from the listener in the core API, so this setting does not yet change realtime ray origin. Can be overridden per source via [member ResonancePlayerConfig.reflections_sampling_mode_override].
+			Modo de muestreo de reflexiones (de dónde elige su sonda la REVERBERACIÓN horneada). 0 = Centrado en el oyente (sonda más cercana al oyente; recomendado), 1 = Centrado en la fuente (sonda más cercana a la fuente; comportamiento legado). Nota: actualmente esto solo afecta a la búsqueda de sondas de REVERBERACIÓN horneadas. Las reflexiones en tiempo real de Steam Audio trazan rayos desde el oyente en la API principal, por lo que esta configuración aún no cambia el origen del rayo en tiempo real. Se puede anular por fuente a través de [member ResonancePlayerConfig.reflections_sampling_mode_override].
 		</member>
 		<member name="pathing_enabled" type="bool" default="false">
-			Enable pathing (multi-path sound propagation). Requires baked pathing in Probe Volumes.
+			Activa el trazado de rutas (propagación de sonido por múltiples rutas). Requiere trazado de rutas horneado en los volúmenes de sondas (Probe Volumes).
 		</member>
 		<member name="pathing_normalize_eq" type="bool" default="true">
-			Pathing: normalize EQ on path effect output. Prevents pathing from sounding too bright.
+			Trazado de rutas: normaliza la ecualización (EQ) en la salida del efecto de ruta. Evita que el trazado de rutas suene demasiado brillante.
 		</member>
 		<member name="pathing_num_vis_samples" type="int" default="4">
-			Runtime pathing: Steam Audio numVisSamples (1–16). Lower = less CPU; bake quality uses bake_pathing_num_samples on ResonanceBakeConfig.
+			Trazado de rutas en tiempo real: numVisSamples de Steam Audio (1–16). Menor = menos CPU; la calidad del horneado utiliza bake_pathing_num_samples en ResonanceBakeConfig.
 		</member>
 		<member name="path_validation_enabled" type="bool" default="true">
-			Default path validation when a ResonancePlayerConfig uses Use Global (-1) for [member ResonancePlayerConfig.path_validation_override]. Validates baked paths against dynamic geometry each update.
+			Validación de rutas predeterminada cuando una ResonancePlayerConfig utiliza 'Use Global' (-1) para [member ResonancePlayerConfig.path_validation_override]. Valida las rutas horneadas frente a la geometría dinámica en cada actualización.
 		</member>
 		<member name="find_alternate_paths" type="bool" default="false">
-			Default find-alternate-paths when a player uses Use Global (-1) for [member ResonancePlayerConfig.find_alternate_paths_override]. Only applies when path validation is effectively enabled for that source.
+			Búsqueda de rutas alternativas predeterminada cuando un reproductor utiliza 'Use Global' (-1) para [member ResonancePlayerConfig.find_alternate_paths_override]. Solo se aplica cuando la validación de rutas está efectivamente activada para esa fuente.
 		</member>
 		<member name="transmission_type" type="int" default="1">
-			Direct-effect transmission frequency mode (Steam Audio [code]IPLTransmissionType[/code]): FreqIndependent (0) = one blended coefficient; FreqDependent (1) = low/mid/high bands. Controls how material transmission is applied in the direct processor, not geometry-edge blending. Steam Audio [code]IPLSimulationInputs[/code] has no separate “volumetric transmission” switch (only [code]numTransmissionRays[/code] for path depth).
+			Modo de frecuencia de transmisión del efecto directo ([code]IPLTransmissionType[/code] de Steam Audio): FreqIndependent (0) = un coeficiente mezclado; FreqDependent (1) = bandas baja/media/alta. Controla cómo se aplica la transmisión de material en el procesador directo, no la mezcla en los bordes de la geometría. [code]IPLSimulationInputs[/code] de Steam Audio no tiene un interruptor de 'transmisión volumétrica' separado (solo [code]numTransmissionRays[/code] para la profundidad de la ruta).
 		</member>
 		<member name="max_transmission_surfaces" type="int" default="16">
-			Global default for Steam Audio [code]numTransmissionRays[/code] (max surfaces along the transmission path, 1–256): initial simulator source state and when [member ResonancePlayerConfig.max_transmission_surfaces_override] is **Use Global** ([code]0[/code]), or as C++ fallback when reading per-source [member ResonancePlayerConfig.max_transmission_surfaces].
+			Valor global predeterminado para [code]numTransmissionRays[/code] de Steam Audio (superficies máximas a lo largo de la ruta de transmisión, 1–256): estado inicial de la fuente del simulador y cuando [member ResonancePlayerConfig.max_transmission_surfaces_override] es **Use Global** ([code]0[/code]), o como respaldo de C++ al leer [member ResonancePlayerConfig.max_transmission_surfaces] por fuente.
 		</member>
 		<member name="occlusion_type" type="int" default="1">
-			Occlusion: Raycast (0) = binary hit test; Volumetric (1) = fractional occlusion from samples ([code]numOcclusionSamples[/code]). Independent of [member transmission_type].
+			Oclusión: Raycast (0) = prueba de impacto binaria; Volumetric (1) = oclusión fraccional a partir de muestras ([code]numOcclusionSamples[/code]). Independiente de [member transmission_type].
 		</member>
 		<member name="max_occlusion_samples" type="int" default="64">
-			Simulator cap for volumetric occlusion ([code]maxNumOcclusionSamples[/code]). Per-source occlusion samples are clamped to this value.
+			Límite del simulador para oclusión volumétrica ([code]maxNumOcclusionSamples[/code]). Las muestras de oclusión por fuente se limitan a este valor.
 		</member>
 		<member name="max_simulation_sources" type="int" default="32">
-			Maximum simultaneous sources for realtime reflection simulation ([code]maxNumSources[/code]) and TrueAudio Next [code]maxSources[/code].
+			Número máximo de fuentes simultáneas para la simulación de reflexiones en tiempo real ([code]maxNumSources[/code]) y TrueAudio Next [code]maxSources[/code].
 		</member>
 		<member name="dynamic_scene_commit_min_interval" type="float" default="0.0">
-			Minimum seconds between worker applications of queued dynamic instanced-mesh transforms to Steam Audio (one [code]iplSceneCommit[/code] batch per apply). [code]0[/code] = apply every simulation tick that has queued updates. [code]&gt; 0[/code] can lower [code]rtcCommitScene[/code] cost on large Embree scenes at the cost of stale occlusion during motion. Pair with [method ResonanceGeometry.flush_dynamic_acoustic_transform] when motion stops.
+			Segundos mínimos entre aplicaciones del hilo de trabajo de transformaciones de mallas instanciadas dinámicas en cola a Steam Audio (un lote de [code]iplSceneCommit[/code] por aplicación). [code]0[/code] = aplicar en cada ciclo de simulación que tenga actualizaciones en cola. Un valor [code]&gt; 0[/code] puede reducir el costo de [code]rtcCommitScene[/code] en escenas Embree grandes a expensas de una oclusión desactualizada durante el movimiento. Emparéjalo con [method ResonanceGeometry.flush_dynamic_acoustic_transform] cuando el movimiento se detenga.
 		</member>
 		<member name="reflections_sim_interval" type="float" default="0.1">
-			[b]Reflections Sim Interval[/b] — Minimum seconds between scheduling reflection-heavy simulation ([code]iplSimulatorRunReflections[/code]). [b]0[/b]: schedule every worker tick (highest CPU). [b]0.1[/b]: at most one reflection scheduling wave every ~100 ms (good default). Higher values reduce CPU; realtime IR updates may lag slightly. Independent of [member pathing_sim_interval] and [member direct_sim_interval].
+			[b]Intervalo de Sim de Reflexiones[/b] — Segundos mínimos entre programaciones de simulaciones pesadas en reflexiones ([code]iplSimulatorRunReflections[/code]). [b]0[/b]: programar en cada ciclo de trabajo (mayor CPU). [b]0.1[/b]: como máximo una ola de programación de reflexiones cada ~100 ms (buen valor predeterminado). Valores más altos reducen el uso de CPU; las actualizaciones de IR en tiempo real pueden retrasarse ligeramente. Independiente de [member pathing_sim_interval] y [member direct_sim_interval].
 		</member>
 		<member name="pathing_sim_interval" type="float" default="0.1">
-			[b]Pathing Sim Interval[/b] — Minimum seconds between scheduling pathing-heavy simulation ([code]iplSimulatorRunPathing[/code]). Same semantics as [member reflections_sim_interval]; increase to stagger expensive pathing from reflections (e.g. path validation / alternate paths).
+			[b]Intervalo de Sim de Trazado de Rutas[/b] — Segundos mínimos entre programaciones de simulaciones pesadas en trazado de rutas ([code]iplSimulatorRunPathing[/code]). Misma semántica que [member reflections_sim_interval]; increméntalo para espaciar el costoso trazado de rutas de las reflexiones (por ejemplo, validación de rutas / rutas alternativas).
 		</member>
 		<member name="direct_sim_interval" type="float" default="0.0">
-			[b]Direct Sim Interval[/b] — Minimum seconds between [code]iplSimulatorRunDirect[/code] runs on worker ticks that do not already schedule reflections or pathing heavy passes (or when those are skipped). Use this to throttle **direct-path occlusion/transmission/air absorption** updates independently of [member reflections_sim_interval] and [member pathing_sim_interval].
-			[b]0[/b] (default): run direct simulation on every worker wake where the worker runs (same responsiveness as before this knob existed).
-			Small values (e.g. [b]0.02[/b]–[b]0.05[/b]): fewer direct updates when reflections/pathing are already sparse — lowers CPU; occlusion may react slightly slower until the next eligible tick.
-			When a tick schedules reflections or pathing, direct simulation still follows the worker’s combined scheduling for that wake.
+			[b]Intervalo de Sim Directo[/b] — Segundos mínimos entre ejecuciones de [code]iplSimulatorRunDirect[/code] en ciclos de trabajo que no programen ya pases pesados de reflexiones o de trazado de rutas (o cuando estos se omitan). Utilízalo para limitar las actualizaciones de **oclusión de ruta directa/transmisión/absorción de aire** independientemente de [member reflections_sim_interval] y [member pathing_sim_interval].
+			[b]0[/b] (por defecto): ejecuta la simulación directa en cada activación del hilo de trabajo donde este se ejecute (misma capacidad de respuesta que antes de que existiera este control).
+			Valores pequeños (por ejemplo, [b]0.02[/b]–[b]0.05[/b]): menos actualizaciones directas cuando las reflexiones/trazado de rutas ya son escasos (reduce el uso de CPU; la oclusión puede reaccionar un poco más lento hasta el próximo ciclo elegible).
+			Cuando un ciclo programa reflexiones o trazado de rutas, la simulación directa sigue la programación combinada del hilo de trabajo para esa activación.
 		</member>
 		<member name="simulation_cpu_cores_percent" type="float" default="0.15">
-			Fraction of CPU cores for Steam Audio simulation threads (0–1). Default 0.15; higher = more parallelism for reflections/pathing, more CPU.
+			Fracción de núcleos de CPU para hilos de simulación de Steam Audio (0–1). Por defecto 0.15; valores mayores equivalen a mayor paralelismo para reflexiones/trazado de rutas, pero mayor uso de CPU.
 		</member>
 		<member name="perspective_correction_enabled" type="bool" default="false">
-			Enable perspective correction for reverb.
+			Activa la corrección de perspectiva para la reverberación.
 		</member>
 		<member name="perspective_correction_factor" type="float" default="1.0">
-			Perspective correction factor (0.5–2.0).
+			Factor de corrección de perspectiva (0.5–2.0).
 		</member>
 	</members>
 </class>

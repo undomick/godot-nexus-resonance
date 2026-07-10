@@ -1,19 +1,19 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <class name="ResonancePlayer" inherits="AudioStreamPlayer3D" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
 	<brief_description>
-		A Steam Audio source that supports physics-based occlusion, transmission, and reverb.
+		Una fuente de Steam Audio que soporta oclusión, transmisión y reverberación basadas en la física.
 	</brief_description>
 	<description>
-		ResonancePlayer extends AudioStreamPlayer3D for sources that interact with Steam Audio geometry. Assign a [url=#ResonancePlayerConfig]ResonancePlayerConfig[/url] to [member player_config] to enable occlusion, distance attenuation, air absorption, and directivity. When [member player_config] is null, behaves as a normal AudioStreamPlayer3D (no Resonance processing).
-		[b]Polyphony:[/b] [code]max_polyphony[/code] (inherited from [AudioStreamPlayer3D]) may be &gt; 1. With [member player_config] set, each overlapping voice runs the full Resonance pipeline; all voices share one Steam Audio source handle at this node’s position (same occlusion/reverb simulation). Reverb split output sums wet audio from every active voice. [method get_audio_instrumentation] aggregates per-voice counters and includes [code]polyphony_voice_count[/code] while playing.
-		[b]Stream property:[/b] With [member player_config] set, [code]stream[/code] and [method get_stream] refer to your real [AudioStream] resource; the engine plays an internal wrapper. Changing [code]stream[/code] at runtime updates the wrapper without requiring a manual [method play] restart (existing playbacks may still decode the previous stream until stopped). Clearing [member player_config] restores the plain [AudioStreamPlayer3D] stream slot.
-		[b]AudioStreamPlayer3D inspector (when [member player_config] is set):[/b]
-		- [b]Works / applied in Resonance path:[/b] [code]volume_db[/code] / [code]volume_linear[/code] (applied in native [code]_mix[/code]), [code]max_db[/code] (ceiling combined with volume in native mix), [code]pitch_scale[/code] (via engine [code]rate_scale[/code] to the decoder), [code]max_polyphony[/code], transform, [code]autoplay[/code], [code]play[/code] / [code]stop[/code] / [code]seek[/code]. Dry and reverb buses are pushed from [url=#ResonancePlayerConfig]ResonancePlayerConfig[/url] via [ResonanceRuntime] ([code]bus_override[/code] / [code]reverb_bus_override[/code]); the inherited [code]bus[/code] on this node is still set at runtime but hidden in the inspector when a config is assigned.
-		- [b]Hidden in the inspector (inert with a config):[/b] [code]bus[/code] (use the config), the inherited distance/rolloff/filter knobs [code]attenuation_model[/code], [code]unit_size[/code], [code]max_distance[/code] ([code]_ready[/code] sets attenuation to disabled; use [url=#ResonancePlayerConfig]ResonancePlayerConfig[/url] for distance and curves), plus [code]emission_angle*[/code], [code]attenuation_filter*[/code], [code]panning_strength[/code], [code]area_mask[/code], [code]doppler_tracking[/code], and [code]playback_type[/code]. They stay visible when [member player_config] is null (plain AudioStreamPlayer3D). Saved values are kept either way.
-		[b]Reverb split:[/b] Child [code]ResonanceReverbOutput[/code] is a separate [AudioStreamPlayer]; set its [code]bus[/code] via [method set_reverb_split_output]. It does not automatically mirror the parent’s bus or mute — adjust both if your mix expects that.
-		Inspector documentation for resource properties: open [url=#ResonancePlayerConfig]ResonancePlayerConfig[/url] from here (sub-resources have no documentation button in the inspector).
-		[b]Scene tree:[/b] If this node is a [i]child[/i] of [ResonanceRuntime], Godot runs the player’s [code]_ready[/code] before the runtime’s [code]_ready[/code]. The extension retries registering the Steam source after the server initializes, so assigning [code]stream[/code] or calling [method play] / [method play_stream] in [code]_ready[/code] is fine. Prefer [method play_stream] in docs and templates; [method play] applies the same Resonance hookup (internal stream wrap, source handle, deferred simulation push, reverb split child).
-		[b]AnimationPlayer:[/b] [code]Animation.TYPE_AUDIO[/code] ([b]Audio Clips[/b]) uses [code]AudioStreamPolyphonic[/code]. Returning a [code]ResonanceStreamPlayback[/code] wrapper for that stream crashes on Windows before playback starts; the extension therefore uses [b]native[/b] polyphonic playback for that case (stable, but [b]dry[/b] for Resonance). For Steam with Audio Clips, enable [member convert_animation_audio_tracks_at_runtime] on this node (converts tracks once at runtime to [method play_animation_audio_clip]), use [b]Call Method[/b] keys manually, or the editor tools under [b]Project → Tools → Nexus Resonance[/b].
+		ResonancePlayer extiende a AudioStreamPlayer3D para fuentes que interactúan con la geometría de Steam Audio. Asigna un [url=#ResonancePlayerConfig]ResonancePlayerConfig[/url] a [member player_config] para activar la oclusión, la atenuación por distancia, la absorción del aire y la directividad. Cuando [member player_config] es nulo, se comporta como un AudioStreamPlayer3D normal (sin procesamiento de Resonance).
+		[b]Polifonía:[/b] [code]max_polyphony[/code] (heredado de [AudioStreamPlayer3D]) puede ser &gt; 1. Con [member player_config] configurado, cada voz superpuesta ejecuta el pipeline completo de Resonance; todas las voces comparten un único manejador de fuente de Steam Audio en la posición de este nodo (misma simulación de oclusión/reverberación). La salida dividida de reverberación (reverb split) suma el audio procesado (wet) de cada voz activa. [method get_audio_instrumentation] agrega los contadores por voz e incluye [code]polyphony_voice_count[/code] durante la reproducción.
+		[b]Propiedad Stream:[/b] Con [member player_config] configurado, [code]stream[/code] y [method get_stream] se refieren a tu recurso [AudioStream] real; el motor reproduce un envoltorio (wrapper) interno. Cambiar [code]stream[/code] en tiempo de ejecución actualiza el envoltorio sin necesidad de reiniciar manualmente con [method play] (las reproducciones existentes pueden seguir decodificando el flujo de audio anterior hasta que se detengan). Limpiar [member player_config] restaura la ranura del flujo de audio normal de [AudioStreamPlayer3D].
+		[b]Inspector de AudioStreamPlayer3D (cuando [member player_config] está configurado):[/b]
+		- [b]Funciona / se aplica en la ruta de Resonance:[/b] [code]volume_db[/code] / [code]volume_linear[/code] (aplicado en el [code]_mix[/code] nativo), [code]max_db[/code] (límite máximo combinado con el volumen en la mezcla nativa), [code]pitch_scale[/code] (a través de [code]rate_scale[/code] del motor al decodificador), [code]max_polyphony[/code], transformación, [code]autoplay[/code], [code]play[/code] / [code]stop[/code] / [code]seek[/code]. Los buses dry (sin procesar) y de reverberación se envían desde [url=#ResonancePlayerConfig]ResonancePlayerConfig[/url] a través de [ResonanceRuntime] ([code]bus_override[/code] / [code]reverb_bus_override[/code]); el [code]bus[/code] heredado en este nodo se sigue configurando en tiempo de ejecución, pero se oculta en el inspector cuando se asigna una configuración.
+		- [b]Oculto en el inspector (inerte con una configuración):[/b] [code]bus[/code] (usa la configuración), los controles heredados de distancia/atenuación/filtro [code]attenuation_model[/code], [code]unit_size[/code], [code]max_distance[/code] ([code]_ready[/code] desactiva la atenuación; usa [url=#ResonancePlayerConfig]ResonancePlayerConfig[/url] para distancia y curvas), además de [code]emission_angle*[/code], [code]attenuation_filter*[/code], [code]panning_strength[/code], [code]area_mask[/code], [code]doppler_tracking[/code] y [code]playback_type[/code]. Permanecen visibles cuando [member player_config] es nulo (AudioStreamPlayer3D estándar). Los valores guardados se conservan en ambos casos.
+		[b]División de reverberación (Reverb split):[/b] El nodo hijo [code]ResonanceReverbOutput[/code] es un [AudioStreamPlayer] separado; configura su [code]bus[/code] a través de [method set_reverb_split_output]. No refleja automáticamente el bus del padre ni se silencia; ajusta ambos si tu mezcla lo requiere.
+		Documentación del inspector para las propiedades de recursos: abre [url=#ResonancePlayerConfig]ResonancePlayerConfig[/url] desde aquí (los sub-recursos no tienen un botón de documentación en el inspector).
+		[b]Árbol de escenas:[/b] Si este nodo es un [i]hijo[/i] de [ResonanceRuntime], Godot ejecuta el [code]_ready[/code] del reproductor antes del [code]_ready[/code] del runtime. La extensión reintenta registrar la fuente de Steam después de que el servidor se inicializa, por lo que asignar [code]stream[/code] o llamar a [method play] / [method play_stream] en [code]_ready[/code] es correcto. Prefiere [method play_stream] en la documentación y plantillas; [method play] aplica la misma conexión de Resonance (envoltorio interno del stream, manejador de fuente, actualización deferida de simulación, hijo de división de reverberación).
+		[b]AnimationPlayer:[/b] [code]Animation.TYPE_AUDIO[/code] ([b]Audio Clips[/b]) utiliza [code]AudioStreamPolyphonic[/code]. Devolver un envoltorio [code]ResonanceStreamPlayback[/code] para ese flujo (stream) provoca un fallo (crash) en Windows antes de que comience la reproducción; por lo tanto, la extensión utiliza la reproducción polifónica [b]nativa[/b] para ese caso (estable, pero sin efectos [b]dry[/b] para Resonance). Para usar Steam Audio con Audio Clips, activa [member convert_animation_audio_tracks_at_runtime] en este nodo (convierte las pistas una vez en tiempo de ejecución a [method play_animation_audio_clip]), utiliza claves de [b]Call Method[/b] manualmente, o las herramientas del editor bajo [b]Proyecto → Herramientas → Nexus Resonance[/b].
 	</description>
 	<tutorials>
 	</tutorials>
@@ -22,14 +22,14 @@
 			<return type="void" />
 			<param index="0" name="from_position" type="float" default="0.0" />
 			<description>
-				Same as [method AudioStreamPlayer3D.play] for this class, plus when [member player_config] is set: wraps the stream in the internal Resonance playback path, ensures a Steam source handle exists (retries if [ResonanceServer] was not ready in [code]_ready[/code]), starts the reverb split child if present, and defers a playback-parameter push to the audio thread. Use this or [method play_stream]; both are supported.
+				Igual que [method AudioStreamPlayer3D.play] para esta clase, además de que cuando [member player_config] está configurado: envuelve el flujo en la ruta de reproducción interna de Resonance, garantiza que exista un manejador de fuente de Steam (reintenta si [ResonanceServer] no estaba listo en [code]_ready[/code]), inicia el hijo de división de reverberación si está presente y difiere el envío de parámetros de reproducción al hilo de audio. Utiliza este método o [method play_stream]; ambos están soportados.
 			</description>
 		</method>
 		<method name="play_stream">
 			<return type="void" />
 			<param index="0" name="from_position" type="float" default="0.0" />
 			<description>
-				Calls [method play] with the same [code]from_position[/code]. Kept for existing projects and tutorials.
+				Llama a [method play] con el mismo [code]from_position[/code]. Conservado para proyectos y tutoriales existentes.
 			</description>
 		</method>
 		<method name="play_animation_audio_clip">
@@ -37,19 +37,19 @@
 			<param index="0" name="stream" type="AudioStream" />
 			<param index="1" name="from_position" type="float" default="0.0" />
 			<description>
-				Sets [code]stream[/code] and calls [method play] with [code]from_position[/code] (typically the clip’s start offset / trim). Intended for [AnimationPlayer] [b]method[/b] tracks (or after [member convert_animation_audio_tracks_at_runtime] rewrote [code]TYPE_AUDIO[/code]; see class description).
+				Establece [code]stream[/code] y llama a [method play] con [code]from_position[/code] (típicamente el desfase de inicio / recorte del clip). Diseñado para pistas de tipo [b]método[/b] de [AnimationPlayer] (o después de que [member convert_animation_audio_tracks_at_runtime] reescriba [code]TYPE_AUDIO[/code]; ver la descripción de la clase).
 			</description>
 		</method>
 		<method name="get_audio_instrumentation">
 			<return type="Dictionary" />
 			<description>
-				Dropout/debug counters aggregated across all active polyphony voices when [member player_config] is set. Always includes a snapshot of selected Godot 3D player fields when [member player_config] is set: [code]godot_attenuation_model[/code], [code]godot_pitch_scale[/code], [code]godot_max_distance[/code], [code]godot_max_db[/code], [code]godot_unit_size[/code]. When at least one internal playback is active, also includes [code]polyphony_voice_count[/code] and the dropout counters. Empty dictionary when [member player_config] is null.
+				Contadores de pérdida de datos (dropouts) y depuración agregados de todas las voces de polifonía activas cuando [member player_config] está configurado. Siempre incluye una captura de campos seleccionados del reproductor 3D de Godot cuando [member player_config] está configurado: [code]godot_attenuation_model[/code], [code]godot_pitch_scale[/code], [code]godot_max_distance[/code], [code]godot_max_db[/code], [code]godot_unit_size[/code]. Cuando al menos una reproducción interna está activa, también incluye [code]polyphony_voice_count[/code] y los contadores de pérdida de datos. Devuelve un diccionario vacío cuando [member player_config] es nulo.
 			</description>
 		</method>
 		<method name="reset_audio_instrumentation">
 			<return type="void" />
 			<description>
-				Resets instrumentation counters on every active internal playback for this node.
+				Restablece los contadores de instrumentación en cada reproducción interna activa para este nodo.
 			</description>
 		</method>
 		<method name="build_directivity_gizmo_lines" qualifiers="static">
@@ -61,29 +61,29 @@
 			<param index="4" name="user_value" type="float" />
 			<param index="5" name="size" type="float" />
 			<description>
-				Returns a line list (pairs of [Vector3] vertices) describing a directivity wireframe gizmo in the player's local space (forward = [code]-Z[/code]). With [param enabled] and [param input_mode] = [code]0[/code] (Simulation Defined), draws the dipole polar curve [code]|(1 - weight) + weight * cos(theta)| ^ power[/code] as two meridians plus four azimuth rings. Otherwise draws a unit sphere (three great circles) plus a forward arrow; in User Defined mode ([param input_mode] = [code]1[/code]) the arrow is additionally scaled by [param user_value]. Used by both the editor gizmo and the runtime drawer so they stay visually identical; shape parameters typically come from the matching fields in [url=#ResonancePlayerConfig]ResonancePlayerConfig[/url].
+				Devuelve una lista de líneas (pares de vértices [Vector3]) que describen un gizmo de estructura de alambre de directividad en el espacio local del reproductor (hacia adelante = [code]-Z[/code]). Con [param enabled] y [param input_mode] = [code]0[/code] (definido por simulación), dibuja la curva polar dipolar [code]|(1 - weight) + weight * cos(theta)| ^ power[/code] as dos meridianos más cuatro anillos de acimut. De lo contrario, dibuja una esfera unitaria (tres círculos máximos) más una flecha hacia adelante; en el modo definido por el usuario ([param input_mode] = [code]1[/code]), la flecha se escala adicionalmente por [param user_value]. Utilizado tanto por el gizmo del editor como por el dibujante en tiempo de ejecución para que permanezcan visualmente idénticos; los parámetros de forma típicamente provienen de los campos correspondientes en [url=#ResonancePlayerConfig]ResonancePlayerConfig[/url].
 			</description>
 		</method>
 	</methods>
 	<members>
 		<member name="player_config" type="ResonancePlayerConfig" setter="set_player_config" getter="get_player_config">
-			[url=#ResonancePlayerConfig]ResonancePlayerConfig[/url] resource. When set, enables Steam Audio processing (occlusion, reverb, pathing, etc.). When null, acts as plain AudioStreamPlayer3D. All resource fields are documented on the linked page.
+			Recurso [url=#ResonancePlayerConfig]ResonancePlayerConfig[/url]. Cuando está configurado, activa el procesamiento de Steam Audio (oclusión, reverberación, trazado de rutas, etc.). Cuando es nulo, actúa como un AudioStreamPlayer3D normal. Todos los campos del recurso están documentados en la página enlazada.
 		</member>
 		<member name="pathing_probe_volume" type="NodePath" setter="set_pathing_probe_volume" getter="get_pathing_probe_volume">
-			Pathing: Optional ResonanceProbeVolume to use for path finding. Empty = use first loaded volume with pathing. Only used when player_config is set.
-			Note: Deleting a probe volume that is still referenced here can trigger a Godot engine error. Clear this property manually before deleting the volume if needed.
+			Trazado de rutas: [ResonanceProbeVolume] opcional que se utilizará para la búsqueda de rutas. Vacío = usar el primer volumen cargado con trazado de rutas. Solo se utiliza cuando player_config está configurado.
+			Nota: Eliminar un volumen de sondas que todavía esté referenciado aquí puede provocar un error en el motor Godot. Limpia esta propiedad manualmente antes de eliminar el volumen si es necesario.
 		</member>
 		<member name="exclude_from_debug" type="bool" setter="set_exclude_from_debug" getter="get_exclude_from_debug" default="false">
-			When true, this player is hidden from the debug overlay Audio Instrumentation list.
+			Cuando es true, este reproductor se oculta de la lista de instrumentación de audio en la superposición de depuración.
 		</member>
 		<member name="physics_ray_auto_exclude_collision_bodies" type="bool" setter="set_physics_ray_auto_exclude_collision_bodies" getter="get_physics_ray_auto_exclude_collision_bodies" default="true">
-			When [code]scene_type[/code] is Custom, registers every descendant [code]CollisionObject3D[/code] [RID] with [ResonanceServer] so Godot physics rays used for occlusion/reflections ignore those bodies. Disable if you intentionally want those colliders to block rays.
+			Cuando [code]scene_type[/code] is Custom, registra cada [code]CollisionObject3D[/code] [RID] descendiente en [ResonanceServer] para que los rayos de física de Godot utilizados para la oclusión/reflexiones ignoren esos cuerpos. Desactívalo si deseas intencionalmente que esos colisionadores bloqueen los rayos.
 		</member>
 		<member name="convert_animation_audio_tracks_at_runtime" type="bool" setter="set_convert_animation_audio_tracks_at_runtime" getter="get_convert_animation_audio_tracks_at_runtime" default="false">
-			When [member player_config] is set and this is [code]true[/code] (runtime only): spawns a helper that converts [code]Animation.TYPE_AUDIO[/code] tracks on the current scene targeting [ResonancePlayer] into [b]method[/b] keys calling [method play_animation_audio_clip], once per scene load. Required for Steam with Audio Clips because native polyphonic playback cannot be wrapped (see class description).
+			Cuando [member player_config] está configurado y esto es [code]true[/code] (solo en tiempo de ejecución): genera un ayudante que convierte las pistas [code]Animation.TYPE_AUDIO[/code] de la escena actual que apuntan a [ResonancePlayer] en claves de tipo [b]método[/b] que llaman a [method play_animation_audio_clip], una vez por cada carga de escena. Requerido para Steam Audio con Audio Clips porque la reproducción polifónica nativa no se puede envolver (ver la descripción de la clase).
 		</member>
 		<member name="show_directivity_gizmo" type="bool" setter="set_show_directivity_gizmo" getter="get_show_directivity_gizmo" default="false">
-			Wireframe visualization of the emission direction (forward axis [code]-Z[/code]) and directivity pattern (dipole for Simulation Defined, unit sphere + arrow otherwise). Controls visibility in [b]both[/b] the editor Scene viewport and the running scene: [code]true[/code] = shown everywhere, [code]false[/code] = hidden everywhere. Shape derives from [member player_config] ([code]directivity_enabled[/code], [code]directivity_input[/code], [code]directivity_weight[/code], [code]directivity_power[/code], [code]directivity_value[/code]) and updates automatically when those fields change. Independent from the Debug HUD toggles.
+			Visualización en estructura de alambre de la dirección de emisión (eje hacia adelante [code]-Z[/code]) y el patrón de directividad (dipolo para 'definido por simulación', esfera unitaria + flecha en caso contrario). Controla la visibilidad [b]tanto[/b] en la vista de escena (viewport) del editor como en la escena en ejecución: [code]true[/code] = se muestra en todas partes, [code]false[/code] = se oculta en todas partes. La forma se deriva de [member player_config] ([code]directivity_enabled[/code], [code]directivity_input[/code], [code]directivity_weight[/code], [code]directivity_power[/code], [code]directivity_value[/code]) y se aplica automáticamente cuando cambian esos campos. Independiente de los interruptores del HUD de depuración.
 		</member>
 	</members>
 </class>

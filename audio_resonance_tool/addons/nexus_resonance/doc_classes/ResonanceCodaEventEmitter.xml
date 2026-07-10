@@ -1,23 +1,23 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <class name="ResonanceCodaEventEmitter" inherits="Node3D" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../class.xsd">
 	<brief_description>
-		Experimental Coda event emitter with Resonance spatial sync. API subject to change.
+		Emisor de eventos Coda experimental con sincronización espacial de Resonance. API sujeta a cambios.
 	</brief_description>
 	<description>
-		Experimental and subject to change.
-		Plays a Nexus Coda event at this node's transform and links it to Steam Audio simulation.
-		Requires the [code]Coda[/code] autoload and [ResonanceRuntime] with [member ResonanceRuntime.coda_bridge_enabled] (active bridge from [method ResonanceRuntime.get_coda_bridge]).
-		[method play_event] passes this node's path as [code]_coda_spatial_emitter[/code] so the Coda bridge can drive occlusion on the voice.
+		Experimental y sujeto a cambios.
+		Reproduce un evento de Nexus Coda en la transformación de este nodo y lo vincula a la simulación de Steam Audio.
+		Requiere la carga automática (autoload) [code]Coda[/code] y [ResonanceRuntime] con [member ResonanceRuntime.coda_bridge_enabled] (puente activo desde [method ResonanceRuntime.get_coda_bridge]).
+		[method play_event] pasa la ruta de este nodo como [code]_coda_spatial_emitter[/code] para que el puente de Coda pueda controlar la oclusión en la voz.
 	</description>
 	<members>
 		<member name="event_path" type="String" setter="set_event_path" getter="get_event_path" default="&quot;event:/&quot;">
-			Coda event path used by [method play_event] when calling [code]Coda.play[/code]. Default [code]event:/[/code].
+			Ruta del evento Coda utilizada por [method play_event] al llamar a [code]Coda.play[/code]. Por defecto [code]event:/[/code].
 		</member>
 		<member name="auto_play" type="bool" setter="set_auto_play" getter="is_auto_play" default="false">
-			When true, calls [method play_event] once when the node becomes ready in play mode (deferred, after the bridge is resolved). Default false.
+			Cuando es true, llama a [method play_event] una vez cuando el nodo está listo en modo de juego (diferido, después de que se resuelva el puente). Por defecto false.
 		</member>
 		<member name="source_radius" type="float" setter="set_source_radius" getter="get_source_radius" default="1.0">
-			Source radius in meters (inspector range 0.01 to 100). Reserved for future per-source radius overrides; spatial sync today uses this node's transform only.
+			Radio de la fuente en metros (rango del inspector de 0.01 a 100). Reservado para futuras anulaciones del radio por fuente; la sincronización espacial actual utiliza únicamente la transformación de este nodo.
 		</member>
 	</members>
 	<methods>
@@ -25,14 +25,14 @@
 			<return type="Variant" />
 			<param index="0" name="params" type="Dictionary" default="{}" />
 			<description>
-				Starts Coda playback at [member event_path]. Merges [param params] with [code]_coda_spatial_emitter[/code] set to this node's path for bridge occlusion. Stops any voice already playing on this emitter first. Returns the Coda voice handle, or null if the Coda autoload or bridge is missing.
+				Inicia la reproducción de Coda en [member event_path]. Fusiona [param params] con [code]_coda_spatial_emitter[/code] configurado con la ruta de este nodo para la oclusión del puente. Detiene primero cualquier voz que ya se esté reproduciendo en este emisor. Devuelve el manejador (handle) de voz de Coda, o null si falta la carga automática de Coda o el puente.
 			</description>
 		</method>
 		<method name="stop_event">
 			<return type="void" />
 			<param index="0" name="fade_ms" type="int" default="0" />
 			<description>
-				Stops the active voice on this emitter. [param fade_ms] is the fade-out length in milliseconds (0 = immediate). No effect if nothing is playing.
+				Detiene la voz activa en este emisor. [param fade_ms] es la duración del desvanecimiento (fade-out) en milisegundos (0 = inmediato). No tiene efecto si no se está reproduciendo nada.
 			</description>
 		</method>
 		<method name="set_event_parameter">
@@ -40,7 +40,7 @@
 			<param index="0" name="name_or_id" type="String" />
 			<param index="1" name="value" type="Variant" />
 			<description>
-				Sets a Coda event parameter on the active voice ([param name_or_id], [param value]). No effect if [method play_event] has not started a voice or it was already stopped.
+				Establece un parámetro de evento Coda en la voz activa ([param name_or_id], [param value]). No tiene efecto si [method play_event] no ha iniciado una voz o si ya se detuvo.
 			</description>
 		</method>
 	</methods>

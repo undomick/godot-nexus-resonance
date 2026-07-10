@@ -56,7 +56,7 @@ func log_and_show_error(
 	var ei = _runner.get("editor_interface") if _runner else null
 	if ei:
 		resonance_editor_dialogs.show_error_dialog(
-			ei, tr(UIStrings.DIALOG_BAKE_FAILED_TITLE), message, cause, solution
+			ei, UIStrings.localize(UIStrings.DIALOG_BAKE_FAILED_TITLE), message, cause, solution
 		)
 	else:
 		var full_error := "Nexus Resonance: Bake error: " + message
@@ -92,7 +92,7 @@ func ensure_resonance_server_initialized(volumes: Array[Node]) -> bool:
 			)
 
 		var ei = _runner.get("editor_interface") if _runner else null
-		var msg := tr(UIStrings.WARN_RUNTIME_REQUIRED_EDITOR)
+		var msg := UIStrings.localize(UIStrings.WARN_RUNTIME_REQUIRED_EDITOR)
 
 		if ei:
 			resonance_editor_dialogs.show_warning(ei, msg)

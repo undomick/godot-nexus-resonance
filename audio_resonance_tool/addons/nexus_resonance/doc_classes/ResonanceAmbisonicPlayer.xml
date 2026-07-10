@@ -1,34 +1,34 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <class name="ResonanceAmbisonicPlayer" inherits="AudioStreamPlayer" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../class.xsd">
 	<brief_description>
-		Ambisonics (HOA) playback through Steam Audio: optional rotation, SN3D conversion, HRTF decode, and output leveling.
+		Reproducción de ambisónicos (HOA) a través de Steam Audio: rotación opcional, conversión SN3D, decodificación HRTF y nivelación de salida.
 	</brief_description>
 	<description>
-		Assign a [ResonanceAmbisonicInternalStream] to [member stream] (other types log a warning). Channel layout and order come from the stream's [member ResonanceAmbisonicInternalStream.ambisonic_order] and [member ResonanceAmbisonicInternalStream.channel_streams].
-		Listener orientation comes from the active [Camera3D] when available. When [member rotation_enabled] is on and an HOA bed orientation is resolved ([member use_bed_scene_orientation], optional [member ambisonic_orientation_node], or the first [Node3D] parent), the decoder orientation is derived from the bed's world transform and the listener's world-to-local rotation so the sound field can follow that node while head-tracking still comes from the camera.
-		The output is always Steam Audio decoded stereo, so [code]mix_target[/code] and [code]playback_type[/code] are hidden in the inspector. [code]max_polyphony[/code] (inherited) controls how many overlapping [code]play()[/code] calls Godot keeps alive; each voice runs a full HOA decode. Usual [code]stream[/code], [code]bus[/code], [code]volume_db[/code], [code]pitch_scale[/code], and [code]autoplay[/code] remain effective.
+		Asigna un [ResonanceAmbisonicInternalStream] a [member stream] (otros tipos registrarán una advertencia). La distribución y el orden de los canales provienen de [member ResonanceAmbisonicInternalStream.ambisonic_order] y [member ResonanceAmbisonicInternalStream.channel_streams] del flujo (stream).
+		La orientación del oyente proviene de la [Camera3D] activa cuando está disponible. Cuando [member rotation_enabled] está activado y se resuelve una orientación de cama (bed) HOA (mediante [member use_bed_scene_orientation], el nodo opcional [member ambisonic_orientation_node] o el primer ancestro [Node3D]), la orientación del decodificador se deriva de la transformación global de la cama (bed) y la rotación de global a local del oyente, de modo que el campo de sonido pueda seguir a ese nodo mientras que el seguimiento de cabeza (head-tracking) sigue proviniendo de la cámara.
+		La salida es siempre estéreo decodificado por Steam Audio, por lo que [code]mix_target[/code] y [code]playback_type[/code] están ocultos en el inspector. [code]max_polyphony[/code] (heredado) controla cuántas llamadas coincidentes a [code]play()[/code] mantiene activas Godot; cada voz ejecuta una decodificación HOA completa. Los habituales [code]stream[/code], [code]bus[/code], [code]volume_db[/code], [code]pitch_scale[/code] y [code]autoplay[/code] siguen siendo efectivos.
 	</description>
 	<tutorials>
 	</tutorials>
 	<members>
 		<member name="rotation_enabled" type="bool" setter="set_rotation_enabled" getter="is_rotation_enabled" default="true">
-			If [code]true[/code], decodes relative to listener head-tracking. When a scene HOA bed orientation is available (see [member use_bed_scene_orientation]), the pipeline combines the bed's transform with the listener before Ambisonics decode instead of leaving the bed fixed in world axes.
-			If [code]false[/code], HOA is treated as already world-aligned: decode orientation uses the listener pose only for panning/HRTF—similar to authoring the bed in fixed world axes.
+			Si es [code]true[/code], decodifica en relación con el seguimiento de cabeza del oyente. Cuando está disponible una orientación de cama (bed) HOA de la escena (ver [member use_bed_scene_orientation]), el pipeline combina la transformación de la cama con el oyente antes de la decodificación de ambisónicos en lugar de dejar la cama fija en los ejes del mundo.
+			Si es [code]false[/code], el HOA se trata como si ya estuviera alineado con el mundo: la orientación de la decodificación utiliza la pose del oyente solo para el paneo/HRTF, similar a la creación de la cama (bed) en ejes fijos del mundo.
 		</member>
 		<member name="use_bed_scene_orientation" type="bool" setter="set_use_bed_scene_orientation" getter="get_use_bed_scene_orientation" default="true">
-			When [code]true[/code] with [member rotation_enabled], the HOA bed inherits orientation from [member ambisonic_orientation_node] if set; otherwise from the nearest [Node3D] ancestor, so the Ambisonic frame moves with that spatial branch. Set to [code]false[/code] to keep a world-fixed bed even when nested under moving nodes—useful for authored world-coordinate clips.
+			Cuando es [code]true[/code] con [member rotation_enabled], la cama (bed) HOA hereda la orientación de [member ambisonic_orientation_node] si está configurado; de lo contrario, del ancestro [Node3D] más cercano, de modo que el marco ambisónico se mueva con esa rama espacial. Configura en [code]false[/code] para mantener una cama fija en el mundo incluso cuando está anidada bajo nodos en movimiento (útil para clips creados con coordenadas del mundo fijas).
 		</member>
 		<member name="ambisonic_orientation_node" type="NodePath" setter="set_ambisonic_orientation_node" getter="get_ambisonic_orientation_node" default="NodePath()">
-			Optional [Node3D] defining the HOA bed basis (typically the object the sound field follows). Leave empty to use the first [Node3D] found when walking up from this player toward the scene root.
+			Nodo [Node3D] opcional que define la base de la cama (bed) HOA (típicamente el objeto que sigue el campo de sonido). Deja vacío para usar el primer [Node3D] encontrado al subir desde este reproductor hacia la raíz de la escena.
 		</member>
 		<member name="apply_hrtf" type="bool" setter="set_apply_hrtf" getter="get_apply_hrtf" default="true">
-			Use Steam Audio HRTF for binaural stereo decoding when an HRTF is loaded on [ResonanceServer]. When off or when no HRTF is available, decoding uses loudspeaker panning (lower CPU, less externalization). Matches the intent of common engines' [i]Apply HRTF[/i] toggle on Ambisonic listeners.
+			Utiliza Steam Audio HRTF para decodificación estéreo binaural cuando se carga un HRTF en [ResonanceServer]. Cuando está desactivado o cuando no hay ningún HRTF disponible, la decodificación utiliza el paneo de altavoces (menor uso de CPU, menor externalización). Coincide con la intención de la opción [i]Apply HRTF[/i] de los motores comunes en oyentes ambisónicos.
 		</member>
 		<member name="input_is_sn3d" type="bool" setter="set_input_is_sn3d" getter="get_input_is_sn3d" default="true">
-			If [code]true[/code], Ambisonic channel samples are treated as [url=https://en.wikipedia.org/wiki/Ambisonic_data_exchange_formats]SN3D[/url]-normalized (common for third-party Ambisonic assets); internally converted to N3D before rotation/decode. Set to [code]false[/code] only if your [member stream] channels are already N3D (or you know your toolchain outputs N3D directly).
+			Si es [code]true[/code], las muestras de los canales ambisónicos se tratan como normalizadas por [url=https://en.wikipedia.org/wiki/Ambisonic_data_exchange_formats]SN3D[/url] (común para recursos ambisónicos de terceros); internamente se convierten a N3D antes de la rotación/decodificación. Configura en [code]false[/code] solo si los canales de tu [member stream] ya son N3D (o si sabes que tu flujo de trabajo produce N3D directamente).
 		</member>
 		<member name="apply_output_gain" type="bool" setter="set_apply_output_gain" getter="get_apply_output_gain" default="true">
-			If [code]true[/code], applies the usual Ambisonic decoder nominal scaling ([code]1/sqrt(4*pi)[/code]) after decode so a constant omnidirectional (W-only) input has comparable peak level to an unspatialized mono clip. Disable if you normalize or gain-stage elsewhere.
+			Si es [code]true[/code], aplica la escala nominal habitual del decodificador ambisónico ([code]1/sqrt(4*pi)[/code]) después de la decodificación para que una entrada omnidireccional constante (solo W) tenga un nivel de pico comparable a un clip mono sin espacializar. Desactívalo si normalizas o ajustas la ganancia en otra parte.
 		</member>
 	</members>
 </class>

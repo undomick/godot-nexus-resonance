@@ -1,19 +1,19 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <class name="ResonanceGeometryAsset" inherits="Resource" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../class.xsd">
 	<brief_description>
-		Stores serialized Steam Audio mesh data for dynamic geometry (export/load workflow).
+		Almacena los datos de malla de Steam Audio serializados para geometría dinámica (flujo de trabajo de exportación/carga).
 	</brief_description>
 	<description>
-		Holds data from iplStaticMeshSave. Assign to ResonanceGeometry.mesh_asset when dynamic=true for faster runtime load and better stability. Create via "Nexus Resonance/Export Dynamic Mesh" with a ResonanceGeometry selected.
+		Contiene los datos de iplStaticMeshSave. Asígnalo a ResonanceGeometry.mesh_asset cuando dynamic=true para una carga en tiempo de ejecución más rápida y mejor estabilidad. Créalo a través de 'Nexus Resonance/Export Dynamic Mesh' con un ResonanceGeometry seleccionado.
 	</description>
 	<tutorials>
 	</tutorials>
 	<members>
 		<member name="mesh_data" type="PackedByteArray" setter="set_mesh_data" getter="get_mesh_data">
-			Serialized Phonon mesh bytes. Set automatically during export.
+			Bytes de la malla de Phonon serializados. Se establece automáticamente durante la exportación.
 		</member>
 		<member name="triangle_count" type="int" setter="set_triangle_count" getter="get_triangle_count">
-			Triangle count (set during export, used for notify_geometry_changed).
+			Número de triángulos (se establece durante la exportación, se utiliza para notify_geometry_changed).
 		</member>
 	</members>
 </class>

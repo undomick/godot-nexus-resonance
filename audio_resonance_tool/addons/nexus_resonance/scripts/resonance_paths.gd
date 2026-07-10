@@ -6,9 +6,9 @@ class_name ResonancePaths
 const PATH_AUDIO_DATA := "res://audio_data/"
 const PATH_RESONANCE_MESHES := "res://resonance_meshes/"
 
-const _OUTPUT_DIR_SETTING := "nexus/resonance/bake/default_output_directory"
-const _STATIC_SCENE_FORMAT_SETTING := "nexus/resonance/export/static_scene_asset_format"
-const _PROBE_DATA_FORMAT_SETTING := "nexus/resonance/export/probe_data_format"
+const _OUTPUT_DIR_SETTING := "nexus/nexus_resonance/bake/default_output_directory"
+const _STATIC_SCENE_FORMAT_SETTING := "nexus/nexus_resonance/export/static_scene_asset_format"
+const _PROBE_DATA_FORMAT_SETTING := "nexus/nexus_resonance/export/probe_data_format"
 
 
 static func _export_setting_use_res(setting_key: String) -> bool:
@@ -25,7 +25,7 @@ static func _export_setting_use_res(setting_key: String) -> bool:
 
 ## Project Setting output dir (with legacy key fallback). Trailing [code]/[/code]. Default [constant PATH_AUDIO_DATA].
 static func get_audio_data_dir() -> String:
-	const LEGACY := "nexus/resonance/bake/output_dir"
+	const LEGACY := "nexus/nexus_resonance/bake/output_dir"
 	var key := _OUTPUT_DIR_SETTING
 	if not ProjectSettings.has_setting(key) and ProjectSettings.has_setting(LEGACY):
 		key = LEGACY

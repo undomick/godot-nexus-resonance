@@ -23,7 +23,7 @@ macos.release.x86_64 = "res://addons/nexus_resonance/bin/macos/libnexus_resonanc
 ; Android (arm64)
 android.debug.arm64 = "res://addons/nexus_resonance/bin/android/arm64-v8a/libnexus_resonance.so"
 android.release.arm64 = "res://addons/nexus_resonance/bin/android/arm64-v8a/libnexus_resonance.so"
-android.arm64-v8a = "res://addons/nexus_resonance/bin/android/arm64-v8a/libnexus_resonance.so"
+android.arm64 = "res://addons/nexus_resonance/bin/android/arm64-v8a/libnexus_resonance.so"
 
 ; Android (x86_64)
 android.debug.x86_64 = "res://addons/nexus_resonance/bin/android/x86_64/libnexus_resonance.so"

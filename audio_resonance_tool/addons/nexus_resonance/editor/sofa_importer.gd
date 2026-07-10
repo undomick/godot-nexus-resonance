@@ -10,7 +10,7 @@ func _get_importer_name() -> String:
 
 
 func _get_visible_name() -> String:
-	return "Nexus Resonance SOFA HRTF"
+	return tr("Nexus Resonance SOFA HRTF")
 
 
 func _get_recognized_extensions() -> PackedStringArray:
@@ -66,7 +66,7 @@ func _import(
 		return ERR_FILE_CANT_READ
 
 	if not ClassDB.class_exists("ResonanceSOFAAsset"):
-		push_error("Nexus Resonance: ResonanceSOFAAsset not available.")
+		push_error(tr("Nexus Resonance: ResonanceSOFAAsset not available."))
 		return ERR_UNAVAILABLE
 
 	var asset: Resource = ClassDB.instantiate("ResonanceSOFAAsset")

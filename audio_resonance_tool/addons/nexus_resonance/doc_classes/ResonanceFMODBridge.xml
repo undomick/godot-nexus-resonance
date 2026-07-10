@@ -1,33 +1,33 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <class name="ResonanceFMODBridge" inherits="Object" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../class.xsd">
 	<brief_description>
-		Optional bridge connecting Nexus Resonance (Steam Audio) with FMOD Studio via phonon_fmod plugin.
+		Puente opcional que conecta Nexus Resonance (Steam Audio) con FMOD Studio a través del plugin phonon_fmod.
 	</brief_description>
 	<description>
-		When using fmod-gdextension with Nexus Resonance, the bridge loads the Steam Audio FMOD plugin dynamically and passes ResonanceServer's context, HRTF, simulation settings, and reverb source to it. Use resonance_fmod_bridge.gd for GDScript access. See docs/FMOD_BRIDGE.md for setup.
+		Cuando se utiliza fmod-gdextension con Nexus Resonance, el puente carga el plugin de FMOD de Steam Audio de forma dinámica y le pasa el contexto de ResonanceServer, HRTF, la configuración de la simulación y la fuente de reverberación. Utiliza resonance_fmod_bridge.gd para el acceso desde GDScript. Consulta docs/FMOD_BRIDGE.md para la configuración.
 	</description>
 	<methods>
 		<method name="init_bridge">
 			<return type="bool" />
-			<description>Initialize: load plugin and call iplFMODInitialize etc. Requires ResonanceServer initialized. Returns true on success.</description>
+			<description>Inicializa: carga el plugin y llama a iplFMODInitialize, etc. Requiere que ResonanceServer esté inicializado. Devuelve true en caso de éxito.</description>
 		</method>
 		<method name="shutdown_bridge">
 			<return type="void" />
-			<description>Shutdown and unload plugin.</description>
+			<description>Cierra y descarga el plugin.</description>
 		</method>
 		<method name="is_bridge_loaded" qualifiers="const">
 			<return type="bool" />
-			<description>Whether the plugin is loaded.</description>
+			<description>Indica si el plugin está cargado.</description>
 		</method>
 		<method name="add_fmod_source">
 			<return type="int" />
 			<param index="0" name="resonance_source_handle" type="int" />
-			<description>Register Resonance source for FMOD Spatializer. Returns handle for DSP parameter.</description>
+			<description>Registra una fuente de Resonance para el Spatializer de FMOD. Devuelve el manejador (handle) para el parámetro DSP.</description>
 		</method>
 		<method name="remove_fmod_source">
 			<return type="void" />
 			<param index="0" name="fmod_handle" type="int" />
-			<description>Unregister when FMOD event stops.</description>
+			<description>Anula el registro cuando se detiene el evento de FMOD.</description>
 		</method>
 	</methods>
 </class>
