@@ -147,7 +147,9 @@ static func update_volume_bake_targets_from_scan(vol: Node) -> Dictionary:
 	scan_arr = cleaned
 
 	if scan_arr.is_empty():
-		push_warning("ResonanceBakeDiscovery: scan_targets is empty; clearing bake_sources and bake_listeners.")
+		push_warning(
+			"ResonanceBakeDiscovery: scan_targets is empty; clearing bake_sources and bake_listeners."
+		)
 		vol.set("bake_sources", [])
 		vol.set("bake_listeners", [])
 		return result
@@ -158,7 +160,9 @@ static func update_volume_bake_targets_from_scan(vol: Node) -> Dictionary:
 		var path := NodePath(str(path_val)) if path_val else NodePath()
 		var n := _resolve_nodepath(vol, root, path)
 		if n == null:
-			push_warning("ResonanceBakeDiscovery: scan_targets entry could not be resolved: %s" % str(path))
+			push_warning(
+				"ResonanceBakeDiscovery: scan_targets entry could not be resolved: %s" % str(path)
+			)
 			continue
 		result["scan_roots_used"] = int(result["scan_roots_used"]) + 1
 		_collect_bake_targets_under(n, source_nodes, listener_nodes)
