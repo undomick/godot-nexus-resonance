@@ -144,6 +144,15 @@ void ResonanceLog::warn(const String& p_msg) {
     }
 }
 
+void ResonanceLog::warn_cstr(const char* p_msg) {
+    if (current_level < LEVEL_WARN)
+        return;
+    const char* body = (p_msg && p_msg[0]) ? p_msg : "";
+    if (!on_main_thread())
+        std::cout << "Nexus Resonance: " << body << std::endl;
+    log_utf8(PostedLevel::Warn, "warn", body);
+}
+
 void ResonanceLog::error(const String& p_msg) {
     if (current_level >= LEVEL_ERROR) {
         String full_msg = "Nexus Resonance: " + p_msg;
@@ -151,6 +160,15 @@ void ResonanceLog::error(const String& p_msg) {
             std::cerr << full_msg.utf8().get_data() << std::endl;
         log_utf8(PostedLevel::Error, "error", full_msg.utf8().get_data());
     }
+}
+
+void ResonanceLog::error_cstr(const char* p_msg) {
+    if (current_level < LEVEL_ERROR)
+        return;
+    const char* body = (p_msg && p_msg[0]) ? p_msg : "";
+    if (!on_main_thread())
+        std::cerr << "Nexus Resonance: " << body << std::endl;
+    log_utf8(PostedLevel::Error, "error", body);
 }
 
 void ResonanceLog::trace(const String& p_msg) {

@@ -68,6 +68,12 @@ class ResonanceProbeData : public Resource {
 /// Returns [code]res[/code] or [code]tres[/code] from ProjectSettings [code]nexus/resonance/export/probe_data_format[/code].
 String resonance_probe_data_save_extension_from_settings();
 
+/// Bake output root from Project Settings (trailing slash). Default [code]res://resonance_data/[/code].
+String resonance_bake_output_root_from_settings();
+
+/// [code]{{root}}batches/[/code] under the bake output root (trailing slash).
+String resonance_bake_batches_dir_from_settings();
+
 } // namespace godot
 
 #endif

@@ -28,10 +28,16 @@ struct RuntimeSceneState {
     std::atomic<bool>* scene_dirty;
     std::vector<IPLScene>& sub_scenes;
     std::vector<IPLInstancedMesh>& instanced_meshes;
+    /// Parallel to instanced_meshes / sub_scenes (world transform at add time).
+    std::vector<IPLMatrix4x4>& instanced_transforms;
+    /// Optional: parallel to sub_scenes. Instanced StaticMesh retains (must Remove from sub before Release).
+    std::vector<IPLStaticMesh>* meshes_in_sub = nullptr;
 
     RuntimeSceneState(std::vector<IPLStaticMesh>& m, int& tc, std::vector<int>& di, std::atomic<int>* gtc, std::atomic<bool>* sd,
-                      std::vector<IPLScene>& ss, std::vector<IPLInstancedMesh>& im)
-        : meshes(m), tri_count(tc), debug_ids(di), global_triangle_count(gtc), scene_dirty(sd), sub_scenes(ss), instanced_meshes(im) {}
+                      std::vector<IPLScene>& ss, std::vector<IPLInstancedMesh>& im, std::vector<IPLMatrix4x4>& it,
+                      std::vector<IPLStaticMesh>* mis = nullptr)
+        : meshes(m), tri_count(tc), debug_ids(di), global_triangle_count(gtc), scene_dirty(sd), sub_scenes(ss), instanced_meshes(im),
+          instanced_transforms(it), meshes_in_sub(mis) {}
 };
 
 /// Manages scene I/O, static meshes from assets, save/load, export, and hash.
@@ -55,7 +61,8 @@ class ResonanceSceneManager {
 
     void add_static_scene_from_asset(IPLContext ctx, IPLScene scene, const Ref<ResonanceGeometryAsset>& asset,
                                      RayTraceDebugContext* debug_ctx, bool wants_debug_viz, RuntimeSceneState& state,
-                                     const Transform3D& transform, IPLSceneType scene_type, IPLEmbreeDevice embree, IPLRadeonRaysDevice radeon);
+                                     const Transform3D& transform, IPLSceneType scene_type, IPLEmbreeDevice embree, IPLRadeonRaysDevice radeon,
+                                     bool force_instanced = false);
 
     void load_static_scene_from_asset(IPLContext ctx, IPLScene scene, const Ref<ResonanceGeometryAsset>& asset,
                                       RayTraceDebugContext* debug_ctx, bool wants_debug_viz, RuntimeSceneState& state,
@@ -71,7 +78,8 @@ class ResonanceSceneManager {
     int64_t get_static_scene_hash(Node* scene_root, std::function<uint64_t(const PackedByteArray&)> hash_fn);
 
   private:
-    /// export_root: same as initial scene_root; nested ResonanceStaticScene with valid asset prunes subtree (not the root itself).
+    /// export_root: same as initial scene_root. Nested ResonanceStaticScene always prunes. PackedScene instance
+    /// roots (non-empty scene_file_path) that contain an RSS prune the whole instance. The export root is never pruned.
     static void collect_static_geometry_recursive(Node* node, Node* export_root, std::vector<ResonanceGeometry*>& out);
     /// When \p out_mat_indices is non-null, \p out_materials must also be non-null (and vice versa).
     static void collect_static_mesh_data(Node* scene_root, std::vector<IPLVector3>& out_vertices,

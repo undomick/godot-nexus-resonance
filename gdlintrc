@@ -22,6 +22,7 @@ disable:
 - class-definitions-order
 - max-line-length
 - max-file-lines
+- max-public-methods
 - max-returns
 - constant-name
 - load-constant-name

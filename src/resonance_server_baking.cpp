@@ -2,6 +2,7 @@
 #include "resonance_geometry_asset.h"
 #include "resonance_ipl_guard.h"
 #include "resonance_log.h"
+#include "resonance_probe_exclusion_filter.h"
 #include "resonance_reflection_ir_fingerprint.h"
 #include "resonance_server.h"
 #include "resonance_utils.h"
@@ -19,13 +20,55 @@ void bake_progress_callback(float p, void* ud) {
     static_cast<godot::ResonanceServer*>(ud)->emit_bake_progress(p);
 }
 
-void release_bake_temp_scene(IPLStaticMesh temp_mesh, IPLScene temp_scene) {
-    if (temp_mesh && temp_scene) {
-        iplStaticMeshRemove(temp_mesh, temp_scene);
-        iplStaticMeshRelease(&temp_mesh);
+bool clone_static_mesh_into_scene(IPLContext ctx, IPLScene dest, IPLStaticMesh src, std::vector<IPLStaticMesh>& out_meshes) {
+    if (!ctx || !dest || !src)
+        return false;
+    IPLSerializedObjectSettings serialSettings{};
+    IPLSerializedObject serialObj = nullptr;
+    if (iplSerializedObjectCreate(ctx, &serialSettings, &serialObj) != IPL_STATUS_SUCCESS)
+        return false;
+    iplStaticMeshSave(src, serialObj);
+    IPLStaticMesh loaded = nullptr;
+    const IPLerror load_err = iplStaticMeshLoad(dest, serialObj, nullptr, nullptr, &loaded);
+    iplSerializedObjectRelease(&serialObj);
+    if (load_err != IPL_STATUS_SUCCESS || !loaded)
+        return false;
+    iplStaticMeshAdd(loaded, dest);
+    out_meshes.push_back(loaded);
+    return true;
+}
+
+bool clone_sub_scene_as_instanced(IPLContext ctx, IPLScene dest, IPLScene src_sub, const IPLMatrix4x4& transform,
+                                  IPLSceneType scene_type, IPLEmbreeDevice embree, IPLRadeonRaysDevice radeon,
+                                  std::vector<IPLScene>& out_subs, std::vector<IPLInstancedMesh>& out_instanced) {
+    if (!ctx || !dest || !src_sub)
+        return false;
+    IPLSerializedObjectSettings serialSettings{};
+    IPLSerializedObject serialObj = nullptr;
+    if (iplSerializedObjectCreate(ctx, &serialSettings, &serialObj) != IPL_STATUS_SUCCESS)
+        return false;
+    iplSceneSave(src_sub, serialObj);
+    IPLSceneSettings subSettings{};
+    subSettings.type = scene_type;
+    subSettings.embreeDevice = embree;
+    subSettings.radeonRaysDevice = radeon;
+    IPLScene new_sub = nullptr;
+    const IPLerror load_err = iplSceneLoad(ctx, &subSettings, serialObj, nullptr, nullptr, &new_sub);
+    iplSerializedObjectRelease(&serialObj);
+    if (load_err != IPL_STATUS_SUCCESS || !new_sub)
+        return false;
+    IPLInstancedMeshSettings instSettings{};
+    instSettings.subScene = new_sub;
+    instSettings.transform = transform;
+    IPLInstancedMesh inst = nullptr;
+    if (iplInstancedMeshCreate(dest, &instSettings, &inst) != IPL_STATUS_SUCCESS) {
+        iplSceneRelease(&new_sub);
+        return false;
     }
-    if (temp_scene)
-        iplSceneRelease(&temp_scene);
+    iplInstancedMeshAdd(inst, dest);
+    out_subs.push_back(new_sub);
+    out_instanced.push_back(inst);
+    return true;
 }
 } // namespace
 
@@ -41,25 +84,22 @@ PackedVector3Array ResonanceServer::generate_probes_scene_aware(const Transform3
         return out;
     if (generation_type != ResonanceBaker::GEN_CENTROID && generation_type != ResonanceBaker::GEN_UNIFORM_FLOOR)
         return out;
-    IPLScene temp_scene = nullptr;
-    IPLStaticMesh temp_mesh = nullptr;
-    IPLScene bake_scene = nullptr;
-    bool bake_uses_live_scene = false;
+    BakeSceneScratch scratch;
     {
         std::lock_guard<std::mutex> lock(simulation_mutex);
         if (scene_dirty) {
             iplSceneCommit(scene);
-            scene_dirty = false;
+            scene_dirty.store(false, std::memory_order_release);
         }
-        bake_scene = _prepare_bake_scene(&temp_scene, &temp_mesh);
-        bake_uses_live_scene = (temp_scene == nullptr && bake_scene == scene);
+        if (!_prepare_bake_scene(scratch))
+            return out;
     }
-    if (!bake_scene)
+    if (!scratch.scene)
         return out;
     IPLProbeArray probeArray = nullptr;
     if (iplProbeArrayCreate(_ctx(), &probeArray) != IPL_STATUS_SUCCESS) {
         ResonanceLog::error("ResonanceServer: iplProbeArrayCreate failed (generate_probes_scene_aware).");
-        release_bake_temp_scene(temp_mesh, temp_scene);
+        _release_bake_scene_scratch(scratch);
         return out;
     }
     IPLProbeGenerationParams genParams{};
@@ -67,19 +107,14 @@ PackedVector3Array ResonanceServer::generate_probes_scene_aware(const Transform3
     genParams.spacing = spacing;
     genParams.height = height_above_floor;
     genParams.transform = ResonanceUtils::create_volume_transform_rotated(volume_transform, extents);
-    if (bake_uses_live_scene) {
-        std::lock_guard<std::mutex> lock(simulation_mutex);
-        iplProbeArrayGenerateProbes(probeArray, bake_scene, &genParams);
-    } else {
-        iplProbeArrayGenerateProbes(probeArray, bake_scene, &genParams);
-    }
+    iplProbeArrayGenerateProbes(probeArray, scratch.scene, &genParams);
     int num_probes = iplProbeArrayGetNumProbes(probeArray);
     for (int i = 0; i < num_probes; i++) {
         IPLSphere sphere = iplProbeArrayGetProbe(probeArray, i);
         out.push_back(ResonanceUtils::to_godot_vector3(sphere.center));
     }
     iplProbeArrayRelease(&probeArray);
-    release_bake_temp_scene(temp_mesh, temp_scene);
+    _release_bake_scene_scratch(scratch);
     return out;
 }
 
@@ -88,33 +123,207 @@ void ResonanceServer::set_bake_pipeline_pathing(bool p_pathing) {
 }
 
 void ResonanceServer::set_bake_static_scene_asset(const Ref<ResonanceGeometryAsset>& p_asset) {
-    _bake_static_scene_asset = p_asset;
+    _bake_static_scene_assets.clear();
+    _bake_static_scene_transforms.clear();
+    if (p_asset.is_valid() && p_asset->is_valid()) {
+        _bake_static_scene_assets.push_back(p_asset);
+        _bake_static_scene_transforms.push_back(Transform3D());
+    }
+}
+
+void ResonanceServer::set_bake_static_scenes_from_assets(const TypedArray<ResonanceGeometryAsset>& assets,
+                                                         const TypedArray<Transform3D>& transforms) {
+    _bake_static_scene_assets.clear();
+    _bake_static_scene_transforms.clear();
+    const int n = assets.size();
+    const int n_xf = transforms.size();
+    for (int i = 0; i < n; i++) {
+        Ref<ResonanceGeometryAsset> asset = assets[i];
+        if (asset.is_null() || !asset->is_valid())
+            continue;
+        _bake_static_scene_assets.push_back(asset);
+        _bake_static_scene_transforms.push_back((i < n_xf) ? Transform3D(transforms[i]) : Transform3D());
+    }
+}
+
+bool ResonanceServer::_has_bake_static_scene_assets() const {
+    for (const Ref<ResonanceGeometryAsset>& asset : _bake_static_scene_assets) {
+        if (asset.is_valid() && asset->is_valid())
+            return true;
+    }
+    return false;
+}
+
+void ResonanceServer::_release_static_pack_assume_locked(RuntimeStaticPack& pack) {
+    if (pack.debug_id >= 0) {
+        ray_trace_debug_context_.unregister_mesh(pack.debug_id);
+        pack.debug_id = -1;
+    }
+    if (pack.instanced && scene) {
+        iplInstancedMeshRemove(pack.instanced, scene);
+        iplInstancedMeshRelease(&pack.instanced);
+    }
+    pack.instanced = nullptr;
+    if (pack.mesh_in_sub && pack.sub_scene) {
+        iplStaticMeshRemove(pack.mesh_in_sub, pack.sub_scene);
+        iplStaticMeshRelease(&pack.mesh_in_sub);
+    }
+    pack.mesh_in_sub = nullptr;
+    if (pack.sub_scene) {
+        iplSceneRelease(&pack.sub_scene);
+        pack.sub_scene = nullptr;
+    }
+    if (pack.tri_count > 0) {
+        const int sub = pack.tri_count;
+        const int prev = global_triangle_count.fetch_sub(sub, std::memory_order_release);
+        if (prev < sub)
+            global_triangle_count.store(0, std::memory_order_release);
+        _runtime_static_triangle_count -= sub;
+        if (_runtime_static_triangle_count < 0)
+            _runtime_static_triangle_count = 0;
+        pack.tri_count = 0;
+    }
+    scene_dirty.store(true, std::memory_order_release);
+}
+
+void ResonanceServer::_clear_static_packs_assume_locked() {
+    for (auto& kv : _runtime_static_packs) {
+        _release_static_pack_assume_locked(kv.second);
+    }
+    _runtime_static_packs.clear();
+    _runtime_static_triangle_count = 0;
+}
+
+bool ResonanceServer::_create_instanced_static_pack_assume_locked(const Ref<ResonanceGeometryAsset>& asset,
+                                                                  const Transform3D& transform, RuntimeStaticPack& out) {
+    out = RuntimeStaticPack{};
+    if (!asset.is_valid() || !asset->is_valid() || !scene || !_ctx())
+        return false;
+
+    std::vector<IPLStaticMesh> meshes;
+    std::vector<IPLStaticMesh> meshes_in_sub;
+    std::vector<IPLScene> subs;
+    std::vector<IPLInstancedMesh> insts;
+    std::vector<IPLMatrix4x4> xfs;
+    std::vector<int> debug_ids;
+    int tri = 0;
+    // Do not touch global_triangle_count here - add_static_scene_from_asset updates it; we copy tri into the pack.
+    std::atomic<int> unused_gtc{0};
+    std::atomic<bool> unused_dirty{false};
+    RuntimeSceneState state(meshes, tri, debug_ids, &unused_gtc, &unused_dirty, subs, insts, xfs, &meshes_in_sub);
+    scene_manager_.add_static_scene_from_asset(_ctx(), scene, asset, &ray_trace_debug_context_, wants_debug_reflection_viz(),
+                                               state, transform, _tracer_type_for_mesh_operations(), _embree(), _radeon(),
+                                               true /* force_instanced */);
+    if (insts.empty() || subs.empty())
+        return false;
+
+    // add_static_scene_from_asset with unused_gtc did not update global_triangle_count - fix that.
+    const int added_tri = asset->get_triangle_count();
+    if (added_tri > 0)
+        global_triangle_count.fetch_add(added_tri, std::memory_order_release);
+    scene_dirty.store(true, std::memory_order_release);
+
+    out.sub_scene = subs[0];
+    out.instanced = insts[0];
+    out.transform = xfs[0];
+    out.mesh_in_sub = meshes_in_sub.empty() ? nullptr : meshes_in_sub[0];
+    out.debug_id = debug_ids.empty() ? -1 : debug_ids[0];
+    out.tri_count = added_tri;
+    // Prevent clear_static_scenes-style double-free: we stole the handles into out.
+    return true;
 }
 
 void ResonanceServer::clear_static_scenes() {
     if (!_ctx() || !scene)
         return;
     std::lock_guard<std::mutex> lock(simulation_mutex);
-    RuntimeSceneState state(_runtime_static_meshes, _runtime_static_triangle_count, _runtime_static_debug_mesh_ids,
-                            &global_triangle_count, &scene_dirty, _runtime_static_sub_scenes, _runtime_static_instanced_meshes);
-    scene_manager_.clear_static_scenes(scene, &ray_trace_debug_context_, state);
+    _clear_static_packs_assume_locked();
+    reset_spatial_audio_warmup_passes();
+}
+
+void ResonanceServer::remove_static_pack(uint64_t object_id) {
+    if (!_ctx() || !scene || object_id == 0)
+        return;
+    std::lock_guard<std::mutex> lock(simulation_mutex);
+    auto it = _runtime_static_packs.find(object_id);
+    if (it == _runtime_static_packs.end())
+        return;
+    _release_static_pack_assume_locked(it->second);
+    _runtime_static_packs.erase(it);
+    reset_spatial_audio_warmup_passes();
+}
+
+void ResonanceServer::add_or_replace_static_pack(uint64_t object_id, const Ref<ResonanceGeometryAsset>& p_asset,
+                                                 const Transform3D& p_transform) {
+    if (!_ctx() || !scene || object_id == 0)
+        return;
+    if (_scene_type() == IPL_SCENETYPE_CUSTOM) {
+        UtilityFunctions::push_warning(
+            "Nexus Resonance: add_or_replace_static_pack has no effect when scene_type is Custom (Godot Physics).");
+        return;
+    }
+    std::lock_guard<std::mutex> lock(simulation_mutex);
+    if (!p_asset.is_valid() || !p_asset->is_valid()) {
+        auto it = _runtime_static_packs.find(object_id);
+        if (it != _runtime_static_packs.end()) {
+            _release_static_pack_assume_locked(it->second);
+            _runtime_static_packs.erase(it);
+        }
+        reset_spatial_audio_warmup_passes();
+        return;
+    }
+    // Build the replacement first so an IPL/create failure keeps the existing pack.
+    RuntimeStaticPack pack;
+    if (!_create_instanced_static_pack_assume_locked(p_asset, p_transform, pack)) {
+        reset_spatial_audio_warmup_passes();
+        return;
+    }
+    auto it = _runtime_static_packs.find(object_id);
+    if (it != _runtime_static_packs.end()) {
+        _release_static_pack_assume_locked(it->second);
+        _runtime_static_packs.erase(it);
+    }
+    _runtime_static_triangle_count += pack.tri_count;
+    _runtime_static_packs.emplace(object_id, pack);
+    reset_spatial_audio_warmup_passes();
+}
+
+void ResonanceServer::replace_static_scenes_from_assets(const TypedArray<ResonanceGeometryAsset>& assets,
+                                                        const TypedArray<Transform3D>& transforms) {
+    if (!_ctx() || !scene)
+        return;
+    std::lock_guard<std::mutex> lock(simulation_mutex);
+    _clear_static_packs_assume_locked();
+    if (_scene_type() == IPL_SCENETYPE_CUSTOM) {
+        if (assets.size() > 0) {
+            UtilityFunctions::push_warning(
+                "Nexus Resonance: replace_static_scenes_from_assets has no effect when scene_type is Custom (Godot Physics).");
+        }
+        reset_spatial_audio_warmup_passes();
+        return;
+    }
+    const int n = assets.size();
+    const int n_xf = transforms.size();
+    for (int i = 0; i < n; i++) {
+        Ref<ResonanceGeometryAsset> asset = assets[i];
+        if (asset.is_null() || !asset->is_valid())
+            continue;
+        Transform3D xf = (i < n_xf) ? Transform3D(transforms[i]) : Transform3D();
+        const uint64_t id = _next_ephemeral_static_pack_id++;
+        RuntimeStaticPack pack;
+        if (!_create_instanced_static_pack_assume_locked(asset, xf, pack))
+            continue;
+        _runtime_static_triangle_count += pack.tri_count;
+        _runtime_static_packs.emplace(id, pack);
+    }
     reset_spatial_audio_warmup_passes();
 }
 
 void ResonanceServer::add_static_scene_from_asset(const Ref<ResonanceGeometryAsset>& p_asset, const Transform3D& p_transform) {
-    if (!_ctx() || !scene)
+    if (!p_asset.is_valid() || !p_asset->is_valid())
         return;
-    if (_scene_type() == IPL_SCENETYPE_CUSTOM) {
-        UtilityFunctions::push_warning(
-            "Nexus Resonance: add_static_scene_from_asset has no effect when scene_type is Custom (Godot Physics).");
-        return;
-    }
-    std::lock_guard<std::mutex> lock(simulation_mutex);
-    RuntimeSceneState state(_runtime_static_meshes, _runtime_static_triangle_count, _runtime_static_debug_mesh_ids,
-                            &global_triangle_count, &scene_dirty, _runtime_static_sub_scenes, _runtime_static_instanced_meshes);
-    scene_manager_.add_static_scene_from_asset(_ctx(), scene, p_asset, &ray_trace_debug_context_,
-                                               wants_debug_reflection_viz(), state, p_transform, _tracer_type_for_mesh_operations(), _embree(), _radeon());
-    reset_spatial_audio_warmup_passes();
+    const uint64_t id = _next_ephemeral_static_pack_id++;
+    add_or_replace_static_pack(id, p_asset, p_transform);
 }
 
 void ResonanceServer::load_static_scene_from_asset(const Ref<ResonanceGeometryAsset>& p_asset, const Transform3D& p_transform) {
@@ -126,10 +335,17 @@ void ResonanceServer::load_static_scene_from_asset(const Ref<ResonanceGeometryAs
         return;
     }
     std::lock_guard<std::mutex> lock(simulation_mutex);
-    RuntimeSceneState state(_runtime_static_meshes, _runtime_static_triangle_count, _runtime_static_debug_mesh_ids,
-                            &global_triangle_count, &scene_dirty, _runtime_static_sub_scenes, _runtime_static_instanced_meshes);
-    scene_manager_.load_static_scene_from_asset(_ctx(), scene, p_asset, &ray_trace_debug_context_,
-                                                wants_debug_reflection_viz(), state, p_transform, _tracer_type_for_mesh_operations(), _embree(), _radeon());
+    _clear_static_packs_assume_locked();
+    if (!p_asset.is_valid() || !p_asset->is_valid()) {
+        reset_spatial_audio_warmup_passes();
+        return;
+    }
+    const uint64_t id = _next_ephemeral_static_pack_id++;
+    RuntimeStaticPack pack;
+    if (_create_instanced_static_pack_assume_locked(p_asset, p_transform, pack)) {
+        _runtime_static_triangle_count += pack.tri_count;
+        _runtime_static_packs.emplace(id, pack);
+    }
     reset_spatial_audio_warmup_passes();
 }
 
@@ -227,68 +443,160 @@ int ResonanceServer::_get_bake_pathing_num_samples() const {
     return resonance::kBakePathingDefaultNumSamples;
 }
 
-IPLScene ResonanceServer::_prepare_bake_scene(IPLScene* out_temp_scene, IPLStaticMesh* out_temp_mesh) {
-    *out_temp_scene = nullptr;
-    *out_temp_mesh = nullptr;
-    if (_bake_static_scene_asset.is_valid() && _bake_static_scene_asset->is_valid() && _ctx()) {
-        IPLSceneSettings sceneSettings{};
-        sceneSettings.type = _tracer_type_for_mesh_operations();
-        sceneSettings.embreeDevice = _embree();
-        sceneSettings.radeonRaysDevice = _radeon();
-        IPLScene temp = nullptr;
-        if (iplSceneCreate(_ctx(), &sceneSettings, &temp) != IPL_STATUS_SUCCESS) {
-            ResonanceLog::error("ResonanceServer: iplSceneCreate failed (_prepare_bake_scene asset path).");
-            return scene;
+void ResonanceServer::_release_bake_scene_scratch(BakeSceneScratch& scratch) {
+    for (IPLInstancedMesh& im : scratch.instanced) {
+        if (im && scratch.scene) {
+            iplInstancedMeshRemove(im, scratch.scene);
+            iplInstancedMeshRelease(&im);
         }
-        IPLSerializedObjectSettings serialSettings{};
-        serialSettings.data = const_cast<IPLbyte*>(reinterpret_cast<const IPLbyte*>(_bake_static_scene_asset->get_data_ptr()));
-        serialSettings.size = static_cast<IPLsize>(_bake_static_scene_asset->get_size());
-        IPLSerializedObject serialObj = nullptr;
-        if (iplSerializedObjectCreate(_ctx(), &serialSettings, &serialObj) != IPL_STATUS_SUCCESS) {
-            ResonanceLog::error("ResonanceServer: iplSerializedObjectCreate failed (_prepare_bake_scene).");
-            iplSceneRelease(&temp);
-            return scene;
-        }
-        IPLScopedRelease<IPLSerializedObject> serialGuard(serialObj, iplSerializedObjectRelease);
-        IPLStaticMesh loadMesh = nullptr;
-        if (iplStaticMeshLoad(temp, serialObj, nullptr, nullptr, &loadMesh) != IPL_STATUS_SUCCESS) {
-            ResonanceLog::error("ResonanceServer: iplStaticMeshLoad failed (_prepare_bake_scene).");
-            iplSceneRelease(&temp);
-            return scene;
-        }
-        iplStaticMeshAdd(loadMesh, temp);
-        iplSceneCommit(temp);
-        *out_temp_scene = temp;
-        *out_temp_mesh = loadMesh;
-        return temp;
+        im = nullptr;
     }
-    return scene;
+    scratch.instanced.clear();
+    for (IPLStaticMesh& m : scratch.meshes) {
+        if (m && scratch.scene) {
+            iplStaticMeshRemove(m, scratch.scene);
+            iplStaticMeshRelease(&m);
+        }
+        m = nullptr;
+    }
+    scratch.meshes.clear();
+    const size_t n_sub_mesh = scratch.meshes_in_sub.size();
+    for (size_t i = 0; i < n_sub_mesh; i++) {
+        IPLStaticMesh& m = scratch.meshes_in_sub[i];
+        IPLScene sub = (i < scratch.sub_scenes.size()) ? scratch.sub_scenes[i] : nullptr;
+        if (m && sub) {
+            iplStaticMeshRemove(m, sub);
+            iplStaticMeshRelease(&m);
+        }
+        m = nullptr;
+    }
+    scratch.meshes_in_sub.clear();
+    for (IPLScene& sub : scratch.sub_scenes) {
+        if (sub)
+            iplSceneRelease(&sub);
+        sub = nullptr;
+    }
+    scratch.sub_scenes.clear();
+    if (scratch.scene) {
+        iplSceneRelease(&scratch.scene);
+        scratch.scene = nullptr;
+    }
+}
+
+bool ResonanceServer::_prepare_bake_scene(BakeSceneScratch& out) {
+    out = BakeSceneScratch{};
+    if (!_ctx())
+        return false;
+
+    IPLSceneSettings sceneSettings{};
+    sceneSettings.type = _tracer_type_for_mesh_operations();
+    sceneSettings.embreeDevice = _embree();
+    sceneSettings.radeonRaysDevice = _radeon();
+
+    if (_has_bake_static_scene_assets()) {
+        if (iplSceneCreate(_ctx(), &sceneSettings, &out.scene) != IPL_STATUS_SUCCESS) {
+            ResonanceLog::error("ResonanceServer: iplSceneCreate failed (_prepare_bake_scene asset path).");
+            return false;
+        }
+        int bake_tri_count = 0;
+        std::vector<int> bake_debug_ids;
+        std::atomic<int> bake_gtc{0};
+        std::atomic<bool> bake_dirty{false};
+        std::vector<IPLMatrix4x4> bake_instanced_transforms;
+        RuntimeSceneState state(out.meshes, bake_tri_count, bake_debug_ids, &bake_gtc, &bake_dirty, out.sub_scenes,
+                                out.instanced, bake_instanced_transforms, &out.meshes_in_sub);
+        const size_t n = _bake_static_scene_assets.size();
+        for (size_t i = 0; i < n; i++) {
+            const Ref<ResonanceGeometryAsset>& asset = _bake_static_scene_assets[i];
+            if (!asset.is_valid() || !asset->is_valid())
+                continue;
+            const Transform3D& xf =
+                (i < _bake_static_scene_transforms.size()) ? _bake_static_scene_transforms[i] : Transform3D();
+            scene_manager_.add_static_scene_from_asset(_ctx(), out.scene, asset, nullptr, false, state, xf,
+                                                       _tracer_type_for_mesh_operations(), _embree(), _radeon());
+        }
+        if (out.meshes.empty() && out.instanced.empty()) {
+            ResonanceLog::error("ResonanceServer: bake static assets produced no meshes.");
+            _release_bake_scene_scratch(out);
+            return false;
+        }
+        iplSceneCommit(out.scene);
+        return true;
+    }
+
+    const bool has_runtime_static = !_runtime_static_packs.empty();
+    if (has_runtime_static) {
+        if (iplSceneCreate(_ctx(), &sceneSettings, &out.scene) != IPL_STATUS_SUCCESS) {
+            ResonanceLog::error("ResonanceServer: iplSceneCreate failed (_prepare_bake_scene runtime static clone).");
+            return false;
+        }
+        for (const auto& kv : _runtime_static_packs) {
+            const RuntimeStaticPack& pack = kv.second;
+            if (!pack.sub_scene || !pack.instanced)
+                continue;
+            if (!clone_sub_scene_as_instanced(_ctx(), out.scene, pack.sub_scene, pack.transform, _tracer_type_for_mesh_operations(),
+                                              _embree(), _radeon(), out.sub_scenes, out.instanced)) {
+                ResonanceLog::error("ResonanceServer: failed cloning runtime static instanced mesh for bake.");
+                _release_bake_scene_scratch(out);
+                return false;
+            }
+        }
+        if (out.instanced.empty()) {
+            ResonanceLog::error("ResonanceServer: runtime static packs produced no bake meshes.");
+            _release_bake_scene_scratch(out);
+            return false;
+        }
+        iplSceneCommit(out.scene);
+        return true;
+    }
+
+    // Last resort: snapshot the live Phonon scene into an isolated temp (may include dynamics frozen at t0).
+    if (!scene) {
+        ResonanceLog::error("ResonanceServer: no live scene for bake snapshot.");
+        return false;
+    }
+    IPLSerializedObjectSettings serialSettings{};
+    IPLSerializedObject serialObj = nullptr;
+    if (iplSerializedObjectCreate(_ctx(), &serialSettings, &serialObj) != IPL_STATUS_SUCCESS) {
+        ResonanceLog::error("ResonanceServer: iplSerializedObjectCreate failed (live bake snapshot).");
+        return false;
+    }
+    iplSceneSave(scene, serialObj);
+    const IPLsize snap_size = iplSerializedObjectGetSize(serialObj);
+    if (snap_size == 0) {
+        iplSerializedObjectRelease(&serialObj);
+        ResonanceLog::error("ResonanceServer: live bake snapshot produced no data.");
+        return false;
+    }
+    const IPLerror load_err = iplSceneLoad(_ctx(), &sceneSettings, serialObj, nullptr, nullptr, &out.scene);
+    iplSerializedObjectRelease(&serialObj);
+    if (load_err != IPL_STATUS_SUCCESS || !out.scene) {
+        ResonanceLog::error("ResonanceServer: iplSceneLoad failed (live bake snapshot).");
+        out.scene = nullptr;
+        return false;
+    }
+    UtilityFunctions::push_warning(
+        "Nexus Resonance Bake: no static scene asset; using a live-scene snapshot. "
+        "Prefer ResonanceStaticScene / set_bake_static_scenes_from_assets so dynamics are excluded.");
+    return true;
 }
 
 bool ResonanceServer::_with_bake_scene(std::function<bool(IPLScene)> bake_fn) {
-    IPLScene temp_scene = nullptr;
-    IPLStaticMesh temp_mesh = nullptr;
-    IPLScene bake_scene = nullptr;
-    bool bake_uses_live_scene = false;
+    BakeSceneScratch scratch;
     {
         std::lock_guard<std::mutex> lock(simulation_mutex);
-        if (scene_dirty) {
+        if (scene_dirty.load(std::memory_order_acquire)) {
             iplSceneCommit(scene);
-            scene_dirty = false;
+            scene_dirty.store(false, std::memory_order_release);
         }
-        bake_scene = _prepare_bake_scene(&temp_scene, &temp_mesh);
-        bake_uses_live_scene = (temp_scene == nullptr && bake_scene == scene);
+        if (!_prepare_bake_scene(scratch))
+            return false;
     }
-    if (!bake_scene)
+    if (!scratch.scene)
         return false;
-    bool ok = false;
-    if (bake_uses_live_scene) {
-        std::lock_guard<std::mutex> lock(simulation_mutex);
-        ok = bake_fn(bake_scene);
-    } else {
-        ok = bake_fn(bake_scene);
-    }
-    release_bake_temp_scene(temp_mesh, temp_scene);
+    bake_progress_.store(0.0f, std::memory_order_release);
+    const bool ok = bake_fn(scratch.scene);
+    _release_bake_scene_scratch(scratch);
     return ok;
 }
 
@@ -297,7 +605,7 @@ bool ResonanceServer::bake_manual_grid(const PackedVector3Array& points, Ref<Res
         UtilityFunctions::push_error("Nexus Resonance Bake: Server not initialized.");
         return false;
     }
-    if (!_bake_static_scene_asset.is_valid() || !_bake_static_scene_asset->is_valid()) {
+    if (!_has_bake_static_scene_assets()) {
         if (global_triangle_count.load(std::memory_order_acquire) <= 0) {
             UtilityFunctions::push_error("Nexus Resonance Bake: Scene not exported. Use Tools > Nexus Resonance > Export Static Scene before baking.");
             return false;
@@ -314,12 +622,13 @@ bool ResonanceServer::bake_manual_grid(const PackedVector3Array& points, Ref<Res
 }
 
 bool ResonanceServer::bake_probes_for_volume(const Transform3D& volume_transform, Vector3 extents, float spacing,
-                                             int generation_type, float height_above_floor, Ref<ResonanceProbeData> probe_data_res) {
+                                             int generation_type, float height_above_floor, Ref<ResonanceProbeData> probe_data_res,
+                                             const Array& exclusion_boxes) {
     if (!_ctx() || !scene) {
         UtilityFunctions::push_error("Nexus Resonance Bake: Server not initialized.");
         return false;
     }
-    if (!_bake_static_scene_asset.is_valid() || !_bake_static_scene_asset->is_valid()) {
+    if (!_has_bake_static_scene_assets()) {
         if (global_triangle_count.load(std::memory_order_acquire) <= 0) {
             UtilityFunctions::push_error("Nexus Resonance Bake: Scene not exported. Use Tools > Nexus Resonance > Export Static Scene before baking.");
             return false;
@@ -330,16 +639,43 @@ bool ResonanceServer::bake_probes_for_volume(const Transform3D& volume_transform
     int bake_reflection = _get_bake_reflection_type();
     int nt = _get_bake_num_threads();
     int ao = _get_bake_ambisonics_order();
-    return _with_bake_scene([this, volume_transform, extents, spacing, generation_type, height_above_floor, probe_data_res, nb, nr, bake_reflection, nt, ao](IPLScene bake_scene) {
+    return _with_bake_scene([this, volume_transform, extents, spacing, generation_type, height_above_floor, probe_data_res,
+                             exclusion_boxes, nb, nr, bake_reflection, nt, ao](IPLScene bake_scene) {
+        PackedVector3Array points;
         if (generation_type == ResonanceBaker::GEN_CENTROID || generation_type == ResonanceBaker::GEN_UNIFORM_FLOOR) {
-            return baker.bake_with_probe_array(_ctx(), bake_scene, _tracer_type_for_mesh_operations(), _opencl(), _radeon(),
-                                               volume_transform, extents, spacing, generation_type, height_above_floor,
-                                               nb, nr, bake_reflection, probe_data_res, bake_progress_callback, this, _bake_pipeline_pathing, nt, ao);
+            IPLProbeArray probeArray = nullptr;
+            if (iplProbeArrayCreate(_ctx(), &probeArray) == IPL_STATUS_SUCCESS) {
+                IPLProbeGenerationParams genParams{};
+                genParams.type = (generation_type == ResonanceBaker::GEN_CENTROID)
+                                     ? IPL_PROBEGENERATIONTYPE_CENTROID
+                                     : IPL_PROBEGENERATIONTYPE_UNIFORMFLOOR;
+                genParams.spacing = spacing;
+                genParams.height = height_above_floor;
+                genParams.transform = ResonanceUtils::create_volume_transform_rotated(volume_transform, extents);
+                iplProbeArrayGenerateProbes(probeArray, bake_scene, &genParams);
+                const int num_probes = iplProbeArrayGetNumProbes(probeArray);
+                for (int i = 0; i < num_probes; i++) {
+                    IPLSphere sphere = iplProbeArrayGetProbe(probeArray, i);
+                    points.push_back(ResonanceUtils::to_godot_vector3(sphere.center));
+                }
+                iplProbeArrayRelease(&probeArray);
+            }
+            if (points.is_empty()) {
+                points = baker.generate_manual_grid(volume_transform, extents, spacing, generation_type, height_above_floor);
+            }
+        } else {
+            points = baker.generate_manual_grid(volume_transform, extents, spacing, generation_type, height_above_floor);
         }
-        PackedVector3Array points = baker.generate_manual_grid(volume_transform, extents, spacing, generation_type, height_above_floor);
-        if (points.size() == 0)
+
+        points = resonance::filter_points_outside_exclusion_boxes(points, exclusion_boxes);
+        if (points.is_empty()) {
+            UtilityFunctions::push_error(
+                "Nexus Resonance Bake: No probes left after exclusion volumes. Enlarge the volume or disable exclusions.");
             return false;
-        return baker.bake_manual_grid(_ctx(), bake_scene, _tracer_type_for_mesh_operations(), _opencl(), _radeon(), points, nb, nr, bake_reflection, probe_data_res, bake_progress_callback, this, _bake_pipeline_pathing, nt, ao);
+        }
+        return baker.bake_manual_grid(_ctx(), bake_scene, _tracer_type_for_mesh_operations(), _opencl(), _radeon(), points, nb,
+                                      nr, bake_reflection, probe_data_res, bake_progress_callback, this, _bake_pipeline_pathing, nt,
+                                      ao);
     });
 }
 
@@ -503,7 +839,13 @@ void ResonanceServer::_clear_all_param_caches() {
 void ResonanceServer::remove_probe_batch(int32_t handle) {
     if (handle < 0 || is_shutting_down_flag.load(std::memory_order_acquire) || !_ctx() || !simulator)
         return;
-    probe_batch_registry_.remove_batch(handle, simulator, &simulation_mutex);
+    {
+        // Clear source pathing before PathSimulator erase: Phonon keeps ProbeBatch alive via
+        // shared_ptr, but RunPathing null-dereferences when the batch is gone from the simulator map.
+        std::lock_guard<std::mutex> lock(simulation_mutex);
+        _clear_pathing_for_probe_batch_assume_locked(handle);
+        probe_batch_registry_.remove_batch(handle, simulator, nullptr);
+    }
     _clear_all_param_caches();
 }
 
@@ -540,11 +882,28 @@ int ResonanceServer::revalidate_probe_batches_with_config() {
 void ResonanceServer::clear_probe_batches() {
     if (is_shutting_down_flag.load(std::memory_order_acquire) || !_ctx())
         return;
-    probe_batch_registry_.clear_batches(simulator, &simulation_mutex);
+    {
+        std::lock_guard<std::mutex> lock(simulation_mutex);
+        std::vector<int32_t> handles;
+        source_manager.get_all_handles(handles);
+        for (int32_t h : handles) {
+            IPLSource src = source_manager.get_source(h);
+            if (!src)
+                continue;
+            _clear_source_pathing_inputs_assume_locked(src, h);
+            iplSourceRelease(&src);
+        }
+        probe_batch_registry_.clear_batches(simulator, nullptr);
+    }
     _clear_all_param_caches();
 }
 void ResonanceServer::emit_bake_progress(float progress) {
-    emit_signal("bake_progress", progress);
+    // Bake thread safe: no Godot signal emit from worker threads.
+    bake_progress_.store(progress, std::memory_order_release);
+}
+
+float ResonanceServer::get_bake_progress() const {
+    return bake_progress_.load(std::memory_order_acquire);
 }
 
 int32_t ResonanceServer::editor_probe_data_get_num_probes(Ref<ResonanceProbeData> data) const {

@@ -38,8 +38,13 @@ void ResonanceMixerProcessor::initialize(IPLContext p_context, int p_sample_rate
         cleanup();
         return;
     }
-    last_stereo_left.resize(static_cast<size_t>(frame_size));
-    last_stereo_right.resize(static_cast<size_t>(frame_size));
+    last_stereo_left.assign(static_cast<size_t>(frame_size), 0.0f);
+    last_stereo_right.assign(static_cast<size_t>(frame_size), 0.0f);
+    constexpr size_t kPendingCap = static_cast<size_t>(resonance::kMaxAudioFrameSize) * 2u;
+    pending_stereo_left.assign(kPendingCap, 0.0f);
+    pending_stereo_right.assign(kPendingCap, 0.0f);
+    pending_read_index = 0;
+    pending_len_ = 0;
     last_stereo_valid = false;
     have_seen_mixer_feed_count_ = false;
     init_flags = init_flags | MixerInitFlags::BUFFERS;
@@ -127,6 +132,7 @@ void ResonanceMixerProcessor::cleanup() {
     pending_stereo_left.clear();
     pending_stereo_right.clear();
     pending_read_index = 0;
+    pending_len_ = 0;
     last_stereo_left.clear();
     last_stereo_right.clear();
     last_stereo_valid = false;
@@ -138,10 +144,12 @@ void ResonanceMixerProcessor::cleanup() {
 void ResonanceMixerProcessor::_cache_last_stereo_block() {
     if (!sa_stereo_buffer.data || !sa_stereo_buffer.data[0] || !sa_stereo_buffer.data[1])
         return;
-    if (last_stereo_left.size() != static_cast<size_t>(frame_size))
-        last_stereo_left.resize(static_cast<size_t>(frame_size));
-    if (last_stereo_right.size() != static_cast<size_t>(frame_size))
-        last_stereo_right.resize(static_cast<size_t>(frame_size));
+    // Hot path: never grow vectors here. Size is fixed at initialize().
+    if (last_stereo_left.size() != static_cast<size_t>(frame_size) ||
+        last_stereo_right.size() != static_cast<size_t>(frame_size)) {
+        last_stereo_valid = false;
+        return;
+    }
     for (int i = 0; i < frame_size; i++) {
         last_stereo_left[static_cast<size_t>(i)] = sa_stereo_buffer.data[0][i];
         last_stereo_right[static_cast<size_t>(i)] = sa_stereo_buffer.data[1][i];
@@ -167,7 +175,16 @@ void ResonanceMixerProcessor::_write_stereo_to_audio_frames_with_carry(AudioFram
     if (!out_frames || frame_count <= 0 || !sa_stereo_buffer.data || !sa_stereo_buffer.data[0] || !sa_stereo_buffer.data[1])
         return;
 
-    if (pending_stereo_left.empty() && pending_read_index == 0 && frame_count == frame_size) {
+    const size_t cap = pending_stereo_left.size();
+    if (cap == 0 || pending_stereo_right.size() != cap) {
+        for (int i = 0; i < frame_count && i < frame_size; i++) {
+            out_frames[i].left += sa_stereo_buffer.data[0][i];
+            out_frames[i].right += sa_stereo_buffer.data[1][i];
+        }
+        return;
+    }
+
+    if (pending_len_ == 0 && pending_read_index == 0 && frame_count == frame_size) {
         for (int i = 0; i < frame_count; i++) {
             out_frames[i].left += sa_stereo_buffer.data[0][i];
             out_frames[i].right += sa_stereo_buffer.data[1][i];
@@ -175,19 +192,34 @@ void ResonanceMixerProcessor::_write_stereo_to_audio_frames_with_carry(AudioFram
         return;
     }
 
-    // Append the newest decoded block to our carry queue.
-    const size_t append_base = pending_stereo_left.size();
-    pending_stereo_left.resize(append_base + static_cast<size_t>(frame_size));
-    pending_stereo_right.resize(append_base + static_cast<size_t>(frame_size));
-    for (int i = 0; i < frame_size; i++) {
-        pending_stereo_left[append_base + static_cast<size_t>(i)] = sa_stereo_buffer.data[0][i];
-        pending_stereo_right[append_base + static_cast<size_t>(i)] = sa_stereo_buffer.data[1][i];
+    // Compact unread samples to the front when append would pass capacity.
+    if (pending_read_index > 0 && pending_read_index <= pending_len_) {
+        const size_t remain = pending_len_ - pending_read_index;
+        for (size_t i = 0; i < remain; i++) {
+            pending_stereo_left[i] = pending_stereo_left[pending_read_index + i];
+            pending_stereo_right[i] = pending_stereo_right[pending_read_index + i];
+        }
+        pending_len_ = remain;
+        pending_read_index = 0;
     }
 
-    const size_t pending_count = pending_stereo_left.size();
+    const size_t fs = static_cast<size_t>(frame_size);
+    if (pending_len_ + fs > cap) {
+        pending_len_ = 0;
+        pending_read_index = 0;
+    }
+    if (pending_len_ + fs > cap)
+        return;
+
+    for (int i = 0; i < frame_size; i++) {
+        pending_stereo_left[pending_len_ + static_cast<size_t>(i)] = sa_stereo_buffer.data[0][i];
+        pending_stereo_right[pending_len_ + static_cast<size_t>(i)] = sa_stereo_buffer.data[1][i];
+    }
+    pending_len_ += fs;
+
     int written = 0;
-    if (pending_read_index < pending_count && pending_stereo_right.size() == pending_count) {
-        const int to_copy = std::min(frame_count, static_cast<int>(pending_count - pending_read_index));
+    if (pending_read_index < pending_len_) {
+        const int to_copy = std::min(frame_count, static_cast<int>(pending_len_ - pending_read_index));
         for (int i = 0; i < to_copy; i++) {
             const size_t idx = pending_read_index + static_cast<size_t>(i);
             out_frames[i].left += pending_stereo_left[idx];
@@ -197,18 +229,15 @@ void ResonanceMixerProcessor::_write_stereo_to_audio_frames_with_carry(AudioFram
         written = to_copy;
     }
 
-    if (pending_read_index >= pending_stereo_left.size()) {
-        pending_stereo_left.clear();
-        pending_stereo_right.clear();
+    if (pending_read_index >= pending_len_) {
+        pending_len_ = 0;
         pending_read_index = 0;
     }
 
-    // If caller requested more than what has been decoded so far, leave zeros for the rest.
     if (written < frame_count && !s_frame_count_large_warned) {
         s_frame_count_large_warned = true;
-        ResonanceLog::warn("Reverb output frame_count (" + String::num_int64(frame_count) + ") > audio_frame_size (" +
-                           String::num_int64(frame_size) +
-                           "). Zero-padding missing samples until audio engine reinitializes to a matching frame size.");
+        ResonanceLog::warn_cstr(
+            "Reverb output frame_count > audio_frame_size. Zero-padding until frame sizes match.");
     }
 }
 
@@ -272,9 +301,8 @@ bool ResonanceMixerProcessor::process_mixer_return(IPLReflectionMixer mixer_hand
     // Sub-sized callbacks: carry queues the remainder for the next mix() until a full block is consumed.
     if (frame_count < frame_size && !s_frame_count_small_warned) {
         s_frame_count_small_warned = true;
-        ResonanceLog::warn("Reverb output frame_count (" + String::num_int64(frame_count) + ") < audio_frame_size (" +
-                           String::num_int64(frame_size) +
-                           "). Carrying tail samples across callbacks until audio engine reinitializes to a matching frame size.");
+        ResonanceLog::warn_cstr(
+            "Reverb output frame_count < audio_frame_size. Carrying tail samples across callbacks.");
     }
     _write_stereo_to_audio_frames_with_carry(out_frames, frame_count);
 

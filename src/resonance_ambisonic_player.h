@@ -55,6 +55,7 @@ class ResonanceAmbisonicInternalPlayback : public AudioStreamPlayback {
     AmbisonicPlaybackParameters params_current;
 
     bool is_initialized = false;
+    std::atomic<bool> steam_context_stale_{false};
     std::atomic<bool> stop_requested = false;
     int current_sample_rate = 48000;
     IPLContext context = nullptr;
@@ -103,6 +104,8 @@ class ResonanceAmbisonicInternalPlayback : public AudioStreamPlayback {
 
     /// Main-thread IPL buffer setup before first `_mix` (same as ResonanceStreamPlayback).
     bool prewarm_steam_audio();
+    /// Main thread: teardown + prewarm when audio flagged a stale IPL context.
+    void resolve_stale_steam_context_on_main();
 
     virtual int32_t _mix(AudioFrame* buffer, float rate_scale, int32_t frames) override;
     virtual void _start(double from_pos) override;

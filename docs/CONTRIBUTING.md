@@ -4,8 +4,8 @@ Thank you for your interest in contributing. This document provides guidelines f
 
 ## Project Structure
 
-- `audio_resonance_tool/` - Godot 4 project containing the Nexus Resonance addon
-- `audio_resonance_tool/addons/nexus_resonance/` - Nexus Resonance plugin (GDScript + GDExtension)
+- `addons/nexus_resonance/` - Nexus Resonance plugin (GDScript + GDExtension; source of truth)
+- `project/` - Local Godot 4 test project (gitignored; open this in the editor)
 - `src/` - C++ GDExtension source (ResonanceServer, Steam Audio integration)
 
 ## Development Setup
@@ -23,7 +23,7 @@ Thank you for your interest in contributing. This document provides guidelines f
    python scripts/install_steam_audio.py
    ```
 3. Build the GDExtension: `scons`
-4. Open `audio_resonance_tool/` in Godot 4.6.
+4. Open `project/` in Godot 4.6 (sync `addons/nexus_resonance/` into `project/addons/nexus_resonance/` first).
 5. Enable the Nexus Resonance plugin in Project Settings → Plugins.
 
 ### Platform-Specific Builds
@@ -57,9 +57,12 @@ Unit tests use the [GUT](https://github.com/bitwes/Gut) framework.
 
 **In the editor:** Project → Tools → GUT → Run All (with `res://test/unit` as directory).
 
+Tracked GUT sources live in repo-root [`test/unit/`](../test/unit/) (synced into `project/test/` via `.github/scripts/prepare_godot_ci_project.sh` or a local copy).
+
 **Command line (PowerShell):**
 ```powershell
-cd audio_resonance_tool
+# Sync tracked tests + addon into the local Godot project, then:
+cd project
 .\run_tests.ps1
 ```
 

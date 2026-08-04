@@ -361,6 +361,7 @@ ResonanceServer::SourceUpdateParams ResonancePlayer::_build_source_update_params
 
 void ResonancePlayer::_apply_update_source(int32_t pathing_batch, bool defer_if_sim_mutex_busy) {
     ResonanceServer* srv = ResonanceServer::get_singleton();
+    _invalidate_source_handle_if_stale(srv);
     if (!srv || source_handle < 0)
         return;
 

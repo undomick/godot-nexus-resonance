@@ -1,7 +1,7 @@
 #ifndef RESONANCE_FMOD_EVENT_EMITTER_H
 #define RESONANCE_FMOD_EVENT_EMITTER_H
 
-#include "resonance_fmod_bridge.h"
+#include <cstdint>
 #include <godot_cpp/classes/node3d.hpp>
 #include <limits>
 
@@ -15,8 +15,11 @@ class ResonanceFmodEventEmitter : public Node3D {
     bool auto_play = true;
 
     int32_t resonance_handle = -1;
+    /// Captured from ResonanceServer::get_source_lifecycle_epoch() at create; mismatch => stale after reinit.
+    uint32_t source_lifecycle_epoch_ = 0;
     int32_t fmod_handle = -1;
-    ResonanceFMODBridge* bridge = nullptr;
+    /// GDScript ResonanceFMODBridgeScript (or any Object exposing the bridge API).
+    Object* bridge = nullptr;
     Node* fmod_emitter_parent = nullptr;
     Vector3 last_sync_pos = Vector3(
         std::numeric_limits<float>::infinity(),
@@ -24,12 +27,14 @@ class ResonanceFmodEventEmitter : public Node3D {
         std::numeric_limits<float>::infinity());
 
     static bool is_fmod_emitter_parent(Node* node);
-    ResonanceFMODBridge* find_runtime_fmod_bridge();
+    Object* find_runtime_fmod_bridge();
     void warn_if_parent_not_fmod_emitter();
     void sync_fmod_source_position(const Vector3& world_pos);
     void register_fmod_source();
     void release_fmod_source_handles();
     void try_push_simulation_handle_to_fmod(int32_t fmod_plugin_handle);
+    /// Drop local handles without FMOD/IPL teardown (plugin terminate / server reinit already did).
+    void invalidate_handles_after_engine_reinit();
 
     void deferred_resolve_bridge();
     void deferred_register_source();
@@ -42,6 +47,9 @@ class ResonanceFmodEventEmitter : public Node3D {
     void _ready() override;
     void _exit_tree() override;
     void _process(double delta) override;
+
+    /// After engine reinit + FMOD bridge rebind: recreate Resonance source and FMOD registration.
+    void reload_source_after_reinit();
 
     void set_event_path(const String& p_path);
     String get_event_path() const { return event_path; }

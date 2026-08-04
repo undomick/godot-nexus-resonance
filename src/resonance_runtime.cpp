@@ -1,8 +1,12 @@
 #include "resonance_runtime.h"
+#include "resonance_audio_effect.h"
 #include "resonance_constants.h"
 #include "resonance_key_enum_hint.h"
 #include "resonance_server.h"
 
+#include <godot_cpp/classes/audio_effect.hpp>
+#include <godot_cpp/classes/audio_server.hpp>
+#include <godot_cpp/classes/audio_stream_player3d.hpp>
 #include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/resource_loader.hpp>
 #include <godot_cpp/classes/scene_tree.hpp>
@@ -29,10 +33,48 @@ PropertyInfo key_property_info(const char* p_name) {
 } // namespace
 
 int ResonanceRuntime::live_game_runtime_count = 0;
+ObjectID ResonanceRuntime::primary_runtime_id;
 
 bool ResonanceRuntime::editor_hint() {
     Engine* eng = Engine::get_singleton();
     return eng && eng->is_editor_hint();
+}
+
+bool ResonanceRuntime::is_primary_runtime() const {
+    return primary_runtime_id == ObjectID(get_instance_id());
+}
+
+void ResonanceRuntime::claim_primary_runtime() {
+    primary_runtime_id = ObjectID(get_instance_id());
+}
+
+void ResonanceRuntime::release_primary_and_elect_successor() {
+    if (!is_primary_runtime()) {
+        return;
+    }
+    primary_runtime_id = ObjectID();
+    SceneTree* tree = get_tree();
+    if (tree == nullptr) {
+        return;
+    }
+    TypedArray<Node> nodes = tree->get_nodes_in_group("resonance_runtime");
+    ResonanceRuntime* successor = nullptr;
+    for (int i = 0; i < nodes.size(); i++) {
+        ResonanceRuntime* rt = Object::cast_to<ResonanceRuntime>(nodes[i]);
+        if (rt == nullptr || rt == this || !rt->is_inside_tree()) {
+            continue;
+        }
+        successor = rt;
+    }
+    if (successor == nullptr) {
+        return;
+    }
+    successor->claim_primary_runtime();
+    successor->ensure_primary_side_effects();
+}
+
+void ResonanceRuntime::ensure_primary_side_effects() {
+    apply_primary_handoff_without_reinit();
 }
 
 // Instantiates a GDScript global class from C++. ClassDB::instantiate only covers native classes, so script-based
@@ -63,11 +105,12 @@ void ResonanceRuntime::_ready() {
     add_to_group("resonance_runtime");
     if (!editor_hint()) {
         live_game_runtime_count++;
+        claim_primary_runtime();
     }
     set_process_priority(resonance::kResonanceRuntimeProcessPriority);
     set_physics_process_priority(resonance::kResonanceRuntimeProcessPriority);
     // Physics tick runs only with the Custom (Godot Physics) tracer; sync_physics_process_for_custom_tracer
-    // enables it after the server reports the tracer (1.3d). Off until then.
+    // enables it after the server reports the tracer. Off until then.
     set_physics_process(false);
     set_process_input(true);
     connect_runtime_signals();
@@ -94,7 +137,36 @@ void ResonanceRuntime::on_scene_tree_exiting() {
     cleanup_reverb_activator();
 }
 
+void ResonanceRuntime::prepare_for_shutdown() {
+    // Godot frees GDExtension tables before ~AudioServer. Stop players (base stop, not soft)
+    // and detach ResonanceAudioEffect so AudioServer can unref them while our tables still
+    // exist. Needs further process frames after this call - sleep alone is not enough.
+    SceneTree* tree = get_tree();
+    if (!tree)
+        return;
+
+    TypedArray<Node> players = tree->get_nodes_in_group("resonance_player");
+    for (int i = 0; i < players.size(); i++) {
+        if (AudioStreamPlayer3D* p = Object::cast_to<AudioStreamPlayer3D>(players[i]))
+            p->AudioStreamPlayer3D::stop();
+    }
+
+    cleanup_reverb_activator();
+
+    AudioServer* audio = AudioServer::get_singleton();
+    if (!audio)
+        return;
+    for (int bus = 0; bus < audio->get_bus_count(); bus++) {
+        for (int idx = audio->get_bus_effect_count(bus) - 1; idx >= 0; idx--) {
+            Ref<AudioEffect> effect = audio->get_bus_effect(bus, idx);
+            if (effect.is_valid() && Object::cast_to<ResonanceAudioEffect>(effect.ptr()))
+                audio->remove_bus_effect(bus, idx);
+        }
+    }
+}
+
 void ResonanceRuntime::_exit_tree() {
+    disconnect_runtime_signals();
     reset_viewport_sync_cache();
     if (is_connected("tree_exiting", Callable(this, "on_scene_tree_exiting"))) {
         disconnect("tree_exiting", Callable(this, "on_scene_tree_exiting"));
@@ -103,8 +175,10 @@ void ResonanceRuntime::_exit_tree() {
     cleanup_reverb_activator();
     disable_performance_overlay_node();
     if (!editor_hint()) {
+        release_primary_and_elect_successor();
         live_game_runtime_count = live_game_runtime_count > 0 ? live_game_runtime_count - 1 : 0;
         if (live_game_runtime_count == 0) {
+            primary_runtime_id = ObjectID();
             ResonanceServer* srv = ResonanceServer::get_singleton();
             if (srv && srv->is_initialized()) {
                 srv->shutdown();
@@ -194,6 +268,7 @@ void ResonanceRuntime::_bind_methods() {
         "ResonanceRuntime",
         D_METHOD("get_live_game_runtime_count"),
         &ResonanceRuntime::get_live_game_runtime_count);
+    ClassDB::bind_method(D_METHOD("is_primary_runtime"), &ResonanceRuntime::is_primary_runtime);
 
     ClassDB::bind_method(D_METHOD("get_bus_effective"), &ResonanceRuntime::get_bus_effective);
     ClassDB::bind_method(D_METHOD("get_reverb_bus_name"), &ResonanceRuntime::get_reverb_bus_name);
@@ -205,6 +280,7 @@ void ResonanceRuntime::_bind_methods() {
         &ResonanceRuntime::get_activator_instrumentation);
     ClassDB::bind_method(D_METHOD("get_frame_timings"), &ResonanceRuntime::get_frame_timings);
     ClassDB::bind_method(D_METHOD("on_scene_tree_exiting"), &ResonanceRuntime::on_scene_tree_exiting);
+    ClassDB::bind_method(D_METHOD("prepare_for_shutdown"), &ResonanceRuntime::prepare_for_shutdown);
 
     ClassDB::bind_method(D_METHOD("get_config_dict"), &ResonanceRuntime::get_config_dict);
     ClassDB::bind_method(D_METHOD("request_static_scene_reload"), &ResonanceRuntime::request_static_scene_reload);

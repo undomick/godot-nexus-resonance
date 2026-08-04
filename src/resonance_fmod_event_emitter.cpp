@@ -1,5 +1,6 @@
 #include "resonance_fmod_event_emitter.h"
 #include "resonance_server.h"
+#include "resonance_source_handle_policy.h"
 #include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/node.hpp>
 #include <godot_cpp/classes/scene_tree.hpp>
@@ -38,7 +39,7 @@ void ResonanceFmodEventEmitter::warn_if_parent_not_fmod_emitter() {
         "ResonanceFmodEventEmitter: Parent must be FmodEventEmitter3D. Found: " + parent_class);
 }
 
-ResonanceFMODBridge* ResonanceFmodEventEmitter::find_runtime_fmod_bridge() {
+Object* ResonanceFmodEventEmitter::find_runtime_fmod_bridge() {
     SceneTree* tree = get_tree();
     if (!tree) {
         return nullptr;
@@ -50,8 +51,12 @@ ResonanceFMODBridge* ResonanceFmodEventEmitter::find_runtime_fmod_bridge() {
             continue;
         }
         const Variant bridge_var = rt->call(StringName("get_fmod_bridge"));
-        ResonanceFMODBridge* candidate = Object::cast_to<ResonanceFMODBridge>(bridge_var);
-        if (candidate && candidate->is_bridge_loaded()) {
+        // Runtime stores the GDScript ResonanceFMODBridgeScript wrapper, not ResonanceFMODBridge.
+        Object* candidate = Object::cast_to<Object>(bridge_var);
+        if (!candidate || !candidate->has_method(StringName("is_bridge_loaded"))) {
+            continue;
+        }
+        if ((bool)candidate->call(StringName("is_bridge_loaded"))) {
             return candidate;
         }
     }
@@ -66,10 +71,16 @@ void ResonanceFmodEventEmitter::sync_fmod_source_position(const Vector3& world_p
     if (!srv || !srv->is_initialized()) {
         return;
     }
+    if (!resonance::source_handle_matches_lifecycle_epoch(resonance_handle, source_lifecycle_epoch_,
+                                                          srv->get_source_lifecycle_epoch())) {
+        invalidate_handles_after_engine_reinit();
+        return;
+    }
     srv->update_source_position(resonance_handle, world_pos, 1.0f);
 }
 
 void ResonanceFmodEventEmitter::_enter_tree() {
+    add_to_group("resonance_fmod_event_emitter");
     fmod_emitter_parent = is_fmod_emitter_parent(get_parent()) ? get_parent() : nullptr;
     if (fmod_emitter_parent == nullptr && !editor_hint()) {
         warn_if_parent_not_fmod_emitter();
@@ -123,7 +134,11 @@ void ResonanceFmodEventEmitter::deferred_register_source() {
 }
 
 void ResonanceFmodEventEmitter::register_fmod_source() {
-    if (bridge == nullptr || !bridge->is_bridge_loaded()) {
+    if (bridge == nullptr) {
+        bridge = find_runtime_fmod_bridge();
+    }
+    if (bridge == nullptr || !bridge->has_method(StringName("is_bridge_loaded")) ||
+        !(bool)bridge->call(StringName("is_bridge_loaded"))) {
         return;
     }
     ResonanceServer* srv = ResonanceServer::get_singleton();
@@ -134,11 +149,16 @@ void ResonanceFmodEventEmitter::register_fmod_source() {
     if (resonance_handle < 0) {
         return;
     }
+    source_lifecycle_epoch_ = srv->get_source_lifecycle_epoch();
     last_sync_pos = get_global_position();
-    fmod_handle = bridge->add_fmod_source(resonance_handle);
+    fmod_handle = (int32_t)bridge->call(StringName("add_fmod_source"), resonance_handle);
     if (fmod_handle < 0) {
-        srv->destroy_source_handle(resonance_handle);
+        if (resonance::source_handle_matches_lifecycle_epoch(resonance_handle, source_lifecycle_epoch_,
+                                                             srv->get_source_lifecycle_epoch())) {
+            srv->destroy_source_handle(resonance_handle);
+        }
         resonance_handle = -1;
+        source_lifecycle_epoch_ = 0;
         invalidate_sync_pos(last_sync_pos);
         return;
     }
@@ -150,16 +170,39 @@ void ResonanceFmodEventEmitter::try_push_simulation_handle_to_fmod(int32_t fmod_
     // TODO: fmod-gdextension DSP API for Simulation Outputs Handle.
 }
 
+void ResonanceFmodEventEmitter::invalidate_handles_after_engine_reinit() {
+    // Server already destroyed IPLSources; FMOD plugin terminate drops its source map.
+    // Do not destroy_source_handle / remove_fmod_source - IDs may already be recycled.
+    fmod_handle = -1;
+    resonance_handle = -1;
+    source_lifecycle_epoch_ = 0;
+    invalidate_sync_pos(last_sync_pos);
+}
+
+void ResonanceFmodEventEmitter::reload_source_after_reinit() {
+    if (editor_hint()) {
+        return;
+    }
+    invalidate_handles_after_engine_reinit();
+    bridge = find_runtime_fmod_bridge();
+    if (auto_play) {
+        register_fmod_source();
+    }
+}
+
 void ResonanceFmodEventEmitter::release_fmod_source_handles() {
-    if (bridge != nullptr && fmod_handle >= 0) {
-        bridge->remove_fmod_source(fmod_handle);
+    if (bridge != nullptr && fmod_handle >= 0 && bridge->has_method(StringName("remove_fmod_source"))) {
+        bridge->call(StringName("remove_fmod_source"), fmod_handle);
         fmod_handle = -1;
     }
     ResonanceServer* srv = ResonanceServer::get_singleton();
-    if (resonance_handle >= 0 && srv && srv->is_initialized()) {
+    if (resonance_handle >= 0 && srv && srv->is_initialized() && !ResonanceServer::is_shutting_down() &&
+        resonance::source_handle_matches_lifecycle_epoch(resonance_handle, source_lifecycle_epoch_,
+                                                         srv->get_source_lifecycle_epoch())) {
         srv->destroy_source_handle(resonance_handle);
-        resonance_handle = -1;
     }
+    resonance_handle = -1;
+    source_lifecycle_epoch_ = 0;
     invalidate_sync_pos(last_sync_pos);
     bridge = nullptr;
 }
@@ -180,6 +223,9 @@ void ResonanceFmodEventEmitter::_bind_methods() {
 
     ClassDB::bind_method(D_METHOD("deferred_resolve_bridge"), &ResonanceFmodEventEmitter::deferred_resolve_bridge);
     ClassDB::bind_method(D_METHOD("deferred_register_source"), &ResonanceFmodEventEmitter::deferred_register_source);
+    ClassDB::bind_method(D_METHOD("invalidate_handles_after_engine_reinit"),
+                         &ResonanceFmodEventEmitter::invalidate_handles_after_engine_reinit);
+    ClassDB::bind_method(D_METHOD("reload_source_after_reinit"), &ResonanceFmodEventEmitter::reload_source_after_reinit);
 
     ADD_PROPERTY(PropertyInfo(Variant::STRING, "event_path"), "set_event_path", "get_event_path");
     ADD_PROPERTY(PropertyInfo(Variant::BOOL, "auto_play"), "set_auto_play", "is_auto_play");

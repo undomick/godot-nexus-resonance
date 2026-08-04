@@ -1,6 +1,0 @@
-[gd_resource type="ResonanceMaterial" format=3 uid="uid://rb8c736kvibo"]
-
-[resource]
-transmission_low = 0.05
-transmission_mid = 0.04
-transmission_high = 0.015

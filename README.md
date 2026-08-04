@@ -17,15 +17,15 @@ Steam Audio integration for Godot 4: physics-based occlusion, reverb, and pathin
 
 5. **Bake Probes**: Select the ResonanceProbeVolume → use "Bake Probes" in the 3D viewport toolbar.
 
-6. **Replace AudioStreamPlayer3D with ResonancePlayer** for sources that need occlusion/reverb.
+6. **Replace AudioStreamPlayer3D with ResonancePlayer** and assign a **ResonancePlayerConfig** on `player_config` for sources that need occlusion/reverb. With a config, Steam owns distance/spatialization; Godot’s 3D attenuation knobs are hidden. Without a config, ResonancePlayer behaves like a plain AudioStreamPlayer3D.
 
 7. **ResonanceRuntime** node handles listener updates and init. Assign a **ResonanceRuntimeConfig** resource for quality settings. Structure is aligned with Steam Audio Settings for compatibility.
 
 ## Bake Workflow
 
-1. **Bake Probes (Reflections)** - Required first. Samples reverb at probe positions. Requires ResonanceGeometry on MeshInstance3Ds. Saves to the Probe Data resource on the volume.
+1. **Bake Probes (Reflections)** - Required first. Samples reverb at probe positions. Requires ResonanceGeometry on MeshInstance3Ds. Saves to the Probe Data resource on the volume. Optional: add **ResonanceProbeExclusion** children under the volume to skip probes inside those boxes.
 2. **Bake Pathing** - Optional. Enables multi-path sound around obstacles. Run after Bake Probes.
-3. **Bake Static Source / Static Listener** - Optional. For static sound sources or listener positions. Add NodePaths to the volume's `bake_sources` and `bake_listeners` arrays (Bake Targets).
+3. **Bake Static Source / Static Listener** - Optional. For static sound sources or listener positions. Set `scan_targets` to scene-tree roots (nodes or instanced scenes), then use inspector **Update Targets** to fill `bake_sources` / `bake_listeners` (replaces those arrays). Or assign NodePaths manually. At runtime use `add_bake_source` / `remove_bake_source` and the listener equivalents.
 
 Use the toolbar buttons (Bake Probes, Bake Pathing, Bake More) when a ResonanceProbeVolume is selected. Bake progress appears in the toolbar.
 

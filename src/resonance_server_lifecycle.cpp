@@ -3,6 +3,7 @@
 #include "resonance_log.h"
 #include "resonance_math.h"
 #include "resonance_server.h"
+#include "resonance_source_handle_policy.h"
 #include "resonance_utils.h"
 #include <atomic>
 #include <chrono>
@@ -385,6 +386,7 @@ bool ResonanceServer::_init_scene_and_simulator() {
         steam_audio_context_.reset();
         return false;
     }
+    simulator_created_with_pathing_ = pathing_enabled;
 
     // Lazy FMOD reverb IPLSource: ensure_fmod_reverb_source() when the bridge is used.
 
@@ -398,6 +400,7 @@ bool ResonanceServer::_init_scene_and_simulator() {
         if (iplReflectionMixerCreate(_ctx(), &audioSettings, &rs, &tmp_mixer) != IPL_STATUS_SUCCESS) {
             ResonanceLog::error("ResonanceServer: iplReflectionMixerCreate failed.");
             iplSimulatorRelease(&simulator);
+            simulator_created_with_pathing_ = false;
             iplSceneRelease(&scene);
             steam_audio_context_.reset();
             return false;
@@ -509,6 +512,9 @@ IPLSceneType ResonanceServer::_tracer_type_for_mesh_operations() const {
 }
 
 void ResonanceServer::_shutdown_steam_audio() {
+    // Invalidate client-held source/probe-batch handles before recycling IDs (Auto frame-size reinit, etc.).
+    source_lifecycle_epoch_.store(resonance::next_source_lifecycle_epoch(source_lifecycle_epoch_.load(std::memory_order_relaxed)),
+                                  std::memory_order_release);
     _clear_physics_ray_excludes_state();
     godot_physics_bridge_.clear_world();
     if (!_ctx())
@@ -564,16 +570,13 @@ void ResonanceServer::_shutdown_steam_audio() {
         (void)local_adds;
         (void)local_post_remove;
     }
-    {
-        std::lock_guard<std::mutex> lock(pending_attach_handles_mutex_);
-        pending_attach_handles_.clear();
-    }
+    for (int i = 0; i < kMaxCacheHandles; i++)
+        source_attach_pending_[static_cast<size_t>(i)].store(0, std::memory_order_release);
     {
         std::lock_guard<std::recursive_mutex> cb_lock(_attenuation_callback_mutex);
         _source_attenuation_entries.clear();
     }
     _source_update_snapshot_.clear();
-    realtime_reflection_log_once_handles_.clear();
     // Clear caches via epoch bump (avoid O(N) clears during teardown).
     reverb_param_cache_front_.store(0, std::memory_order_release);
     reflection_param_cache_front_.store(0, std::memory_order_release);
@@ -605,7 +608,9 @@ void ResonanceServer::_shutdown_steam_audio() {
             audio->unlock();
     }
 
-    // Clean probe batches (remove from simulator before releasing). Registry lock order: do this before simulation_mutex.
+    // Clean probe batches (remove from simulator before releasing). Snapshot under registry mutex only;
+    // simulator Remove runs below under simulation_mutex (never nest registry after holding sim here:
+    // worker is already joined).
     std::vector<IPLProbeBatch> batches_to_release;
     probe_batch_registry_.get_all_batches_for_shutdown(batches_to_release);
 
@@ -642,25 +647,8 @@ void ResonanceServer::_shutdown_steam_audio() {
         _set_reflection_mixer(nullptr);
         if (simulator)
             iplSimulatorRelease(&simulator);
-        for (IPLStaticMesh m : _runtime_static_meshes) {
-            if (m && scene) {
-                iplStaticMeshRemove(m, scene);
-                iplStaticMeshRelease(&m);
-            }
-        }
-        _runtime_static_meshes.clear();
-        for (IPLInstancedMesh& im : _runtime_static_instanced_meshes) {
-            if (im && scene) {
-                iplInstancedMeshRemove(im, scene);
-                iplInstancedMeshRelease(&im);
-            }
-        }
-        _runtime_static_instanced_meshes.clear();
-        for (IPLScene& sub : _runtime_static_sub_scenes) {
-            if (sub)
-                iplSceneRelease(&sub);
-        }
-        _runtime_static_sub_scenes.clear();
+        simulator_created_with_pathing_ = false;
+        _clear_static_packs_assume_locked();
         if (scene)
             iplSceneRelease(&scene);
     }

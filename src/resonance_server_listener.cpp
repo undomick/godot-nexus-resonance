@@ -1,3 +1,4 @@
+#include "resonance_audio_effect.h"
 #include "resonance_math.h"
 #include "resonance_server.h"
 #include "resonance_utils.h"
@@ -48,6 +49,8 @@ void ResonanceServer::_set_reflection_mixer(IPLReflectionMixer new_mixer) {
     IPLReflectionMixer old = reflection_mixer_.exchange(new_mixer, std::memory_order_acq_rel);
     if (old)
         _release_reflection_mixer_when_unused(old);
+    if (new_mixer)
+        ResonanceAudioEffectInstance::try_prewarm_all_live_instances();
 }
 
 void ResonanceServer::fill_reflection_mixer_apply_params(IPLReflectionEffectParams* p) const {

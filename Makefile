@@ -34,13 +34,14 @@ build-android: install-steam-audio
 
 # iOS dependencies: build pffft and libmysofa as static libraries for arm64
 ios-deps:
+	mkdir -p addons/nexus_resonance/bin/ios
 	# Build pffft for iOS arm64
 	IOS_SDK=$$(xcrun --sdk iphoneos --show-sdk-path) && \
 		xcrun --sdk iphoneos clang -arch arm64 -isysroot "$$IOS_SDK" -miphoneos-version-min=12.0 -O2 -DPFFFT_ENABLE_NEON \
 			-Isrc/lib/pffft/include/pffft -c src/lib/pffft/src/pffft.c -o src/lib/pffft/src/pffft.o && \
 		xcrun --sdk iphoneos clang -arch arm64 -isysroot "$$IOS_SDK" -miphoneos-version-min=12.0 -O2 -DPFFFT_ENABLE_NEON \
 			-Isrc/lib/pffft/include/pffft -c src/lib/pffft/src/pffft_common.c -o src/lib/pffft/src/pffft_common.o && \
-		ar rcs audio_resonance_tool/addons/nexus_resonance/bin/ios/libpffft.a src/lib/pffft/src/pffft.o src/lib/pffft/src/pffft_common.o
+		ar rcs addons/nexus_resonance/bin/ios/libpffft.a src/lib/pffft/src/pffft.o src/lib/pffft/src/pffft_common.o
 	# Build libmysofa for iOS arm64
 	IOS_SDK=$$(xcrun --sdk iphoneos --show-sdk-path) && \
 		cmake -S src/lib/libmysofa -B src/lib/libmysofa/build-ios \
@@ -48,13 +49,13 @@ ios-deps:
 			-DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 -DCMAKE_OSX_SYSROOT="$$IOS_SDK" \
 			-DBUILD_TESTS=OFF -DBUILD_SHARED_LIBS=OFF && \
 		cmake --build src/lib/libmysofa/build-ios --config Release
-	cp src/lib/libmysofa/build-ios/src/libmysofa.a audio_resonance_tool/addons/nexus_resonance/bin/ios/
+	cp src/lib/libmysofa/build-ios/src/libmysofa.a addons/nexus_resonance/bin/ios/
 
 build-ios: install-steam-audio ios-deps
 	scons platform=ios arch=arm64 target=template_debug
 	scons platform=ios arch=arm64 target=template_release
-	cp src/lib/godot-cpp/bin/libgodot-cpp.ios.template_debug.arm64.a audio_resonance_tool/addons/nexus_resonance/bin/ios/
-	cp src/lib/godot-cpp/bin/libgodot-cpp.ios.template_release.arm64.a audio_resonance_tool/addons/nexus_resonance/bin/ios/
+	cp src/lib/godot-cpp/bin/libgodot-cpp.ios.template_debug.arm64.a addons/nexus_resonance/bin/ios/
+	cp src/lib/godot-cpp/bin/libgodot-cpp.ios.template_release.arm64.a addons/nexus_resonance/bin/ios/
 
 # Build all desktop platforms (Windows, Linux, macOS)
 release: build-windows build-linux build-macos

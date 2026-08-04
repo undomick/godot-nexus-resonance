@@ -35,6 +35,9 @@ class ResonanceLog {
     static void info(const String& p_msg);
     static void warn(const String& p_msg);
     static void error(const String& p_msg);
+    /// UTF-8 C-string path for audio/worker threads (no Godot String alloc on the caller).
+    static void warn_cstr(const char* p_msg);
+    static void error_cstr(const char* p_msg);
 
     // Trace is special: It flushes immediately to std::cout to survive crashes
     static void trace(const String& p_msg);

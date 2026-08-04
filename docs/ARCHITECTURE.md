@@ -23,7 +23,7 @@ Registered in `register_types.cpp` for the Create Node dialog (no attached GDScr
 |------|------|------|
 | `ResonanceRuntime` | `Node` | Native runtime orchestrator (`src/resonance_runtime*.cpp`); drives GDScript helpers; see [ADR-001](adr/001-native-resonance-node-migration.md) |
 | `ResonanceListener` | `Node3D` | Listener pose → `ResonanceServer` |
-| `ResonancePlayer` | `AudioStreamPlayer3D` | Spatial source + internal stream |
+| `ResonancePlayer` | `AudioStreamPlayer3D` | Spatial source + internal stream (Steam params on `ResonancePlayerConfig`; ASP3D spatial knobs hidden when config set) |
 | `ResonanceAmbisonicPlayer` | `AudioStreamPlayer` | HOA bed decode |
 | `ResonanceFmodEventEmitter` | `Node3D` | Child of `FmodEventEmitter3D`; FMOD bridge source sync |
 | `ResonanceCodaEventEmitter` | `Node3D` | Coda event playback + `ResonanceCodaBridge` spatial link |
@@ -32,6 +32,10 @@ Registered in `register_types.cpp` for the Create Node dialog (no attached GDScr
 | `ResonanceGeometry` / `ResonanceStaticGeometry` / `ResonanceDynamicGeometry` | `Node3D` | Export / runtime geometry |
 
 Implementation: `src/resonance_fmod_event_emitter.cpp`, `src/resonance_coda_event_emitter.cpp` (ADR-001 Phase 1.1/1.2).
+
+## ResonancePlayer ownership (ASP3D + Hide)
+
+`ResonancePlayer` keeps **`AudioStreamPlayer3D`** as the transport base (stream API, volume/pitch, polyphony, transform). Steam Audio parameters live on **`ResonancePlayerConfig`**. With a config assigned, inert Godot spatial properties are hidden in the inspector and Godot attenuation is forced off (`ATTENUATION_DISABLED`, Godot `max_distance` cleared) so only Steam distance/occlusion/HRTF apply. This matches Steam Audio Unity’s split (`AudioSource` + companion Source) fused into one node because Godot has no spatializer plugin hook. A bare `Node3D` rebase is **not** the architecture: Phonon does not own playback.
 
 ## Initialization Flow
 
@@ -66,8 +70,9 @@ Separate (do not nest with `simulation_mutex` unless a call site documents it): 
 | Context | Code |
 |---------|------|
 | Main thread | `update_source`, `load_probe_batch`, `tick`, probe/volume/player updates, `prewarm_steam_audio`, `ResonanceAudioEffectInstance::try_prewarm_processor` |
-| Audio thread | `fetch_reverb_params`, `fetch_pathing_params`, `get_source_occlusion_data` (epoch caches only), `ResonanceStreamPlayback::_mix`, `ResonanceAudioEffectInstance::_process` |
+| Audio thread | `fetch_reverb_params`, `fetch_pathing_params`, `get_source_occlusion_data` (epoch caches only), `ResonanceStreamPlayback::_mix`, `ResonanceAudioEffectInstance::_process`. No `ipl*EffectCreate` / buffer alloc in `_mix` - dry passthrough until main-thread `prewarm_steam_audio` / `try_prewarm_processor`. |
 | Worker thread | `_worker_thread_func`, `iplSimulatorRunDirect`, `RunReflections`, `RunPathing`, `_worker_sync_fetch_caches` (`iplSourceGetOutputs`) |
+| Bake thread (GDScript `Thread`) | `ResonanceServer::bake_*` via `_with_bake_scene`: Phonon bake on an **isolated temp `IPLScene`** (asset / runtime-static clone / live snapshot). `simulation_mutex` only during prepare. Progress via `get_bake_progress()` atomic poll - not Godot signals. |
 | Callbacks | `_pathing_vis_callback`, `_distance_attenuation_callback` run in worker/simulation context |
 
 ## Lock-Free Audio Paths

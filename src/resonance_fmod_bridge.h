@@ -20,7 +20,10 @@ class ResonanceFMODBridge : public Object {
 
     bool init_bridge();
     void shutdown_bridge();
+    /// After ResonanceServer reinit: terminate + re-init with the new IPLContext without unloading the plugin.
+    bool rebind_after_reinit();
     bool is_bridge_loaded() const { return plugin_handle_ != nullptr; }
+    bool is_bridge_initialized() const { return initialized_; }
 
     int32_t add_fmod_source(int32_t resonance_source_handle);
     void remove_fmod_source(int32_t fmod_handle);

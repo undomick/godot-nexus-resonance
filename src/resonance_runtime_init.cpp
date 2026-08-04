@@ -62,7 +62,9 @@ Dictionary ResonanceRuntime::get_bake_params_for_runtime() {
     }
     Ref<Script> bake_script = ResourceLoader::get_singleton()->load(BAKE_CONFIG_PATH);
     if (bake_script.is_valid()) {
-        Object* def = Object::cast_to<Object>(bake_script->call("create_default"));
+        // Keep the Variant alive: create_default() returns a RefCounted; a temporary would free it.
+        Variant def_variant = bake_script->call("create_default");
+        Object* def = Object::cast_to<Object>(def_variant);
         if (def && def->has_method("get_bake_params")) {
             return def->call("get_bake_params");
         }
@@ -70,7 +72,7 @@ Dictionary ResonanceRuntime::get_bake_params_for_runtime() {
     return Dictionary();
 }
 
-// Loads every ResonanceStaticScene under tree_root into the server (additive API).
+// Loads every ResonanceStaticScene under tree_root into the server (one simulation_mutex batch).
 void ResonanceRuntime::reload_static_scenes_from_tree(Node* tree_root) {
     ResonanceServer* srv = ResonanceServer::get_singleton();
     if (srv == nullptr || !srv->is_initialized() || tree_root == nullptr) {
@@ -78,13 +80,12 @@ void ResonanceRuntime::reload_static_scenes_from_tree(Node* tree_root) {
     }
     TypedArray<Node> static_scenes;
     collect_static_scenes(tree_root, static_scenes);
-    if (static_scenes.is_empty()) {
-        return;
-    }
+    // Full replace: clear then re-add each pack keyed by Node ObjectID.
     srv->clear_static_scenes();
     for (int i = 0; i < static_scenes.size(); i++) {
+        Node* ss_node = Object::cast_to<Node>(static_scenes[i]);
         Object* ss = Object::cast_to<Object>(static_scenes[i]);
-        if (ss == nullptr) {
+        if (ss == nullptr || ss_node == nullptr) {
             continue;
         }
         Ref<ResonanceGeometryAsset> asset(Object::cast_to<ResonanceGeometryAsset>((Object*)ss->get("static_scene_asset")));
@@ -95,10 +96,33 @@ void ResonanceRuntime::reload_static_scenes_from_tree(Node* tree_root) {
         if (!valid) {
             continue;
         }
-        Node3D* n3 = Object::cast_to<Node3D>(ss);
-        Transform3D xf = n3 ? n3->get_global_transform() : Transform3D();
-        srv->add_static_scene_from_asset(asset, xf);
+        Node3D* n3 = Object::cast_to<Node3D>(ss_node);
+        srv->add_or_replace_static_pack(ss_node->get_instance_id(), asset, n3 ? n3->get_global_transform() : Transform3D());
     }
+}
+
+void ResonanceRuntime::apply_primary_handoff_without_reinit() {
+    ResonanceServer* srv = ResonanceServer::get_singleton();
+    if (srv == nullptr || !srv->is_initialized()) {
+        return;
+    }
+    reset_viewport_sync_cache();
+    if (fmod_bridge_enabled && Object::cast_to<Object>(fmod_bridge) == nullptr) {
+        init_fmod_bridge();
+    }
+    if (coda_bridge_enabled && Object::cast_to<Object>(coda_bridge) == nullptr) {
+        init_coda_bridge();
+    }
+    if (is_inside_tree()) {
+        if (SceneTree* tree = get_tree()) {
+            reload_static_scenes_from_tree(tree->get_root());
+            tree->call_group_flags(SceneTree::GROUP_CALL_DEFERRED, "resonance_geometry", "refresh_geometry");
+        }
+    }
+    apply_debug_flags();
+    apply_perspective_correction();
+    call_deferred("deferred_reset_spatial_audio_warmup_passes");
+    sync_physics_process_for_custom_tracer();
 }
 
 void ResonanceRuntime::initialize_server() {
@@ -117,11 +141,8 @@ void ResonanceRuntime::initialize_server() {
         return;
     }
     if (srv->is_initialized()) {
-        prepare_geometry_before_reinit();
-        srv->reinit_audio_engine(cfg);
-        reset_viewport_sync_cache();
-        call_deferred("reload_after_reinit");
-        sync_physics_process_for_custom_tracer();
+        // Scene handoff: keep the live engine; only primary owns tick after claim in _ready.
+        apply_primary_handoff_without_reinit();
         return;
     }
     // Set bake params before init so pathing visibility params (from bake_config) are available.
@@ -160,6 +181,7 @@ void ResonanceRuntime::handle_pending_reinit_frame_size() {
     Dictionary cfg = get_config_dict();
     cfg["audio_frame_size"] = pending;
     prepare_geometry_before_reinit();
+    srv->set_bake_params(get_bake_params_for_runtime());
     srv->reinit_audio_engine(cfg);
     reset_viewport_sync_cache();
     call_deferred("reload_after_reinit");
@@ -186,8 +208,45 @@ void ResonanceRuntime::reload_after_reinit() {
     TypedArray<Node> volumes = tree->get_nodes_in_group("resonance_probe_volume");
     for (int i = 0; i < volumes.size(); i++) {
         Object* n = Object::cast_to<Object>(volumes[i]);
-        if (n && n->has_method("reload_probe_batch")) {
-            n->call("reload_probe_batch");
+        if (n && n->has_method("_reload_probe_batch_after_reinit")) {
+            n->call("_reload_probe_batch_after_reinit");
+        }
+    }
+    // Recreate IPL sources: shutdown recycles handles while players still hold the old integers.
+    TypedArray<Node> players = tree->get_nodes_in_group("resonance_player");
+    for (int i = 0; i < players.size(); i++) {
+        Object* n = Object::cast_to<Object>(players[i]);
+        if (n && n->has_method("reload_source_after_reinit")) {
+            n->call("reload_source_after_reinit");
+        }
+    }
+    // FMOD plugin retained the destroyed IPLContext; rebind before recreating emitter sources.
+    TypedArray<Node> fmod_emitters = tree->get_nodes_in_group("resonance_fmod_event_emitter");
+    for (int i = 0; i < fmod_emitters.size(); i++) {
+        Object* n = Object::cast_to<Object>(fmod_emitters[i]);
+        if (n && n->has_method("invalidate_handles_after_engine_reinit")) {
+            n->call("invalidate_handles_after_engine_reinit");
+        }
+    }
+    if (fmod_bridge_enabled) {
+        if (Object* bridge = Object::cast_to<Object>(fmod_bridge)) {
+            if (bridge->has_method("rebind_after_reinit")) {
+                bridge->call("rebind_after_reinit");
+            }
+        } else {
+            init_fmod_bridge();
+        }
+    }
+    for (int i = 0; i < fmod_emitters.size(); i++) {
+        Object* n = Object::cast_to<Object>(fmod_emitters[i]);
+        if (n && n->has_method("reload_source_after_reinit")) {
+            n->call("reload_source_after_reinit");
+        }
+    }
+    // Coda bridge keeps source handles in GDScript; same recycle hazard as ResonancePlayer.
+    if (Object* coda = Object::cast_to<Object>(coda_bridge)) {
+        if (coda->has_method("reload_sources_after_reinit")) {
+            coda->call("reload_sources_after_reinit");
         }
     }
     tree->call_group_flags(SceneTree::GROUP_CALL_DEFERRED, "resonance_geometry", "refresh_geometry");
@@ -204,7 +263,25 @@ void ResonanceRuntime::deferred_reset_spatial_audio_warmup_passes() {
 
 // Rebuild static IPL scenes from the tree after runtime asset swaps. Debounced to one reload per frame.
 void ResonanceRuntime::request_static_scene_reload() {
-    if (!is_inside_tree() || static_scene_reload_pending) {
+    if (!is_inside_tree()) {
+        return;
+    }
+    if (!is_primary_runtime()) {
+        SceneTree* tree = get_tree();
+        if (tree == nullptr) {
+            return;
+        }
+        TypedArray<Node> runtimes = tree->get_nodes_in_group("resonance_runtime");
+        for (int i = 0; i < runtimes.size(); i++) {
+            ResonanceRuntime* rt = Object::cast_to<ResonanceRuntime>(runtimes[i]);
+            if (rt && rt->is_primary_runtime()) {
+                rt->request_static_scene_reload();
+                return;
+            }
+        }
+        return;
+    }
+    if (static_scene_reload_pending) {
         return;
     }
     static_scene_reload_pending = true;
@@ -213,7 +290,7 @@ void ResonanceRuntime::request_static_scene_reload() {
 
 void ResonanceRuntime::perform_deferred_static_scene_reload() {
     static_scene_reload_pending = false;
-    if (!is_inside_tree()) {
+    if (!is_inside_tree() || !is_primary_runtime()) {
         return;
     }
     reload_static_scenes_from_tree(get_tree()->get_root());
@@ -270,6 +347,9 @@ void ResonanceRuntime::disconnect_runtime_signals() {
 }
 
 void ResonanceRuntime::reinit_for_config_change() {
+    if (!is_inside_tree() || !is_primary_runtime()) {
+        return;
+    }
     ResonanceServer* srv = ResonanceServer::get_singleton();
     if (srv == nullptr || !srv->is_initialized()) {
         return;
@@ -279,6 +359,7 @@ void ResonanceRuntime::reinit_for_config_change() {
         return;
     }
     prepare_geometry_before_reinit();
+    srv->set_bake_params(get_bake_params_for_runtime());
     srv->reinit_audio_engine(cfg);
     call_deferred("reload_after_reinit");
     notify_volumes_runtime_config_changed();
@@ -293,16 +374,10 @@ void ResonanceRuntime::on_audio_frame_size_changed(const Variant&) {
 }
 
 void ResonanceRuntime::on_runtime_affecting_probes_changed(const Variant&) {
-    ResonanceServer* srv = ResonanceServer::get_singleton();
-    if (srv && srv->is_initialized()) {
-        srv->set_pathing_enabled(runtime.is_valid() ? (bool)runtime->get("pathing_enabled") : false);
-        const int removed = srv->revalidate_probe_batches_with_config();
-        if (removed > 0 && is_inside_tree()) {
-            get_tree()->call_group_flags(
-                SceneTree::GROUP_CALL_DEFERRED, "resonance_probe_volume", "reload_probe_batch");
-        }
-    }
-    notify_volumes_runtime_config_changed();
+    // Pathing internals exist only when PATHING was set at iplSimulatorCreate.
+    // Flipping the config flag without recreate leaves RunPathing / probe attach
+    // calling into a null PathSimulator (Steam Audio crash). Mirror reflection_type.
+    reinit_for_config_change();
 }
 
 void ResonanceRuntime::notify_volumes_runtime_config_changed() {

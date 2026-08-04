@@ -1,10 +1,9 @@
 #include "resonance_static_scene.h"
+#include "resonance_server.h"
+
 #include <godot_cpp/classes/engine.hpp>
-#include <godot_cpp/classes/scene_tree.hpp>
 #include <godot_cpp/core/class_db.hpp>
-#include <godot_cpp/variant/array.hpp>
-#include <godot_cpp/variant/string_name.hpp>
-#include <godot_cpp/variant/typed_array.hpp>
+#include <godot_cpp/core/object.hpp>
 
 using namespace godot;
 
@@ -12,29 +11,58 @@ ResonanceStaticScene::ResonanceStaticScene() {}
 
 ResonanceStaticScene::~ResonanceStaticScene() {}
 
+void ResonanceStaticScene::_register_static_pack() {
+    Engine* eng = Engine::get_singleton();
+    if (eng && eng->is_editor_hint()) {
+        return;
+    }
+    if (!is_inside_tree()) {
+        return;
+    }
+    ResonanceServer* srv = ResonanceServer::get_singleton();
+    if (srv == nullptr || !srv->is_initialized()) {
+        return;
+    }
+    const uint64_t id = get_instance_id();
+    if (!has_valid_asset()) {
+        srv->remove_static_pack(id);
+        return;
+    }
+    srv->add_or_replace_static_pack(id, static_scene_asset, get_global_transform());
+}
+
+void ResonanceStaticScene::_unregister_static_pack() {
+    Engine* eng = Engine::get_singleton();
+    if (eng && eng->is_editor_hint()) {
+        return;
+    }
+    ResonanceServer* srv = ResonanceServer::get_singleton();
+    if (srv == nullptr || !srv->is_initialized()) {
+        return;
+    }
+    srv->remove_static_pack(get_instance_id());
+}
+
+void ResonanceStaticScene::_notification(int p_what) {
+    Engine* eng = Engine::get_singleton();
+    if (eng && eng->is_editor_hint()) {
+        return;
+    }
+    if (p_what == NOTIFICATION_ENTER_TREE) {
+        // Deferred so global_transform is final after parent placement.
+        call_deferred("_register_static_pack");
+    } else if (p_what == NOTIFICATION_EXIT_TREE) {
+        _unregister_static_pack();
+    }
+}
+
 void ResonanceStaticScene::set_static_scene_asset(const Ref<ResonanceGeometryAsset>& p_asset) {
     if (static_scene_asset == p_asset)
         return;
     static_scene_asset = p_asset;
-    // Play-mode hot-swap: the live IPLScene is rebuilt from all ResonanceStaticScene nodes during
-    // ResonanceRuntime init/reinit; without this trigger, swapping the asset at runtime (level streaming,
-    // dynamic level loaders) leaves Steam Audio on the previous merged static mesh until the next reinit.
-    // Editor sets are ignored - the editor never holds a live IPLScene tied to property edits.
-    Engine* eng = Engine::get_singleton();
-    if (!eng || eng->is_editor_hint())
-        return;
-    if (!is_inside_tree())
-        return;
-    SceneTree* tree = get_tree();
-    if (!tree)
-        return;
-    TypedArray<Node> runtime_nodes = tree->get_nodes_in_group(StringName("resonance_runtime"));
-    if (runtime_nodes.is_empty())
-        return;
-    Node* runtime_node = Object::cast_to<Node>(runtime_nodes[0]);
-    if (!runtime_node || !runtime_node->has_method(StringName("request_static_scene_reload")))
-        return;
-    runtime_node->call_deferred(StringName("request_static_scene_reload"));
+    if (is_inside_tree()) {
+        _register_static_pack();
+    }
 }
 
 Ref<ResonanceGeometryAsset> ResonanceStaticScene::get_static_scene_asset() const {
@@ -72,6 +100,8 @@ void ResonanceStaticScene::_bind_methods() {
 
     ClassDB::bind_method(D_METHOD("set_export_hash", "p_hash"), &ResonanceStaticScene::set_export_hash);
     ClassDB::bind_method(D_METHOD("get_export_hash"), &ResonanceStaticScene::get_export_hash);
+
+    ClassDB::bind_method(D_METHOD("_register_static_pack"), &ResonanceStaticScene::_register_static_pack);
 
     ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "static_scene_asset", PROPERTY_HINT_RESOURCE_TYPE, "ResonanceGeometryAsset"),
                  "set_static_scene_asset", "get_static_scene_asset");

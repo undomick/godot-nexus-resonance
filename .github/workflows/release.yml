@@ -59,12 +59,12 @@ jobs:
 
       - name: Create bin directories
         run: |
-          BIN=audio_resonance_tool/addons/nexus_resonance/bin
+          BIN=addons/nexus_resonance/bin
           mkdir -p "$BIN"/{linux,android/arm64-v8a,android/x86_64}
 
       - name: Copy Steam Audio runtime libraries
         run: |
-          BIN=audio_resonance_tool/addons/nexus_resonance/bin
+          BIN=addons/nexus_resonance/bin
           cp src/lib/steamaudio/lib/linux-x64/libphonon.so "$BIN/linux/"
           cp src/lib/steamaudio/lib/android-armv8/libphonon.so "$BIN/android/arm64-v8a/"
           cp src/lib/steamaudio/lib/android-x64/libphonon.so "$BIN/android/x86_64/"
@@ -94,7 +94,7 @@ jobs:
         uses: actions/upload-artifact@v5
         with:
           name: bin-linux-android
-          path: audio_resonance_tool/addons/nexus_resonance/bin/
+          path: addons/nexus_resonance/bin/
 
   build-windows:
     name: Build (Windows MSVC)
@@ -135,12 +135,12 @@ jobs:
 
       - name: Create bin directories
         run: |
-          BIN=audio_resonance_tool/addons/nexus_resonance/bin
+          BIN=addons/nexus_resonance/bin
           mkdir -p "$BIN"/windows
 
       - name: Copy Steam Audio runtime libraries
         run: |
-          BIN=audio_resonance_tool/addons/nexus_resonance/bin
+          BIN=addons/nexus_resonance/bin
           cp src/lib/steamaudio/lib/windows-x64/phonon.dll "$BIN/windows/"
           for dll in GPUUtilities.dll TrueAudioNext.dll; do
             [ -f "src/lib/steamaudio/lib/windows-x64/$dll" ] && cp "src/lib/steamaudio/lib/windows-x64/$dll" "$BIN/windows/"
@@ -155,14 +155,14 @@ jobs:
 
       - name: Remove MSVC build artifacts
         run: |
-          BIN=audio_resonance_tool/addons/nexus_resonance/bin/windows
+          BIN=addons/nexus_resonance/bin/windows
           rm -f "$BIN"/*.exp "$BIN"/*.lib
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v5
         with:
           name: bin-windows
-          path: audio_resonance_tool/addons/nexus_resonance/bin/
+          path: addons/nexus_resonance/bin/
 
   build-macos-ios:
     name: Build (macOS / iOS)
@@ -197,12 +197,12 @@ jobs:
 
       - name: Create bin directories
         run: |
-          BIN=audio_resonance_tool/addons/nexus_resonance/bin
+          BIN=addons/nexus_resonance/bin
           mkdir -p "$BIN"/{macos,ios}
 
       - name: Copy Steam Audio runtime libraries
         run: |
-          BIN=audio_resonance_tool/addons/nexus_resonance/bin
+          BIN=addons/nexus_resonance/bin
           cp src/lib/steamaudio/lib/osx/libphonon.dylib "$BIN/macos/"
           cp src/lib/steamaudio/lib/ios/libphonon.a "$BIN/ios/"
 
@@ -225,7 +225,7 @@ jobs:
 
       - name: Copy iOS static libraries
         run: |
-          BIN=audio_resonance_tool/addons/nexus_resonance/bin/ios
+          BIN=addons/nexus_resonance/bin/ios
           cp src/lib/godot-cpp/bin/libgodot-cpp.ios.template_debug.arm64.a "$BIN/"
           cp src/lib/godot-cpp/bin/libgodot-cpp.ios.template_release.arm64.a "$BIN/"
 
@@ -233,7 +233,7 @@ jobs:
         uses: actions/upload-artifact@v5
         with:
           name: bin-macos-ios
-          path: audio_resonance_tool/addons/nexus_resonance/bin/
+          path: addons/nexus_resonance/bin/
 
   create-release:
     name: Create Release
@@ -254,7 +254,7 @@ jobs:
       - name: Prepare release addon
         run: |
           mkdir -p release_addon/addons/nexus_resonance/bin
-          cp -r audio_resonance_tool/addons/nexus_resonance/* release_addon/addons/nexus_resonance/
+          cp -r addons/nexus_resonance/* release_addon/addons/nexus_resonance/
           cp -r artifacts/bin-linux-android/* release_addon/addons/nexus_resonance/bin/
           cp -r artifacts/bin-windows/* release_addon/addons/nexus_resonance/bin/
           cp -r artifacts/bin-macos-ios/* release_addon/addons/nexus_resonance/bin/

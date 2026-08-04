@@ -23,6 +23,32 @@ String resonance_probe_data_save_extension_from_settings() {
     return (v == 1) ? String("res") : String("tres");
 }
 
+String resonance_bake_output_root_from_settings() {
+    String base_dir = String(resonance::kProbeBakeOutputDir);
+    ProjectSettings* ps = ProjectSettings::get_singleton();
+    if (ps) {
+        const String prefix = String(resonance::kProjectSettingsResonancePrefix);
+        const String key_new = prefix + String(resonance::kProjectSettingsBakeDefaultOutputDirectory);
+        const String key_old = prefix + String(resonance::kProjectSettingsBakeOutputDirectoryLegacy);
+        if (ps->has_setting(key_new)) {
+            base_dir = String(ps->get_setting(key_new));
+        } else if (ps->has_setting(key_old)) {
+            base_dir = String(ps->get_setting(key_old));
+        }
+    }
+    if (base_dir.is_empty()) {
+        base_dir = String(resonance::kProbeBakeOutputDir);
+    }
+    if (!base_dir.ends_with("/")) {
+        base_dir += "/";
+    }
+    return base_dir;
+}
+
+String resonance_bake_batches_dir_from_settings() {
+    return resonance_bake_output_root_from_settings() + String(resonance::kProbeBakeBatchesSubdir);
+}
+
 } // namespace godot
 
 using namespace godot;

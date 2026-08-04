@@ -25,15 +25,27 @@ int32_t SourceManager::add_source(IPLSource source) {
     return handle;
 }
 
-void SourceManager::remove_source(int32_t handle) {
+void SourceManager::remove_source(int32_t handle, bool recycle) {
     std::lock_guard<std::mutex> lock(mutex);
     auto it = items.find(handle);
-    if (it != items.end()) {
-        _handle_release_source(&(it->second));
-        items.erase(it);
-        item_count_.store((int32_t)items.size(), std::memory_order_relaxed);
+    if (it == items.end())
+        return;
+    _handle_release_source(&(it->second));
+    items.erase(it);
+    item_count_.store((int32_t)items.size(), std::memory_order_relaxed);
+    if (recycle)
         recycle_handle(handle);
-    }
+    else
+        deferred_recycle_.insert(handle);
+}
+
+void SourceManager::recycle_source_handle(int32_t handle) {
+    if (handle < 0)
+        return;
+    std::lock_guard<std::mutex> lock(mutex);
+    if (deferred_recycle_.erase(handle) == 0)
+        return;
+    recycle_handle(handle);
 }
 
 IPLSource SourceManager::get_source(int32_t handle) {

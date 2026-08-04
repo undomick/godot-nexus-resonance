@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="ResonancePlayer" inherits="AudioStreamPlayer3D" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		A Steam Audio source that supports physics-based occlusion, transmission, and reverb.
+	</brief_description>
+	<description>
+		ResonancePlayer extends AudioStreamPlayer3D for sources that interact with Steam Audio geometry (Godot transport + Steam companion params on [url=#ResonancePlayerConfig]ResonancePlayerConfig[/url], same ownership split as Steam Audio Unity’s AudioSource + Source). Assign a [url=#ResonancePlayerConfig]ResonancePlayerConfig[/url] to [member player_config] to enable occlusion, distance attenuation, air absorption, and directivity. When [member player_config] is null, behaves as a normal AudioStreamPlayer3D (no Resonance processing).
+		[b]Polyphony:[/b] [code]max_polyphony[/code] (inherited from [AudioStreamPlayer3D]) may be &gt; 1. With [member player_config] set, each overlapping voice runs the full Resonance pipeline; all voices share one Steam Audio source handle at this node’s position (same occlusion/reverb simulation). Reverb split output sums wet audio from every active voice. [method get_audio_instrumentation] aggregates per-voice counters and includes [code]polyphony_voice_count[/code] while playing.
+		[b]Stream property:[/b] With [member player_config] set, [code]stream[/code] and [method get_stream] refer to your real [AudioStream] resource; the engine plays an internal wrapper. Changing [code]stream[/code] at runtime updates the wrapper without requiring a manual [method play] restart (existing playbacks may still decode the previous stream until stopped). Clearing [member player_config] restores the plain [AudioStreamPlayer3D] stream slot.
+		[b]AudioStreamPlayer3D inspector (when [member player_config] is set):[/b]
+		- [b]Works / applied in Resonance path:[/b] [code]volume_db[/code] / [code]volume_linear[/code] (source loudness on the dry input before Steam DSP so wet/convolution follow; dry-only level uses [url=#ResonancePlayerConfig]ResonancePlayerConfig[/url] [code]direct_mix_level[/code]), [code]max_db[/code] (ceiling combined with volume), [code]pitch_scale[/code] (via engine [code]rate_scale[/code] to the decoder), [code]max_polyphony[/code], transform, [code]autoplay[/code], [code]play[/code] / [code]stop[/code] / [code]seek[/code]. Dry and reverb buses are pushed from [url=#ResonancePlayerConfig]ResonancePlayerConfig[/url] via [ResonanceRuntime] ([code]bus_override[/code] / [code]reverb_bus_override[/code]); the inherited [code]bus[/code] on this node is still set at runtime but hidden in the inspector when a config is assigned.
+		- [b]Hidden in the inspector (inert with a config):[/b] [code]bus[/code] (use the config), the inherited distance/rolloff/filter knobs [code]attenuation_model[/code], [code]unit_size[/code], [code]max_distance[/code] (when a config is assigned, Godot attenuation is forced disabled and Godot [code]max_distance[/code] is cleared so a saved sphere cutoff cannot apply; use [url=#ResonancePlayerConfig]ResonancePlayerConfig[/url] for distance and curves), plus [code]emission_angle*[/code], [code]attenuation_filter*[/code], [code]panning_strength[/code], [code]area_mask[/code], [code]doppler_tracking[/code], and [code]playback_type[/code]. They stay visible when [member player_config] is null (plain AudioStreamPlayer3D). Saved values for most of these are kept either way; Godot [code]attenuation_model[/code] / [code]max_distance[/code] are actively overridden while a config is present.
+		[b]Reverb split:[/b] Child [code]ResonanceReverbOutput[/code] is a separate [AudioStreamPlayer]; set its [code]bus[/code] via [method set_reverb_split_output]. It does not automatically mirror the parent’s bus or mute — adjust both if your mix expects that.
+		Inspector documentation for resource properties: open [url=#ResonancePlayerConfig]ResonancePlayerConfig[/url] from here (sub-resources have no documentation button in the inspector).
+		[b]Scene tree:[/b] If this node is a [i]child[/i] of [ResonanceRuntime], Godot runs the player’s [code]_ready[/code] before the runtime’s [code]_ready[/code]. The extension retries registering the Steam source after the server initializes, so assigning [code]stream[/code] or calling [method play] / [method play_stream] in [code]_ready[/code] is fine. Prefer [method play_stream] in docs and templates; [method play] applies the same Resonance hookup (internal stream wrap, source handle, deferred simulation push, reverb split child).
+		[b]AnimationPlayer:[/b] [code]Animation.TYPE_AUDIO[/code] ([b]Audio Clips[/b]) uses [code]AudioStreamPolyphonic[/code]. Returning a [code]ResonanceStreamPlayback[/code] wrapper for that stream crashes on Windows before playback starts; the extension therefore uses [b]native[/b] polyphonic playback for that case (stable, but [b]dry[/b] for Resonance). For Steam with Audio Clips, enable [member convert_anim_audio_runtime] on this node (converts tracks once at runtime to [method play_animation_audio_clip]), use [b]Call Method[/b] keys manually, or the editor tools under [b]Project → Tools → Nexus Resonance[/b].
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="play">
+			<return type="void" />
+			<param index="0" name="from_position" type="float" default="0.0" />
+			<description>
+				Same as [method AudioStreamPlayer3D.play] for this class, plus when [member player_config] is set: wraps the stream in the internal Resonance playback path, ensures a Steam source handle exists (retries if [ResonanceServer] was not ready in [code]_ready[/code]), starts the reverb split child if present, and defers a playback-parameter push to the audio thread. Use this or [method play_stream]; both are supported.
+			</description>
+		</method>
+		<method name="play_stream">
+			<return type="void" />
+			<param index="0" name="from_position" type="float" default="0.0" />
+			<description>
+				Calls [method play] with the same [code]from_position[/code]. Kept for existing projects and tutorials.
+			</description>
+		</method>
+		<method name="play_animation_audio_clip">
+			<return type="void" />
+			<param index="0" name="stream" type="AudioStream" />
+			<param index="1" name="from_position" type="float" default="0.0" />
+			<description>
+				Sets [code]stream[/code] and calls [method play] with [code]from_position[/code] (typically the clip’s start offset / trim). Intended for [AnimationPlayer] [b]method[/b] tracks (or after [member convert_anim_audio_runtime] rewrote [code]TYPE_AUDIO[/code]; see class description).
+			</description>
+		</method>
+		<method name="get_audio_instrumentation">
+			<return type="Dictionary" />
+			<description>
+				Dropout/debug counters aggregated across all active polyphony voices when [member player_config] is set. Always includes a snapshot of selected Godot 3D player fields when [member player_config] is set: [code]godot_attenuation_model[/code], [code]godot_pitch_scale[/code], [code]godot_max_distance[/code], [code]godot_max_db[/code], [code]godot_volume_db[/code], [code]godot_unit_size[/code], and [code]effective_volume_linear[/code] ([code]min(volume_db, max_db)[/code] as linear source loudness applied before Steam DSP). When at least one internal playback is active, also includes [code]polyphony_voice_count[/code] and the dropout counters. Empty dictionary when [member player_config] is null.
+			</description>
+		</method>
+		<method name="reset_audio_instrumentation">
+			<return type="void" />
+			<description>
+				Resets instrumentation counters on every active internal playback for this node.
+			</description>
+		</method>
+		<method name="get_effective_volume_linear_cached">
+			<return type="float" />
+			<description>
+				Linear source loudness from [code]min(volume_db, max_db)[/code], refreshed each [code]_process[/code] tick. Applied to the dry decoder buffer before Steam Direct/HRTF/wet so convolution and local wet follow (Godot does not scale GDExtension [code]_mix[/code] buffers itself). Use [url=#ResonancePlayerConfig]ResonancePlayerConfig[/url] [code]direct_mix_level[/code] to change only the dry path.
+			</description>
+		</method>
+		<method name="build_directivity_gizmo_lines" qualifiers="static">
+			<return type="PackedVector3Array" />
+			<param index="0" name="enabled" type="bool" />
+			<param index="1" name="input_mode" type="int" />
+			<param index="2" name="weight" type="float" />
+			<param index="3" name="power" type="float" />
+			<param index="4" name="user_value" type="float" />
+			<param index="5" name="size" type="float" />
+			<description>
+				Returns a line list (pairs of [Vector3] vertices) describing a directivity wireframe gizmo in the player's local space (forward = [code]-Z[/code]). With [param enabled] and [param input_mode] = [code]0[/code] (Simulation Defined), draws the dipole polar curve [code]|(1 - weight) + weight * cos(theta)| ^ power[/code] as two meridians plus four azimuth rings. Otherwise draws a unit sphere (three great circles) plus a forward arrow; in User Defined mode ([param input_mode] = [code]1[/code]) the arrow is additionally scaled by [param user_value]. Used by both the editor gizmo and the runtime drawer so they stay visually identical; shape parameters typically come from the matching fields in [url=#ResonancePlayerConfig]ResonancePlayerConfig[/url].
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="player_config" type="ResonancePlayerConfig" setter="set_player_config" getter="get_player_config">
+			[url=#ResonancePlayerConfig]ResonancePlayerConfig[/url] resource. When set, enables Steam Audio processing (occlusion, reverb, pathing, etc.). When null, acts as plain AudioStreamPlayer3D. All resource fields are documented on the linked page.
+		</member>
+		<member name="pathing_probe_volume" type="NodePath" setter="set_pathing_probe_volume" getter="get_pathing_probe_volume">
+			Pathing: Optional ResonanceProbeVolume to use for path finding. Empty = use first loaded volume with pathing. Only used when player_config is set.
+			Note: Deleting a probe volume that is still referenced here can trigger a Godot engine error. Clear this property manually before deleting the volume if needed.
+		</member>
+		<member name="auto_exclude_colliders" type="bool" setter="set_auto_exclude_colliders" getter="get_auto_exclude_colliders" default="true">
+			When [code]scene_type[/code] is Custom, registers every descendant [code]CollisionObject3D[/code] [RID] with [ResonanceServer] so Godot physics rays used for occlusion/reflections ignore those bodies. Disable if you intentionally want those colliders to block rays.
+		</member>
+		<member name="convert_anim_audio_runtime" type="bool" setter="set_convert_anim_audio_runtime" getter="get_convert_anim_audio_runtime" default="false">
+			When [member player_config] is set and this is [code]true[/code] (runtime only): spawns a helper that converts [code]Animation.TYPE_AUDIO[/code] tracks on the current scene targeting [ResonancePlayer] into [b]method[/b] keys calling [method play_animation_audio_clip], once per scene load. Required for Steam with Audio Clips because native polyphonic playback cannot be wrapped (see class description).
+		</member>
+		<member name="exclude_from_debug" type="bool" setter="set_exclude_from_debug" getter="get_exclude_from_debug" default="false">
+			When true, this player is hidden from the debug overlay Audio Instrumentation list.
+		</member>
+		<member name="show_directivity_gizmo" type="bool" setter="set_show_directivity_gizmo" getter="get_show_directivity_gizmo" default="false">
+			Wireframe visualization of the emission direction (forward axis [code]-Z[/code]) and directivity pattern (dipole for Simulation Defined, unit sphere + arrow otherwise). Controls visibility in [b]both[/b] the editor Scene viewport and the running scene: [code]true[/code] = shown everywhere, [code]false[/code] = hidden everywhere. Shape derives from [member player_config] ([code]directivity_enabled[/code], [code]directivity_input[/code], [code]directivity_weight[/code], [code]directivity_power[/code], [code]directivity_value[/code]) and updates automatically when those fields change. Independent from the Debug HUD toggles.
+		</member>
+	</members>
+</class>

@@ -4,6 +4,7 @@
 #include "resonance_math.h"
 #include "resonance_probe_volume.h"
 #include "resonance_server.h"
+#include "resonance_source_handle_policy.h"
 #include "resonance_utils.h"
 #include <algorithm>
 #include <atomic>
@@ -284,7 +285,7 @@ void ResonanceStream::set_base_stream(const Ref<AudioStream>& p_stream) { base_s
 Ref<AudioStreamPlayback> ResonanceStream::_instantiate_playback() const {
     // Animation TYPE_AUDIO uses AudioStreamPolyphonic. Returning ResonanceStreamPlayback here crashes on Windows
     // before playback starts. Native playback is stable.
-    // Steam for TYPE_AUDIO: enable [member ResonancePlayer.convert_animation_audio_tracks_at_runtime] or convert in editor.
+    // Steam for TYPE_AUDIO: enable [member ResonancePlayer.convert_anim_audio_runtime] or convert in editor.
     if (base_stream.is_valid() && base_stream->is_class("AudioStreamPolyphonic")) {
         return base_stream->instantiate_playback();
     }
@@ -385,27 +386,40 @@ void ResonancePlayer::_ready() {
         return;
     if (!player_config.is_valid()) {
         // No config: behave as plain AudioStreamPlayer3D
+        set_process(false);
         if (is_autoplay_enabled())
             play();
         return;
     }
+    set_process(true);
     add_to_group("resonance_player");
     debug_drawer.initialize(this);
     directivity_drawer_.initialize(this);
     directivity_drawer_.mark_dirty();
-    set_attenuation_model(AttenuationModel::ATTENUATION_DISABLED);
+    _apply_steam_mode_asp3d_guards();
+    _refresh_effective_volume_cache();
     _ensure_source_exists();
     _update_stream_setup();
     if (is_autoplay_enabled())
         play_stream();
 }
 
+void ResonancePlayer::_apply_steam_mode_asp3d_guards() {
+    // Godot can still apply a linear sphere cutoff when max_distance > 0 even with ATTENUATION_DISABLED.
+    // Steam distance lives on ResonancePlayerConfig; clear both so saved ASP3D knobs cannot double-shape the mix.
+    set_attenuation_model(AttenuationModel::ATTENUATION_DISABLED);
+    set_max_distance(0.0f);
+}
+
+void ResonancePlayer::_refresh_effective_volume_cache() {
+    const float lin = resonance::effective_asp3d_volume_linear(get_volume_db(), get_max_db());
+    cached_effective_volume_linear_.store(lin, std::memory_order_relaxed);
+}
+
 void ResonancePlayer::_exit_tree() {
     _clear_physics_ray_auto_exclude_rids();
-    // Hard cutoff on tree exit: tail decay is meaningless once the node leaves the tree
-    // (and would race with imminent destruction). Bypass the soft-stop path in stop() and
-    // fall through to plain AudioStreamPlayer3D::stop() so AudioServer detaches the playbacks
-    // synchronously before the parent is freed.
+    // Hard cutoff: soft-stop would race destruction. Base stop only marks FADE_OUT_TO_DELETION;
+    // the unref is deferred - use ResonanceRuntime.prepare_for_shutdown() before quitting.
     warned_source_handle_create_failed_ = false;
     playback_lod_have_anchor_ = false;
     playback_lod_time_since_full_ = 0.0;
@@ -423,9 +437,13 @@ void ResonancePlayer::_exit_tree() {
     if (source_handle >= 0) {
         _detach_playback_source_retains();
         ResonanceServer* srv = ResonanceServer::get_singleton();
-        if (srv && !ResonanceServer::is_shutting_down())
+        // Only destroy if this handle still belongs to this player's lifecycle epoch.
+        // After reinit, IDs are recycled; destroying a recycled ID would free another player's source.
+        if (srv && !ResonanceServer::is_shutting_down() &&
+            resonance::source_handle_matches_lifecycle_epoch(source_handle, source_lifecycle_epoch_, srv->get_source_lifecycle_epoch()))
             srv->destroy_source_handle(source_handle);
         source_handle = -1;
+        source_lifecycle_epoch_ = 0;
     }
 }
 
@@ -562,7 +580,7 @@ void ResonancePlayer::_notification(int p_what) {
     }
     if (p_what == NOTIFICATION_ENTER_TREE) {
         Engine* eng = Engine::get_singleton();
-        if (eng && !eng->is_editor_hint() && convert_animation_audio_tracks_at_runtime_ && player_config.is_valid())
+        if (eng && !eng->is_editor_hint() && convert_anim_audio_runtime_ && player_config.is_valid())
             call_deferred("_nexus_deferred_spawn_anim_audio_helper");
     }
 }
@@ -577,7 +595,7 @@ void ResonancePlayer::_clear_physics_ray_auto_exclude_rids() {
 }
 
 void ResonancePlayer::_sync_physics_ray_auto_exclude_rids() {
-    if (!physics_ray_auto_exclude_collision_bodies_)
+    if (!auto_exclude_colliders_)
         return;
     ResonanceServer* srv = ResonanceServer::get_singleton();
     if (!srv || !srv->uses_custom_ray_tracer())
@@ -599,6 +617,19 @@ void ResonancePlayer::_process(double delta) {
         return;
 
     {
+        std::vector<ResonanceStreamPlayback*> resolve_voices;
+        internal_copy_internal_playbacks(resolve_voices);
+        if (resolve_voices.empty()) {
+            if (ResonanceStreamPlayback* pb = _get_resonance_playback())
+                resolve_voices.push_back(pb);
+        }
+        for (ResonanceStreamPlayback* pb : resolve_voices) {
+            if (pb)
+                pb->resolve_stale_steam_context_on_main();
+        }
+    }
+
+    {
         ResonanceDirectivityDrawer::Params dp;
         dp.enabled = _config_bool("directivity_enabled", false);
         dp.input_mode = _config_int("directivity_input", 0);
@@ -610,13 +641,8 @@ void ResonancePlayer::_process(double delta) {
     }
 
     // Update audio-thread readable snapshot values.
-    {
-        const float vdb = get_volume_db();
-        const float cap_db = get_max_db();
-        const float eff_db = std::min(vdb, cap_db);
-        const float lin = std::pow(10.0f, eff_db / 20.0f);
-        cached_effective_volume_linear_.store(resonance::sanitize_audio_float(lin), std::memory_order_relaxed);
-    }
+    // Volume is source loudness before Steam DSP (see owner_effective_volume_linear / effective_asp3d_volume_linear).
+    _refresh_effective_volume_cache();
 
     ResonanceServer* srv = ResonanceServer::get_singleton();
     // `finished` should fire exactly once when the dry/base playback ends.
@@ -658,12 +684,28 @@ void ResonancePlayer::_process(double delta) {
             }
         }
 
-        if (dry_finished_emitted_ && all_tail_drained) {
+        // Natural EOS: stop after finished was emitted and wet/path tails drained.
+        // Soft-stop: stop as soon as every voice reports tail_drain_complete (no finished emit).
+        if (all_tail_drained && (dry_finished_emitted_ || any_soft_stopped)) {
+            soft_stop_elapsed_sec_ = -1.0;
             AudioStreamPlayer3D::stop();
             return;
         }
+        // Watchdog: Dummy audio / stalled mix may never set tail_drain_complete. Cap wait at
+        // max reverb duration (+ margin) so stop() still clears playing.
+        if (any_soft_stopped && soft_stop_elapsed_sec_ >= 0.0) {
+            soft_stop_elapsed_sec_ += delta;
+            float max_rev = resonance::kDefaultReverbDurationSec;
+            if (srv)
+                max_rev = srv->get_max_reverb_duration();
+            if (soft_stop_elapsed_sec_ >= static_cast<double>(max_rev) + 0.5) {
+                soft_stop_elapsed_sec_ = -1.0;
+                AudioStreamPlayer3D::stop();
+                return;
+            }
+        }
     }
-    if (physics_ray_auto_exclude_collision_bodies_ && srv && srv->uses_custom_ray_tracer()) {
+    if (auto_exclude_colliders_ && srv && srv->uses_custom_ray_tracer()) {
         if (++physics_auto_exclude_resync_counter_ >= 60) {
             physics_auto_exclude_resync_counter_ = 0;
             _sync_physics_ray_auto_exclude_rids();
@@ -694,6 +736,9 @@ void ResonancePlayer::_process(double delta) {
             _sync_player_debug_drawer(delta, srv, ResonanceDebugData{}, false);
         return;
     }
+
+    if (srv)
+        _invalidate_source_handle_if_stale(srv);
 
     if (srv && source_handle < 0 && srv->is_initialized())
         _try_ensure_source_and_sync(srv, true);
@@ -736,6 +781,7 @@ void ResonancePlayer::_process(double delta) {
 }
 
 bool ResonancePlayer::_try_ensure_source_and_sync(ResonanceServer* srv, bool deferred_playback_push_if_playing) {
+    _invalidate_source_handle_if_stale(srv);
     if (!player_config.is_valid() || source_handle >= 0)
         return false;
     if (!srv || !srv->is_initialized())
@@ -753,10 +799,35 @@ bool ResonancePlayer::_try_ensure_source_and_sync(ResonanceServer* srv, bool def
     }
     warned_source_handle_create_failed_ = false;
     source_handle = h;
+    source_lifecycle_epoch_ = srv->get_source_lifecycle_epoch();
     _prepare_source_for_simulation(srv);
     if (deferred_playback_push_if_playing && is_playing())
         call_deferred("_deferred_push_playback_parameters");
     return true;
+}
+
+void ResonancePlayer::_invalidate_source_handle_if_stale(ResonanceServer* srv) {
+    if (source_handle < 0)
+        return;
+    const uint32_t server_epoch = srv ? srv->get_source_lifecycle_epoch() : 0u;
+    if (resonance::source_handle_matches_lifecycle_epoch(source_handle, source_lifecycle_epoch_, server_epoch))
+        return;
+    _detach_playback_source_retains();
+    source_handle = -1;
+    source_lifecycle_epoch_ = 0;
+}
+
+void ResonancePlayer::reload_source_after_reinit() {
+    Engine* eng = Engine::get_singleton();
+    if (eng && eng->is_editor_hint())
+        return;
+    if (!player_config.is_valid())
+        return;
+    _detach_playback_source_retains();
+    source_handle = -1;
+    source_lifecycle_epoch_ = 0;
+    ResonanceServer* srv = ResonanceServer::get_singleton();
+    _try_ensure_source_and_sync(srv, is_playing());
 }
 
 void ResonancePlayer::_deferred_try_ensure_source_after_config() {
@@ -825,6 +896,7 @@ void ResonancePlayer::play(float from_position) {
     dry_finished_emitted_ = false;
     dry_finished_deferred_queued_ = false;
     dry_finished_deferred_serial_ = 0;
+    soft_stop_elapsed_sec_ = -1.0;
     if (player_config.is_valid()) {
         playback_lod_have_anchor_ = false;
         playback_lod_time_since_full_ = 0.0;
@@ -834,6 +906,7 @@ void ResonancePlayer::play(float from_position) {
     }
     AudioStreamPlayer3D::play(from_position);
     if (player_config.is_valid()) {
+        _refresh_effective_volume_cache();
         _start_reverb_split_child_if_needed();
         // Synchronously seed the freshly instantiated ResonanceStreamPlayback(s) with valid
         // spatial parameters so the audio thread's first _mix block opens the params gate
@@ -920,10 +993,13 @@ void ResonancePlayer::stop() {
             any_soft_stopped = true;
         }
     }
-    if (!any_soft_stopped) {
+    if (any_soft_stopped) {
+        soft_stop_elapsed_sec_ = 0.0;
+    } else {
         // No active ResonanceStreamPlayback voices (e.g. AudioStreamPolyphonic via runtime
         // animation conversion, or the player was never played). Fall back to the plain
         // hard-cutoff path so callers see the expected stop() semantics immediately.
+        soft_stop_elapsed_sec_ = -1.0;
         Node* reverb_child = get_node_or_null(NodePath("ResonanceReverbOutput"));
         if (reverb_child && reverb_child->is_class("AudioStreamPlayer")) {
             if (AudioStreamPlayer* rp = Object::cast_to<AudioStreamPlayer>(reverb_child))
@@ -939,14 +1015,15 @@ NodePath ResonancePlayer::get_pathing_probe_volume() const { return pathing_prob
 void ResonancePlayer::clear_pathing_probe_immediate() {
     pathing_probe_volume = NodePath();
     ResonanceServer* srv = ResonanceServer::get_singleton();
+    _invalidate_source_handle_if_stale(srv);
     if (!srv || !srv->is_initialized() || source_handle < 0)
         return;
     _ensure_config_and_apply_source(-1);
 }
-void ResonancePlayer::set_physics_ray_auto_exclude_collision_bodies(bool p_enable) {
-    if (physics_ray_auto_exclude_collision_bodies_ == p_enable)
+void ResonancePlayer::set_auto_exclude_colliders(bool p_enable) {
+    if (auto_exclude_colliders_ == p_enable)
         return;
-    physics_ray_auto_exclude_collision_bodies_ = p_enable;
+    auto_exclude_colliders_ = p_enable;
     if (!p_enable)
         _clear_physics_ray_auto_exclude_rids();
     else
@@ -955,8 +1032,8 @@ void ResonancePlayer::set_physics_ray_auto_exclude_collision_bodies(bool p_enabl
 
 void ResonancePlayer::set_exclude_from_debug(bool p_exclude) { exclude_from_debug_ = p_exclude; }
 
-void ResonancePlayer::set_convert_animation_audio_tracks_at_runtime(bool p_enable) {
-    convert_animation_audio_tracks_at_runtime_ = p_enable;
+void ResonancePlayer::set_convert_anim_audio_runtime(bool p_enable) {
+    convert_anim_audio_runtime_ = p_enable;
     Engine* eng = Engine::get_singleton();
     if (p_enable && player_config.is_valid() && is_inside_tree() && eng && !eng->is_editor_hint())
         call_deferred("_nexus_deferred_spawn_anim_audio_helper");
@@ -970,14 +1047,18 @@ void ResonancePlayer::set_player_config(const Ref<Resource>& p_config) {
     player_config = p_config;
     config_cache_valid_ = false;
     if (had_config && !player_config.is_valid()) {
+        set_process(false);
         const Ref<AudioStream> logical = logical_stream_;
         internal_stream.unref();
         logical_stream_.unref();
         AudioStreamPlayer3D::set_stream(logical);
     } else if (player_config.is_valid()) {
+        set_process(true);
+        _apply_steam_mode_asp3d_guards();
+        _refresh_effective_volume_cache();
         call_deferred("_deferred_try_ensure_source_after_config");
         Engine* eng = Engine::get_singleton();
-        if (eng && !eng->is_editor_hint() && convert_animation_audio_tracks_at_runtime_ && is_inside_tree())
+        if (eng && !eng->is_editor_hint() && convert_anim_audio_runtime_ && is_inside_tree())
             call_deferred("_nexus_deferred_spawn_anim_audio_helper");
     }
     if (player_config.is_valid() && !player_config->is_connected("changed", changed_cb))
@@ -992,9 +1073,9 @@ Ref<Resource> ResonancePlayer::get_player_config() const { return player_config;
 
 void ResonancePlayer::_validate_property(PropertyInfo& p_property) const {
     // With a player_config the spatialization runs through Steam Audio: distance/attenuation come
-    // from the config and _ready forces ATTENUATION_DISABLED. The inherited AudioStreamPlayer3D
-    // distance/rolloff/filter knobs are then inert and only confuse the inspector, so hide them.
-    // Without a config the node behaves as a plain AudioStreamPlayer3D, so they stay visible.
+    // from the config; _apply_steam_mode_asp3d_guards forces ATTENUATION_DISABLED and clears Godot
+    // max_distance. Inherited ASP3D distance/rolloff/filter knobs are then inert - hide them
+    // (Godot 4.6 ASP3D spatial set). Without a config the node is plain AudioStreamPlayer3D.
     if (!player_config.is_valid())
         return;
 
@@ -1173,7 +1254,7 @@ void ResonancePlayer::_nexus_deferred_spawn_anim_audio_helper() {
     Engine* eng = Engine::get_singleton();
     if (eng && eng->is_editor_hint())
         return;
-    if (!convert_animation_audio_tracks_at_runtime_ || !player_config.is_valid())
+    if (!convert_anim_audio_runtime_ || !player_config.is_valid())
         return;
     if (get_node_or_null(NodePath("NexusAnimationAudioRuntimeHelper")))
         return;
@@ -1197,7 +1278,9 @@ Dictionary ResonancePlayer::get_audio_instrumentation() {
     d["godot_pitch_scale"] = get_pitch_scale();
     d["godot_max_distance"] = get_max_distance();
     d["godot_max_db"] = get_max_db();
+    d["godot_volume_db"] = get_volume_db();
     d["godot_unit_size"] = get_unit_size();
+    d["effective_volume_linear"] = get_effective_volume_linear_cached();
 
     std::vector<ResonanceStreamPlayback*> copy;
     internal_copy_internal_playbacks(copy);

@@ -40,11 +40,15 @@ class ResonanceProbeVolume : public Node3D {
     Ref<ResonanceProbeData> probe_data;
     Ref<Resource> bake_config;
     int32_t probe_batch_handle = -1;
+    /// Captured from ResonanceServer::get_probe_batch_lifecycle_epoch() at load; mismatch => stale after reinit.
+    uint32_t probe_batch_lifecycle_epoch_ = 0;
 
     // Bake targets: NodePaths to ResonancePlayer (sources) and ResonanceListener (listeners).
     // The editor bake pipeline issues one STATICSOURCE pass per valid bake_sources entry and one
     // STATICLISTENER pass per valid bake_listeners entry so fixed outdoor emitters get
     // position-dependent baked IRs that respect source->listener occlusion.
+    // scan_targets: editor roots for "Update Targets" (fills bake_sources / bake_listeners).
+    Array scan_targets;
     Array bake_sources;
     Array bake_listeners;
     float bake_influence_radius = 10000.0f;
@@ -63,6 +67,7 @@ class ResonanceProbeVolume : public Node3D {
     void _create_visuals_resources();
     void _queue_update();
     void _clear_player_refs_to_this();
+    void _ensure_editor_default_resources();
     uint32_t _get_bake_params_hash() const;
     /// Shared bake logic. p_precomputed_points: when non-null and non-empty, use bake_manual_grid; else bake_probes_for_volume.
     void _prepare_and_execute_bake(const PackedVector3Array* p_precomputed_points);
@@ -70,6 +75,9 @@ class ResonanceProbeVolume : public Node3D {
     void _ensure_viz_instance();
     bool _compute_is_probe_dirty() const;
     bool _has_valid_resonance_config() const;
+    /// remove_probe_batch only when the local handle still matches the server lifecycle epoch.
+    void _release_probe_batch_if_live();
+    void _store_probe_batch_handle(int32_t handle);
 
   protected:
     static void _bind_methods();
@@ -90,6 +98,8 @@ class ResonanceProbeVolume : public Node3D {
     void set_bake_config(const Ref<Resource>& p_config);
     Ref<Resource> get_bake_config() const;
 
+    void set_scan_targets(const Array& p_targets);
+    Array get_scan_targets() const;
     void set_bake_sources(const Array& p_sources);
     Array get_bake_sources() const;
     void set_bake_listeners(const Array& p_listeners);
@@ -97,8 +107,22 @@ class ResonanceProbeVolume : public Node3D {
     void set_bake_influence_radius(float p_radius);
     float get_bake_influence_radius() const;
 
+    /// Accepts NodePath or Node (resolved via get_path_to). Dedupes; no-op on empty/invalid.
+    void add_bake_source(const Variant& p_source);
+    void remove_bake_source(const Variant& p_source);
+    void add_bake_listener(const Variant& p_listener);
+    void remove_bake_listener(const Variant& p_listener);
+
     void set_probe_data(const Ref<ResonanceProbeData>& p_data);
     Ref<ResonanceProbeData> get_probe_data() const;
+
+    /// Ensures probe_data and bake_config exist (editor defaults). Safe to call repeatedly.
+    void ensure_default_resources();
+
+    /// Enabled ResonanceProbeExclusion descendants as Dictionary { xform, size } (stable path order).
+    Array collect_exclusion_boxes() const;
+    /// Called by child ResonanceProbeExclusion when transform/size/enabled changes.
+    void notify_exclusion_changed();
 
     void set_region_size(Vector3 p_size);
     Vector3 get_region_size() const;

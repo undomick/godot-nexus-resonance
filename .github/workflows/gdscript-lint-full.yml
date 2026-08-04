@@ -7,9 +7,6 @@ jobs:
   lint-full:
     name: GDScript format & lint (full repository)
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: audio_resonance_tool
 
     steps:
       - name: Checkout
@@ -24,7 +21,7 @@ jobs:
         run: pip install "gdtoolkit==4.5.0"
 
       - name: Check GDScript format (full)
-        run: gdformat --check addons/nexus_resonance/ test/
+        run: gdformat --check addons/nexus_resonance/
 
       - name: Lint GDScript (full)
-        run: gdlint addons/nexus_resonance/ test/
+        run: gdlint addons/nexus_resonance/

@@ -1,6 +1,7 @@
 #include "resonance_constants.h"
 #include "resonance_log.h"
 #include "resonance_math.h"
+#include "resonance_pathing_inputs_policy.h"
 #include "resonance_server.h"
 #include "resonance_utils.h"
 #include <cstdint>
@@ -77,7 +78,8 @@ int32_t ResonanceServer::create_source_handle(Vector3 pos, float radius) {
         return -1;
     }
     if (handle < kMaxCacheHandles) {
-        // Clear caches for recycled handle IDs.
+        // Block audio fetch before wiping recycled-handle cache slots.
+        source_attach_pending_[static_cast<size_t>(handle)].store(1, std::memory_order_release);
         for (int slot = 0; slot < kCacheSlots; slot++) {
             occlusion_cache_[static_cast<size_t>(slot)][static_cast<size_t>(handle)].epoch = 0;
             reverb_param_cache_[static_cast<size_t>(slot)][static_cast<size_t>(handle)].epoch = 0;
@@ -93,10 +95,6 @@ int32_t ResonanceServer::create_source_handle(Vector3 pos, float radius) {
         _source_baked_reverb_listener_probe_override_[static_cast<size_t>(handle)].store(-1, std::memory_order_release);
         last_good_reflection_valid_[static_cast<size_t>(handle)].store(0, std::memory_order_relaxed);
         reflection_baked_energy_last_[static_cast<size_t>(handle)] = 0.0f;
-    }
-    {
-        std::lock_guard<std::mutex> lock(pending_attach_handles_mutex_);
-        pending_attach_handles_.insert(handle);
     }
     {
         PendingSourceAdd pa{};
@@ -118,10 +116,9 @@ int32_t ResonanceServer::create_source_handle(Vector3 pos, float radius) {
 }
 
 bool ResonanceServer::_is_source_attach_pending(int32_t handle) const {
-    if (handle < 0)
+    if (handle < 0 || handle >= kMaxCacheHandles)
         return false;
-    std::lock_guard<std::mutex> lock(pending_attach_handles_mutex_);
-    return pending_attach_handles_.count(handle) != 0;
+    return source_attach_pending_[static_cast<size_t>(handle)].load(std::memory_order_acquire) != 0;
 }
 
 void ResonanceServer::ensure_fmod_reverb_source() {
@@ -144,7 +141,6 @@ void ResonanceServer::_destroy_source_handle_under_simulation_lock(int32_t handl
         _source_attenuation_entries.erase(handle);
     }
     _source_update_snapshot_.erase(handle);
-    realtime_reflection_log_once_handles_.erase(handle);
     if (handle >= 0 && handle < kMaxCacheHandles) {
         source_outputs_reflections_[static_cast<size_t>(handle)].store(0, std::memory_order_release);
         source_outputs_realtime_reflections_[static_cast<size_t>(handle)].store(0, std::memory_order_release);
@@ -159,23 +155,41 @@ void ResonanceServer::destroy_source_handle(int32_t handle) {
         return;
     // Invalidate handle on this thread immediately; worker finishes Remove + Commit + final Release.
     IPLSource src = source_manager.get_source(handle); // retains
-    source_manager.remove_source(handle);              // releases the map retain
+    // Defer handle recycle until worker post-remove (or until a cancelled pending-add path recycles
+    // below). Otherwise create_source_handle can reuse H while pending_source_adds_ /
+    // pending_source_post_remove_cleanup_ still reference H -> double iplSourceAdd and
+    // post-remove wiping the new source's bookkeeping.
+    source_manager.remove_source(handle, false /* recycle */);
+    if (handle >= 0 && handle < kMaxCacheHandles)
+        source_attach_pending_[static_cast<size_t>(handle)].store(0, std::memory_order_release);
+
+    bool cancelled_pending_add = false;
     {
-        std::lock_guard<std::mutex> lock(pending_attach_handles_mutex_);
-        pending_attach_handles_.erase(handle);
-    }
-    if (src) {
         std::lock_guard<std::mutex> lock(pending_source_lifecycle_mutex_);
-        pending_source_removes_.push_back(src);
-        pending_source_post_remove_cleanup_.push_back(handle);
+        for (auto it = pending_source_adds_.begin(); it != pending_source_adds_.end();) {
+            if (it->handle == handle) {
+                cancelled_pending_add = true;
+                it = pending_source_adds_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        if (src) {
+            if (cancelled_pending_add) {
+                // Never reached iplSourceAdd; drop retain without Remove and free the handle now.
+                IPLSource tmp = src;
+                iplSourceRelease(&tmp);
+                source_manager.recycle_source_handle(handle);
+            } else {
+                pending_source_removes_.push_back(src);
+                pending_source_post_remove_cleanup_.push_back(handle);
+            }
+        } else {
+            source_manager.recycle_source_handle(handle);
+        }
     }
     if (handle < kMaxCacheHandles) {
-        for (int slot = 0; slot < kCacheSlots; slot++) {
-            reverb_param_cache_[static_cast<size_t>(slot)][static_cast<size_t>(handle)].epoch = 0;
-            reflection_param_cache_[static_cast<size_t>(slot)][static_cast<size_t>(handle)].epoch = 0;
-            pathing_param_cache_[static_cast<size_t>(slot)][static_cast<size_t>(handle)].epoch = 0;
-            occlusion_cache_[static_cast<size_t>(slot)][static_cast<size_t>(handle)].epoch = 0;
-        }
+        // Do not touch cache slot epochs (audio may still read the front slot); gate via atomics.
         reflections_pending_[static_cast<size_t>(handle)].store(false, std::memory_order_release);
         source_outputs_reflections_[static_cast<size_t>(handle)].store(0, std::memory_order_release);
         source_outputs_realtime_reflections_[static_cast<size_t>(handle)].store(0, std::memory_order_release);
@@ -481,10 +495,6 @@ void ResonanceServer::_update_source_internal(IPLSource src, int32_t handle, con
     inputs.numOcclusionSamples = CLAMP(params.occlusion_samples, 1, simulation_settings.maxNumOcclusionSamples);
     inputs.numTransmissionRays = CLAMP(params.num_transmission_rays, 1, resonance::kMaxTransmissionRays);
 
-    if (params.baked_data_variation == -1 && realtime_reflection_log_once_handles_.insert(handle).second) {
-        const String src_msg = "Source " + String::num_int64(handle) + " first realtime reflections update (baked=FALSE). Rays: " + String::num_int64(max_rays);
-        UtilityFunctions::print_rich("[color=cyan]Nexus Resonance:[/color] " + src_msg);
-    }
     fill_baked_reflection_identifier(inputs, params.baked_data_variation, params.baked_endpoint_center, params.baked_endpoint_radius, reverb_influence_radius);
 
     inputs.reverbScale[0] = 1.0f;
@@ -519,6 +529,11 @@ void ResonanceServer::_update_source_internal(IPLSource src, int32_t handle, con
         }
     }
     inputs.flags = sim_flags;
+    // Phonon only mutates pathingInputs when the SetInputs *selector* includes PATHING.
+    // Keep selector PATHING-capable whenever global pathing is on so a disabled inputs.flags
+    // actually clears prior pathingProbes (required before probe-batch PathSimulator removal).
+    const IPLSimulationFlags set_flags = static_cast<IPLSimulationFlags>(resonance::source_set_inputs_selector_flags(
+        static_cast<int>(sim_flags), static_cast<int>(IPL_SIMULATIONFLAGS_PATHING), pathing_enabled));
 
     if (handle >= 0 && handle < kMaxCacheHandles) {
         source_outputs_reflections_[static_cast<size_t>(handle)].store(enable_reflections ? 1 : 0, std::memory_order_release);
@@ -528,11 +543,43 @@ void ResonanceServer::_update_source_internal(IPLSource src, int32_t handle, con
                                                                    std::memory_order_release);
     }
 
-    iplSourceSetInputs(src, sim_flags, &inputs);
+    iplSourceSetInputs(src, set_flags, &inputs);
     _maybe_apply_baked_reverb_listener_reflection_inputs(src, handle, inputs, params, sim_flags, enable_reflections);
 
     if (pathing_batch_retained)
         pathing_probe_batches_pending_release_.push_back(pathing_batch_retained);
+}
+
+void ResonanceServer::_clear_source_pathing_inputs_assume_locked(IPLSource source, int32_t handle) {
+    if (!source)
+        return;
+    IPLSimulationInputs inputs{};
+    inputs.flags = static_cast<IPLSimulationFlags>(0);
+    inputs.pathingProbes = nullptr;
+    iplSourceSetInputs(source, IPL_SIMULATIONFLAGS_PATHING, &inputs);
+    if (handle >= 0 && handle < kMaxCacheHandles)
+        source_outputs_pathing_[static_cast<size_t>(handle)].store(0, std::memory_order_release);
+}
+
+void ResonanceServer::_clear_pathing_for_probe_batch_assume_locked(int32_t removing_handle) {
+    if (removing_handle < 0 || !simulator)
+        return;
+    std::vector<int32_t> handles;
+    source_manager.get_all_handles(handles);
+    for (int32_t h : handles) {
+        auto snap_it = _source_update_snapshot_.find(h);
+        if (snap_it == _source_update_snapshot_.end() || !snap_it->second.valid)
+            continue;
+        const int32_t preferred = snap_it->second.params.pathing_probe_batch_handle;
+        const bool preferred_usable = probe_batch_registry_.handle_has_pathing(preferred);
+        if (!resonance::source_should_clear_pathing_on_batch_remove(preferred, removing_handle, preferred_usable))
+            continue;
+        IPLSource src = source_manager.get_source(h);
+        if (!src)
+            continue;
+        _clear_source_pathing_inputs_assume_locked(src, h);
+        iplSourceRelease(&src);
+    }
 }
 
 void ResonanceServer::_drain_pending_source_lifecycle_assume_locked() {
@@ -573,11 +620,10 @@ void ResonanceServer::_drain_pending_source_lifecycle_assume_locked() {
             iplSourceRelease(&tmp);
         }
     }
-    // Mark attached handles ready for fetch/cache paths.
-    if (!local_adds.empty()) {
-        std::lock_guard<std::mutex> lock(pending_attach_handles_mutex_);
-        for (const PendingSourceAdd& pa : local_adds)
-            pending_attach_handles_.erase(pa.handle);
+    // Mark attached handles ready for fetch/cache paths (including skipped adds after destroy).
+    for (const PendingSourceAdd& pa : local_adds) {
+        if (pa.handle >= 0 && pa.handle < kMaxCacheHandles)
+            source_attach_pending_[static_cast<size_t>(pa.handle)].store(0, std::memory_order_release);
     }
     // Post-remove housekeeping (map entries keyed by handle that are worker-owned).
     for (int32_t handle : local_post_remove) {
@@ -586,13 +632,14 @@ void ResonanceServer::_drain_pending_source_lifecycle_assume_locked() {
             _source_attenuation_entries.erase(handle);
         }
         _source_update_snapshot_.erase(handle);
-        realtime_reflection_log_once_handles_.erase(handle);
         if (handle >= 0 && handle < kMaxCacheHandles) {
             source_outputs_reflections_[static_cast<size_t>(handle)].store(0, std::memory_order_release);
             source_outputs_realtime_reflections_[static_cast<size_t>(handle)].store(0, std::memory_order_release);
             source_outputs_pathing_[static_cast<size_t>(handle)].store(0, std::memory_order_release);
             _source_baked_reverb_listener_probe_override_[static_cast<size_t>(handle)].store(-1, std::memory_order_release);
         }
+        // Safe to reuse this handle id only after post-remove bookkeeping finished.
+        source_manager.recycle_source_handle(handle);
     }
     // Apply initial inputs now that iplSourceAdd + Commit have run.
     for (const PendingSourceAdd& pa : local_adds) {

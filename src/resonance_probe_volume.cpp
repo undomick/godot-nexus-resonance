@@ -2,7 +2,10 @@
 #include "resonance_constants.h"
 #include "resonance_log.h"
 #include "resonance_player.h"
+#include "resonance_probe_exclusion.h"
+#include "resonance_probe_exclusion_filter.h"
 #include "resonance_server.h"
+#include "resonance_source_handle_policy.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -13,7 +16,9 @@
 #include <godot_cpp/classes/physics_direct_space_state3d.hpp>
 #include <godot_cpp/classes/physics_ray_query_parameters3d.hpp>
 #include <godot_cpp/classes/project_settings.hpp>
+#include <godot_cpp/classes/resource_loader.hpp>
 #include <godot_cpp/classes/scene_tree.hpp>
+#include <godot_cpp/classes/script.hpp>
 #include <godot_cpp/classes/standard_material3d.hpp>
 #include <godot_cpp/classes/time.hpp>
 #include <godot_cpp/classes/window.hpp>
@@ -23,24 +28,97 @@
 #include <godot_cpp/variant/node_path.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 #include <godot_cpp/variant/variant.hpp>
+#include <utility>
+#include <vector>
 
 using namespace godot;
 
-ResonanceProbeVolume::ResonanceProbeVolume() {
-    _create_visuals_resources();
+namespace {
+
+const char* kBakeConfigScriptPath = "res://addons/nexus_resonance/scripts/resonance_bake_config.gd";
+
+Ref<Resource> create_default_bake_config() {
+    Ref<Script> bake_script = ResourceLoader::get_singleton()->load(kBakeConfigScriptPath);
+    if (bake_script.is_null()) {
+        UtilityFunctions::push_warning(String("ResonanceProbeVolume: failed to load ResonanceBakeConfig script at ") +
+                                       kBakeConfigScriptPath);
+        return Ref<Resource>();
+    }
+    // Prefer create_default(); fall back to Script.new() (static call can fail on some Script loads).
+    Variant created = bake_script->call("create_default");
+    if (created.get_type() != Variant::OBJECT || created.operator Object*() == nullptr) {
+        created = bake_script->call("new");
+    }
+    Object* def = Object::cast_to<Object>(created);
+    Ref<Resource> out(Object::cast_to<Resource>(def));
+    if (out.is_null()) {
+        UtilityFunctions::push_warning("ResonanceProbeVolume: failed to instantiate ResonanceBakeConfig");
+    }
+    return out;
 }
+
+bool array_has_nodepath(const Array& arr, const NodePath& path) {
+    for (int i = 0; i < arr.size(); i++) {
+        if (NodePath(arr[i]) == path) {
+            return true;
+        }
+    }
+    return false;
+}
+
+NodePath bake_target_path_from_variant(Node* self, const Variant& p_value) {
+    if (p_value.get_type() == Variant::NODE_PATH) {
+        return p_value;
+    }
+    if (p_value.get_type() == Variant::STRING || p_value.get_type() == Variant::STRING_NAME) {
+        return NodePath(String(p_value));
+    }
+    Node* n = Object::cast_to<Node>(p_value);
+    if (n == nullptr || self == nullptr) {
+        return NodePath();
+    }
+    if (!self->is_inside_tree() || !n->is_inside_tree()) {
+        return NodePath();
+    }
+    return self->get_path_to(n);
+}
+
+} // namespace
+
+ResonanceProbeVolume::ResonanceProbeVolume() {}
 
 ResonanceProbeVolume::~ResonanceProbeVolume() {
     // Safety: ensure probe batch is removed when volume is destroyed (e.g. deleted, never added to tree, undo edge cases).
-    if (probe_batch_handle >= 0) {
-        ResonanceServer* srv = ResonanceServer::get_singleton();
-        if (srv)
-            srv->remove_probe_batch(probe_batch_handle);
-        probe_batch_handle = -1;
+    _release_probe_batch_if_live();
+}
+
+void ResonanceProbeVolume::_release_probe_batch_if_live() {
+    if (probe_batch_handle < 0)
+        return;
+    ResonanceServer* srv = ResonanceServer::get_singleton();
+    // After reinit, IDs are recycled; removing a recycled ID would drop another volume's batch.
+    if (srv && !ResonanceServer::is_shutting_down() &&
+        resonance::probe_batch_handle_matches_lifecycle_epoch(probe_batch_handle, probe_batch_lifecycle_epoch_,
+                                                              srv->get_probe_batch_lifecycle_epoch()))
+        srv->remove_probe_batch(probe_batch_handle);
+    probe_batch_handle = -1;
+    probe_batch_lifecycle_epoch_ = 0;
+}
+
+void ResonanceProbeVolume::_store_probe_batch_handle(int32_t handle) {
+    probe_batch_handle = handle;
+    if (handle < 0) {
+        probe_batch_lifecycle_epoch_ = 0;
+        return;
     }
+    ResonanceServer* srv = ResonanceServer::get_singleton();
+    probe_batch_lifecycle_epoch_ = srv ? srv->get_probe_batch_lifecycle_epoch() : 0;
 }
 
 void ResonanceProbeVolume::_ensure_viz_instance() {
+    // Lazy: never allocate RenderingServer mesh RIDs in the constructor (ClassDB/doc temps free them off the render thread).
+    if (!viz_multimesh.is_valid())
+        _create_visuals_resources();
     if (viz_instance)
         return;
     viz_instance = memnew(MultiMeshInstance3D);
@@ -72,7 +150,13 @@ void ResonanceProbeVolume::_create_visuals_resources() {
 }
 
 void ResonanceProbeVolume::_notification(int p_what) {
-    if (p_what == NOTIFICATION_TRANSFORM_CHANGED) {
+    if (p_what == Node::NOTIFICATION_ENTER_TREE) {
+        // Editor: _ready often does not run when the node is first created/inspected.
+        // ENTER_TREE + ensure_default_resources covers create / open / reparent.
+        if (Engine::get_singleton() && Engine::get_singleton()->is_editor_hint()) {
+            _ensure_editor_default_resources();
+        }
+    } else if (p_what == NOTIFICATION_TRANSFORM_CHANGED) {
         _queue_update();
     } else if (p_what == Node::NOTIFICATION_EXIT_TREE) {
         _clear_player_refs_to_this();
@@ -109,19 +193,71 @@ void ResonanceProbeVolume::_clear_player_refs_to_this() {
     }
 }
 
+void ResonanceProbeVolume::_ensure_editor_default_resources() {
+    ensure_default_resources();
+}
+
+void ResonanceProbeVolume::ensure_default_resources() {
+    if (probe_data.is_null()) {
+        Ref<ResonanceProbeData> pd;
+        pd.instantiate();
+        set_probe_data(pd);
+    }
+    if (bake_config.is_null()) {
+        Ref<Resource> bc = create_default_bake_config();
+        if (bc.is_valid()) {
+            set_bake_config(bc);
+        }
+    }
+}
+
+static void collect_exclusion_boxes_recursive(Node* node, std::vector<std::pair<String, Dictionary>>& out) {
+    if (node == nullptr) {
+        return;
+    }
+    ResonanceProbeExclusion* ex = Object::cast_to<ResonanceProbeExclusion>(node);
+    if (ex != nullptr && ex->is_enabled() && ex->is_inside_tree()) {
+        Dictionary d;
+        d["xform"] = ex->get_global_transform();
+        d["size"] = ex->get_region_size();
+        out.push_back({String(ex->get_path()), d});
+    }
+    for (int i = 0; i < node->get_child_count(); i++) {
+        collect_exclusion_boxes_recursive(node->get_child(i), out);
+    }
+}
+
+Array ResonanceProbeVolume::collect_exclusion_boxes() const {
+    std::vector<std::pair<String, Dictionary>> items;
+    for (int i = 0; i < get_child_count(); i++) {
+        collect_exclusion_boxes_recursive(get_child(i), items);
+    }
+    std::sort(items.begin(), items.end(),
+              [](const std::pair<String, Dictionary>& a, const std::pair<String, Dictionary>& b) {
+                  return a.first < b.first;
+              });
+    Array out;
+    for (const auto& it : items) {
+        out.push_back(it.second);
+    }
+    return out;
+}
+
+void ResonanceProbeVolume::notify_exclusion_changed() {
+    _queue_update();
+}
+
 void ResonanceProbeVolume::_ready() {
     set_notify_transform(true);
     add_to_group("resonance_probe_volume");
     if (Engine::get_singleton() && Engine::get_singleton()->is_editor_hint()) {
-        // 1. Auto-Create Data
-        if (probe_data.is_null()) {
-            probe_data.instantiate();
-        }
+        // Defaults also on ENTER_TREE; keep here for nodes that skip ENTER_TREE edge cases.
+        _ensure_editor_default_resources();
         if (probe_data.is_valid() && !probe_data->get_path().is_empty()) {
             call_deferred("_check_probe_data_loaded");
         }
 
-        // 2. Setup Visualization (only create when show_probes is On)
+        // Setup Visualization (only create when show_probes is On)
         if (viz_visible) {
             _ensure_viz_instance();
             call_deferred("_update_visuals");
@@ -136,7 +272,7 @@ void ResonanceProbeVolume::_ready() {
 
         ResonanceServer* srv = ResonanceServer::get_singleton();
         if (srv && srv->is_initialized() && probe_data.is_valid()) {
-            probe_batch_handle = srv->load_probe_batch(probe_data);
+            _store_probe_batch_handle(srv->load_probe_batch(probe_data));
         } else if (probe_data.is_valid()) {
             // Server may not be ready yet (autoload order); retry deferred
             call_deferred("_runtime_load_probe_batch");
@@ -164,7 +300,7 @@ void ResonanceProbeVolume::_runtime_load_probe_batch() {
     _runtime_load_retry_count = 0;
     ResonanceServer* srv = ResonanceServer::get_singleton();
     if (srv && srv->is_initialized() && probe_data.is_valid()) {
-        probe_batch_handle = srv->load_probe_batch(probe_data);
+        _store_probe_batch_handle(srv->load_probe_batch(probe_data));
     }
 }
 
@@ -193,36 +329,26 @@ void ResonanceProbeVolume::reload_probe_batch() {
         }
         return;
     }
-    if (probe_batch_handle >= 0) {
-        srv->remove_probe_batch(probe_batch_handle);
-        probe_batch_handle = -1;
-    }
-    probe_batch_handle = srv->load_probe_batch(probe_data);
+    _release_probe_batch_if_live();
+    _store_probe_batch_handle(srv->load_probe_batch(probe_data));
     if (Engine::get_singleton() && Engine::get_singleton()->is_editor_hint() && viz_visible) {
         _update_visuals();
     }
 }
 
 void ResonanceProbeVolume::_reload_probe_batch_after_reinit() {
+    // Server already released every batch and reset handle allocation; local IDs are stale.
+    probe_batch_handle = -1;
+    probe_batch_lifecycle_epoch_ = 0;
     reload_probe_batch();
 }
 
 void ResonanceProbeVolume::release_probe_batch() {
-    if (probe_batch_handle < 0)
-        return;
-    ResonanceServer* srv = ResonanceServer::get_singleton();
-    if (srv && !ResonanceServer::is_shutting_down())
-        srv->remove_probe_batch(probe_batch_handle);
-    probe_batch_handle = -1;
+    _release_probe_batch_if_live();
 }
 
 void ResonanceProbeVolume::_exit_tree() {
-    if (probe_batch_handle >= 0) {
-        ResonanceServer* srv = ResonanceServer::get_singleton();
-        if (srv && !ResonanceServer::is_shutting_down())
-            srv->remove_probe_batch(probe_batch_handle);
-        probe_batch_handle = -1;
-    }
+    _release_probe_batch_if_live();
     // viz_instance is a child node; Godot frees children when parent is removed.
     viz_instance = nullptr;
 }
@@ -308,6 +434,38 @@ uint32_t ResonanceProbeVolume::_get_bake_params_hash() const {
     h = hash_murmur3_one_32(static_cast<uint32_t>(num_rays), h);
     h = hash_murmur3_one_32(static_cast<uint32_t>(num_bounces), h);
     h = hash_murmur3_one_32(static_cast<uint32_t>(ambisonics_order), h);
+
+    Array excl = collect_exclusion_boxes();
+    h = hash_murmur3_one_32(static_cast<uint32_t>(excl.size()), h);
+    for (int i = 0; i < excl.size(); i++) {
+        if (excl[i].get_type() != Variant::DICTIONARY) {
+            continue;
+        }
+        Dictionary d = excl[i];
+        Variant vx = d.get("xform", Variant());
+        Variant vs = d.get("size", Variant());
+        if (vx.get_type() == Variant::TRANSFORM3D) {
+            Transform3D et = vx;
+            h = hash_murmur3_one_float(et.origin.x, h);
+            h = hash_murmur3_one_float(et.origin.y, h);
+            h = hash_murmur3_one_float(et.origin.z, h);
+            h = hash_murmur3_one_float(et.basis.rows[0].x, h);
+            h = hash_murmur3_one_float(et.basis.rows[0].y, h);
+            h = hash_murmur3_one_float(et.basis.rows[0].z, h);
+            h = hash_murmur3_one_float(et.basis.rows[1].x, h);
+            h = hash_murmur3_one_float(et.basis.rows[1].y, h);
+            h = hash_murmur3_one_float(et.basis.rows[1].z, h);
+            h = hash_murmur3_one_float(et.basis.rows[2].x, h);
+            h = hash_murmur3_one_float(et.basis.rows[2].y, h);
+            h = hash_murmur3_one_float(et.basis.rows[2].z, h);
+        }
+        if (vs.get_type() == Variant::VECTOR3) {
+            Vector3 es = vs;
+            h = hash_murmur3_one_float(es.x, h);
+            h = hash_murmur3_one_float(es.y, h);
+            h = hash_murmur3_one_float(es.z, h);
+        }
+    }
 
     return h;
 }
@@ -395,8 +553,6 @@ void ResonanceProbeVolume::_update_visuals() {
     ResonanceServer* srv = ResonanceServer::get_singleton();
     if (!srv || !srv->is_initialized())
         return;
-    if (!viz_multimesh.is_valid())
-        return;
 
     if (Engine::get_singleton() && Engine::get_singleton()->is_editor_hint()) {
         _ensure_viz_instance();
@@ -405,6 +561,8 @@ void ResonanceProbeVolume::_update_visuals() {
             viz_color_state = _compute_is_probe_dirty() ? 0 : 1;
         }
     }
+    if (!viz_multimesh.is_valid())
+        return;
 
     Transform3D volume_transform = get_global_transform();
     Transform3D to_local_xform = volume_transform.affine_inverse();
@@ -420,6 +578,8 @@ void ResonanceProbeVolume::_update_visuals() {
     if (points.is_empty()) {
         points = srv->generate_manual_grid(volume_transform, extents, spacing, generation_type, height_above_floor);
     }
+
+    points = resonance::filter_points_outside_exclusion_boxes(points, collect_exclusion_boxes());
 
     if (points.is_empty()) {
         viz_multimesh->set_instance_count(0);
@@ -487,14 +647,16 @@ PackedVector3Array ResonanceProbeVolume::generate_probes_on_floor_raycast() cons
             Vector3 to = from + Vector3(0, -ray_down, 0);
             Ref<PhysicsRayQueryParameters3D> query = PhysicsRayQueryParameters3D::create(from, to);
             Dictionary result = space->intersect_ray(query);
-            Variant pos_var = result.get("position", Vector3());
-            if (pos_var.get_type() == Variant::VECTOR3) {
-                Vector3 hit_pos = pos_var;
-                points.push_back(hit_pos + Vector3(0, height_above_floor, 0));
-                hit_count++;
-            } else {
-                points.push_back(from);
-            }
+            // Misses return {}. Dictionary.get("position", Vector3()) would still be VECTOR3
+            // (default origin) and plant every miss at world (0, height, 0).
+            if (result.is_empty())
+                continue;
+            Variant pos_var = result.get("position", Variant());
+            if (pos_var.get_type() != Variant::VECTOR3)
+                continue;
+            Vector3 hit_pos = pos_var;
+            points.push_back(hit_pos + Vector3(0, height_above_floor, 0));
+            hit_count++;
         }
     }
     if (Engine::get_singleton() && Engine::get_singleton()->is_editor_hint() && hit_count > 0) {
@@ -532,23 +694,10 @@ void ResonanceProbeVolume::_prepare_and_execute_bake(const PackedVector3Array* p
                 }
             }
         }
-        String base_dir = resonance::kProbeBakeOutputDir;
         ProjectSettings* ps = ProjectSettings::get_singleton();
-        if (ps) {
-            const String prefix = String(resonance::kProjectSettingsResonancePrefix);
-            const String key_new = prefix + String(resonance::kProjectSettingsBakeDefaultOutputDirectory);
-            const String key_old = prefix + String(resonance::kProjectSettingsBakeOutputDirectoryLegacy);
-            if (ps->has_setting(key_new)) {
-                base_dir = String(ps->get_setting(key_new));
-            } else if (ps->has_setting(key_old)) {
-                base_dir = String(ps->get_setting(key_old));
-            }
-            if (!base_dir.ends_with("/")) {
-                base_dir += "/";
-            }
-        }
+        const String base_dir = resonance_bake_batches_dir_from_settings();
         const String ext = resonance_probe_data_save_extension_from_settings();
-        String path = base_dir + scene_name + "_" + node_name + "_batch." + ext;
+        String path = base_dir + scene_name + String("_") + node_name + String("_batch.") + ext;
         String dir = path.get_base_dir();
         if (!dir.is_empty() && ps) {
             String abs_dir = ps->globalize_path(dir);
@@ -560,29 +709,32 @@ void ResonanceProbeVolume::_prepare_and_execute_bake(const PackedVector3Array* p
 
     Transform3D volume_transform = get_global_transform();
     Vector3 extents = region_size * 0.5f;
-    probe_data->set_bake_params_hash(static_cast<int64_t>(_get_bake_params_hash()));
+    Array exclusion_boxes = collect_exclusion_boxes();
 
     bool success = false;
     if (p_precomputed_points && !p_precomputed_points->is_empty()) {
-        success = srv->bake_manual_grid(*p_precomputed_points, probe_data);
-        if (success && Engine::get_singleton() && Engine::get_singleton()->is_editor_hint()) {
-            UtilityFunctions::print_rich("[color=cyan]Nexus Resonance:[/color] Uniform Floor used geometry raycast. Probes placed on floor. (Requires CollisionShape3D on floor geometry.)");
+        PackedVector3Array filtered =
+            resonance::filter_points_outside_exclusion_boxes(*p_precomputed_points, exclusion_boxes);
+        if (!filtered.is_empty()) {
+            success = srv->bake_manual_grid(filtered, probe_data);
+            if (success && Engine::get_singleton() && Engine::get_singleton()->is_editor_hint()) {
+                UtilityFunctions::print_rich("[color=cyan]Nexus Resonance:[/color] Uniform Floor used geometry raycast. Probes placed on floor. (Requires CollisionShape3D on floor geometry.)");
+            }
         }
     }
     if (!success) {
-        success = srv->bake_probes_for_volume(volume_transform, extents, spacing, (int)generation_type, height_above_floor, probe_data);
+        success = srv->bake_probes_for_volume(volume_transform, extents, spacing, (int)generation_type,
+                                              height_above_floor, probe_data, exclusion_boxes);
     }
 
     if (!success) {
-        UtilityFunctions::push_error("Nexus Resonance: Bake failed. Check that ResonanceGeometry nodes exist and are children of MeshInstance3Ds.");
+        UtilityFunctions::push_error("Nexus Resonance: Bake failed. Previous probe data kept. Check ResonanceGeometry / ResonanceStaticScene.");
     } else {
+        probe_data->set_bake_params_hash(static_cast<int64_t>(_get_bake_params_hash()));
         if (viz_visible)
             _update_visuals();
-        if (probe_batch_handle >= 0) {
-            srv->remove_probe_batch(probe_batch_handle);
-            probe_batch_handle = -1;
-        }
-        probe_batch_handle = srv->load_probe_batch(probe_data);
+        _release_probe_batch_if_live();
+        _store_probe_batch_handle(srv->load_probe_batch(probe_data));
     }
 }
 
@@ -634,6 +786,12 @@ void ResonanceProbeVolume::set_probe_data(const Ref<ResonanceProbeData>& p_data)
 }
 Ref<ResonanceProbeData> ResonanceProbeVolume::get_probe_data() const { return probe_data; }
 
+void ResonanceProbeVolume::set_scan_targets(const Array& p_targets) {
+    scan_targets = p_targets;
+}
+Array ResonanceProbeVolume::get_scan_targets() const {
+    return scan_targets;
+}
 void ResonanceProbeVolume::set_bake_sources(const Array& p_sources) {
     bake_sources = p_sources;
 }
@@ -651,6 +809,54 @@ void ResonanceProbeVolume::set_bake_influence_radius(float p_radius) {
 }
 float ResonanceProbeVolume::get_bake_influence_radius() const {
     return bake_influence_radius;
+}
+
+void ResonanceProbeVolume::add_bake_source(const Variant& p_source) {
+    NodePath path = bake_target_path_from_variant(this, p_source);
+    if (path.is_empty() || array_has_nodepath(bake_sources, path)) {
+        return;
+    }
+    Array next = bake_sources;
+    next.push_back(path);
+    set_bake_sources(next);
+}
+
+void ResonanceProbeVolume::remove_bake_source(const Variant& p_source) {
+    NodePath path = bake_target_path_from_variant(this, p_source);
+    if (path.is_empty()) {
+        return;
+    }
+    Array next;
+    for (int i = 0; i < bake_sources.size(); i++) {
+        if (NodePath(bake_sources[i]) != path) {
+            next.push_back(bake_sources[i]);
+        }
+    }
+    set_bake_sources(next);
+}
+
+void ResonanceProbeVolume::add_bake_listener(const Variant& p_listener) {
+    NodePath path = bake_target_path_from_variant(this, p_listener);
+    if (path.is_empty() || array_has_nodepath(bake_listeners, path)) {
+        return;
+    }
+    Array next = bake_listeners;
+    next.push_back(path);
+    set_bake_listeners(next);
+}
+
+void ResonanceProbeVolume::remove_bake_listener(const Variant& p_listener) {
+    NodePath path = bake_target_path_from_variant(this, p_listener);
+    if (path.is_empty()) {
+        return;
+    }
+    Array next;
+    for (int i = 0; i < bake_listeners.size(); i++) {
+        if (NodePath(bake_listeners[i]) != path) {
+            next.push_back(bake_listeners[i]);
+        }
+    }
+    set_bake_listeners(next);
 }
 
 void ResonanceProbeVolume::set_bake_config(const Ref<Resource>& p_config) {
@@ -752,14 +958,23 @@ void ResonanceProbeVolume::_validate_property(PropertyInfo& p_property) const {
 void ResonanceProbeVolume::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_bake_config", "p_config"), &ResonanceProbeVolume::set_bake_config);
     ClassDB::bind_method(D_METHOD("get_bake_config"), &ResonanceProbeVolume::get_bake_config);
+    ClassDB::bind_method(D_METHOD("set_scan_targets", "p_targets"), &ResonanceProbeVolume::set_scan_targets);
+    ClassDB::bind_method(D_METHOD("get_scan_targets"), &ResonanceProbeVolume::get_scan_targets);
     ClassDB::bind_method(D_METHOD("set_bake_sources", "p_sources"), &ResonanceProbeVolume::set_bake_sources);
     ClassDB::bind_method(D_METHOD("get_bake_sources"), &ResonanceProbeVolume::get_bake_sources);
     ClassDB::bind_method(D_METHOD("set_bake_listeners", "p_listeners"), &ResonanceProbeVolume::set_bake_listeners);
     ClassDB::bind_method(D_METHOD("get_bake_listeners"), &ResonanceProbeVolume::get_bake_listeners);
     ClassDB::bind_method(D_METHOD("set_bake_influence_radius", "p_radius"), &ResonanceProbeVolume::set_bake_influence_radius);
     ClassDB::bind_method(D_METHOD("get_bake_influence_radius"), &ResonanceProbeVolume::get_bake_influence_radius);
+    ClassDB::bind_method(D_METHOD("add_bake_source", "source"), &ResonanceProbeVolume::add_bake_source);
+    ClassDB::bind_method(D_METHOD("remove_bake_source", "source"), &ResonanceProbeVolume::remove_bake_source);
+    ClassDB::bind_method(D_METHOD("add_bake_listener", "listener"), &ResonanceProbeVolume::add_bake_listener);
+    ClassDB::bind_method(D_METHOD("remove_bake_listener", "listener"), &ResonanceProbeVolume::remove_bake_listener);
     ClassDB::bind_method(D_METHOD("set_probe_data", "p_data"), &ResonanceProbeVolume::set_probe_data);
     ClassDB::bind_method(D_METHOD("get_probe_data"), &ResonanceProbeVolume::get_probe_data);
+    ClassDB::bind_method(D_METHOD("ensure_default_resources"), &ResonanceProbeVolume::ensure_default_resources);
+    ClassDB::bind_method(D_METHOD("collect_exclusion_boxes"), &ResonanceProbeVolume::collect_exclusion_boxes);
+    ClassDB::bind_method(D_METHOD("notify_exclusion_changed"), &ResonanceProbeVolume::notify_exclusion_changed);
     ClassDB::bind_method(D_METHOD("set_region_size", "p_size"), &ResonanceProbeVolume::set_region_size);
     ClassDB::bind_method(D_METHOD("get_region_size"), &ResonanceProbeVolume::get_region_size);
     ClassDB::bind_method(D_METHOD("set_generation_type", "p_type"), &ResonanceProbeVolume::set_generation_type);
@@ -793,6 +1008,7 @@ void ResonanceProbeVolume::_bind_methods() {
     ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "probe_data", PROPERTY_HINT_RESOURCE_TYPE, "ResonanceProbeData"), "set_probe_data", "get_probe_data");
     ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "bake_config", PROPERTY_HINT_RESOURCE_TYPE, "ResonanceBakeConfig"), "set_bake_config", "get_bake_config");
     ADD_GROUP("Bake Targets", "");
+    ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "scan_targets", PROPERTY_HINT_ARRAY_TYPE, "NodePath"), "set_scan_targets", "get_scan_targets");
     ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "bake_sources", PROPERTY_HINT_ARRAY_TYPE, "NodePath"), "set_bake_sources", "get_bake_sources");
     ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "bake_listeners", PROPERTY_HINT_ARRAY_TYPE, "NodePath"), "set_bake_listeners", "get_bake_listeners");
     ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bake_influence_radius", PROPERTY_HINT_RANGE, "1,50000,1"), "set_bake_influence_radius", "get_bake_influence_radius");

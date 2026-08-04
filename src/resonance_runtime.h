@@ -6,6 +6,7 @@
 #include <godot_cpp/classes/node.hpp>
 #include <godot_cpp/classes/ref_counted.hpp>
 #include <godot_cpp/classes/resource.hpp>
+#include <godot_cpp/core/object_id.hpp>
 #include <godot_cpp/variant/packed_int64_array.hpp>
 #include <godot_cpp/variant/rid.hpp>
 #include <godot_cpp/variant/transform3d.hpp>
@@ -25,6 +26,9 @@ class ResonanceServer;
 //
 // Translation units: resonance_runtime.cpp (lifecycle + bus), resonance_runtime_tick.cpp (per-frame hot path),
 // resonance_runtime_init.cpp (server init/reinit, config, signals, static scenes, bridges).
+//
+// Multiple ResonanceRuntime nodes may exist (scene handoff). Only the primary instance runs flush+tick;
+// live_game_runtime_count gates ResonanceServer shutdown when the last live runtime exits.
 class ResonanceRuntime : public Node {
     GDCLASS(ResonanceRuntime, Node)
 
@@ -57,13 +61,15 @@ class ResonanceRuntime : public Node {
 
     bool static_scene_reload_pending = false;
 
-    // Max one active runtime per running game; server shutdown only when this reaches 0.
+    // Live game runtimes; server shutdown only when this reaches 0.
     static int live_game_runtime_count;
+    // Instance that owns flush+tick (last _ready wins; elect on exit).
+    static ObjectID primary_runtime_id;
 
-    // Selected in 1.3e; gates the per-phase frame timing below (Full only). Standard by default.
+    // Gates per-phase frame timing (Full only). Standard by default.
     int performance_custom_monitors = 2;
 
-    // Per-frame timing snapshot (telemetry contract; read by ResonanceRuntimePerfMonitors in 1.3e).
+    // Per-frame timing snapshot (telemetry; read by ResonanceRuntimePerfMonitors).
     int64_t main_thread_last_tick_usec = 0;
     int64_t main_thread_activator_usec = 0;
     int64_t main_thread_reinit_usec = 0;
@@ -86,12 +92,15 @@ class ResonanceRuntime : public Node {
     int64_t group_cache_frame = -1;
     bool group_cache_use_physics = false;
     TypedArray<Node> cached_listener_nodes;
-    TypedArray<Node> cached_player_nodes;
 
     bool custom_tracer_main_sim_warned = false;
 
     static bool editor_hint();
     static Variant script_new(const String& script_path);
+
+    void claim_primary_runtime();
+    void release_primary_and_elect_successor();
+    void ensure_primary_side_effects();
 
     void setup_activator();
     void cleanup_reverb_activator();
@@ -120,6 +129,7 @@ class ResonanceRuntime : public Node {
     void warn_restart_if_needed();
     void init_fmod_bridge();
     void init_coda_bridge();
+    void apply_primary_handoff_without_reinit();
 
     // Debug overlays + profiler driving (resonance_runtime_debug.cpp).
     void create_debug_overlay();
@@ -169,6 +179,7 @@ class ResonanceRuntime : public Node {
     bool get_context_validation() const { return context_validation; }
 
     static int get_live_game_runtime_count();
+    bool is_primary_runtime() const;
 
     // Callable targets for ResonanceRuntimeBus and the debug overlay.
     StringName get_bus_effective() const;
@@ -199,6 +210,10 @@ class ResonanceRuntime : public Node {
     Ref<RefCounted> get_coda_bridge() const;
 
     void on_scene_tree_exiting();
+
+    // Hard-stop players + detach ResonanceAudioEffect so AudioServer can retire them before
+    // GDExtension deinit. Call a few frames before SceneTree.quit(); _exit_tree is too late.
+    void prepare_for_shutdown();
 };
 
 } // namespace godot

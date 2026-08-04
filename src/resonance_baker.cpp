@@ -8,6 +8,7 @@
 #include <godot_cpp/classes/dir_access.hpp>
 #include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/file_access.hpp>
+#include <godot_cpp/classes/os.hpp>
 #include <godot_cpp/classes/project_settings.hpp>
 #include <godot_cpp/classes/resource_saver.hpp>
 #include <godot_cpp/classes/resource_uid.hpp>
@@ -18,6 +19,34 @@ using namespace godot;
 
 // Counter for unique `probe_batch_fallback_*` filenames when `probe_data` has no saved path.
 static std::atomic<int> s_fallback_counter{0};
+
+static bool _baker_on_main_thread() {
+    OS* os = OS::get_singleton();
+    return !os || os->get_thread_caller_id() == os->get_main_thread_id();
+}
+
+// Bake runs on a worker Thread; Godot print/push_* are main-thread only.
+static void _baker_print_rich(const String& msg) {
+    if (!_baker_on_main_thread())
+        return;
+    UtilityFunctions::print_rich(msg);
+}
+
+static void _baker_push_error(const String& msg) {
+    if (!_baker_on_main_thread()) {
+        ResonanceLog::error(msg);
+        return;
+    }
+    UtilityFunctions::push_error(msg);
+}
+
+static void _baker_push_warning(const String& msg) {
+    if (!_baker_on_main_thread()) {
+        ResonanceLog::warn(msg);
+        return;
+    }
+    UtilityFunctions::push_warning(msg);
+}
 
 /// Invalidate `_get_bake_params_hash` match so editor gizmos show "needs bake" (fixed sentinel; avoids XOR false positives).
 static void invalidate_probe_data_bake_params_hash(const Ref<ResonanceProbeData>& probe_data_res) {
@@ -99,7 +128,7 @@ static bool _save_probe_batch_to_probe_data(IPLContext context, IPLProbeBatch ba
     IPLsize size = iplSerializedObjectGetSize(serialized_object);
     IPLbyte* data = iplSerializedObjectGetData(serialized_object);
     if (size == 0 || !data) {
-        UtilityFunctions::push_error("Nexus Resonance: Serialized probe batch is empty after edit.");
+        _baker_push_error("Nexus Resonance: Serialized probe batch is empty after edit.");
         return false;
     }
     PackedByteArray new_pba;
@@ -127,10 +156,13 @@ static String _build_tres_content(const PackedByteArray& pba, Ref<ResonanceProbe
            "\nstatic_scene_params_hash = " + String::num_int64(ssc) + "\n";
 }
 
-/// Writes resource to `path` (or `.tres` hand-written fallback). No-op if `pathing_scheduled` (pathing pass saves later).
+/// Disk I/O belongs on the main thread (ResonanceBakeRunner). Bake thread only updates in-memory probe_data.
 static bool _save_probe_data_to_disk(Ref<ResonanceProbeData> probe_data_res, const String& path,
                                      const PackedByteArray& pba, int reflection_type, IPLsize size, bool pathing_scheduled) {
     if (path.is_empty() || pathing_scheduled)
+        return true;
+    OS* os = OS::get_singleton();
+    if (os && os->get_thread_caller_id() != os->get_main_thread_id())
         return true;
     Error err = ResourceSaver::get_singleton()->save(probe_data_res, path, ResourceSaver::FLAG_CHANGE_PATH);
     if (err == OK)
@@ -138,12 +170,12 @@ static bool _save_probe_data_to_disk(Ref<ResonanceProbeData> probe_data_res, con
     const String fallback_ext = path.get_extension().to_lower() == String("res") ? String("res") : String("tres");
     const String text_fallback_path = path.get_basename() + "." + fallback_ext;
     if (fallback_ext == String("res")) {
-        UtilityFunctions::push_error("ResonanceBaker: ResourceSaver failed for .res path (", (int)err, "); cannot fall back to hand-written binary.");
+        _baker_push_error("ResonanceBaker: ResourceSaver failed for .res path (" + String::num_int64((int64_t)err) + "); cannot fall back to hand-written binary.");
         return false;
     }
     Ref<FileAccess> f = FileAccess::open(text_fallback_path, FileAccess::WRITE);
     if (!f.is_valid()) {
-        UtilityFunctions::push_error("ResonanceBaker: Could not save file. ResourceSaver failed (", (int)err, ") and fallback open failed.");
+        _baker_push_error("ResonanceBaker: Could not save file. ResourceSaver failed (" + String::num_int64((int64_t)err) + ") and fallback open failed.");
         return false;
     }
     String content = _build_tres_content(pba, probe_data_res, reflection_type);
@@ -160,25 +192,11 @@ static String _resolve_save_path(Ref<ResonanceProbeData> probe_data_res) {
         path = ResourceUID::get_singleton()->uid_to_path(path);
     }
     if (path.is_empty()) {
-        String base_dir = resonance::kProbeBakeOutputDir;
-        ProjectSettings* ps = ProjectSettings::get_singleton();
-        if (ps) {
-            const String prefix = String(resonance::kProjectSettingsResonancePrefix);
-            const String key_new = prefix + String(resonance::kProjectSettingsBakeDefaultOutputDirectory);
-            const String key_old = prefix + String(resonance::kProjectSettingsBakeOutputDirectoryLegacy);
-            if (ps->has_setting(key_new)) {
-                base_dir = String(ps->get_setting(key_new));
-            } else if (ps->has_setting(key_old)) {
-                base_dir = String(ps->get_setting(key_old));
-            }
-            if (!base_dir.ends_with("/")) {
-                base_dir += "/";
-            }
-        }
+        const String base_dir = resonance_bake_batches_dir_from_settings();
         int n = s_fallback_counter.fetch_add(1) + 1;
         const String ext = resonance_probe_data_save_extension_from_settings();
-        path = base_dir + "probe_batch_fallback_" + String::num_int64(n) + "." + ext;
-        UtilityFunctions::push_warning("Nexus Resonance Bake: probe_data has no path. Using fallback: ", path);
+        path = base_dir + String("probe_batch_fallback_") + String::num_int64(n) + String(".") + ext;
+        _baker_push_warning("Nexus Resonance Bake: probe_data has no path. Using fallback: " + path);
         String dir = path.get_base_dir();
         if (!dir.is_empty()) {
             ProjectSettings* ps2 = ProjectSettings::get_singleton();
@@ -283,20 +301,20 @@ bool ResonanceBaker::bake_with_probe_array(IPLContext context, IPLScene scene, I
                                            void (*progress_callback)(float, void*), void* progress_user_data, bool pathing_scheduled, int num_threads,
                                            int ambisonics_order) {
     if (generation_type != GEN_CENTROID && generation_type != GEN_UNIFORM_FLOOR) {
-        UtilityFunctions::push_error("ResonanceBaker: bake_with_probe_array only supports Centroid (0) and UniformFloor (1). Use bake_manual_grid for Volume.");
+        _baker_push_error("ResonanceBaker: bake_with_probe_array only supports Centroid (0) and UniformFloor (1). Use bake_manual_grid for Volume.");
         return false;
     }
     if (probe_data_res.is_null() || !context || !scene) {
-        UtilityFunctions::push_error("ResonanceBaker: bake_with_probe_array requires valid context, scene, and probe_data.");
+        _baker_push_error("ResonanceBaker: bake_with_probe_array requires valid context, scene, and probe_data.");
         return false;
     }
     Engine* eng = Engine::get_singleton();
     if (eng && eng->is_editor_hint()) {
-        UtilityFunctions::print_rich("[color=cyan]Nexus Resonance:[/color] Using Steam Audio Probe Array API (scene-aware placement)...");
+        _baker_print_rich("[color=cyan]Nexus Resonance:[/color] Using Steam Audio Probe Array API (scene-aware placement)...");
     }
     IPLProbeArray probeArray = nullptr;
     if (iplProbeArrayCreate(context, &probeArray) != IPL_STATUS_SUCCESS) {
-        UtilityFunctions::push_error("ResonanceBaker: iplProbeArrayCreate failed.");
+        _baker_push_error("ResonanceBaker: iplProbeArrayCreate failed.");
         return false;
     }
     IPLProbeGenerationParams genParams{};
@@ -311,7 +329,7 @@ bool ResonanceBaker::bake_with_probe_array(IPLContext context, IPLScene scene, I
         // UNIFORMFLOOR from scene can yield 0 probes; use our manual floor grid in volume space.
         if (generation_type == GEN_UNIFORM_FLOOR) {
             if (eng && eng->is_editor_hint()) {
-                UtilityFunctions::print_rich("[color=cyan]Nexus Resonance:[/color] Steam Audio UniformFloor returned 0 probes (scene may have no detectable floor). Using flat-plane fallback - probes placed on horizontal plane in volume, NOT on ResonanceGeometry floor. Consider GEN_VOLUME for full 3D coverage.");
+                _baker_print_rich("[color=cyan]Nexus Resonance:[/color] Steam Audio UniformFloor returned 0 probes (scene may have no detectable floor). Using flat-plane fallback - probes placed on horizontal plane in volume, NOT on ResonanceGeometry floor. Consider GEN_VOLUME for full 3D coverage.");
             }
             PackedVector3Array points = generate_manual_grid(volume_transform, extents, spacing, generation_type, height_above_floor);
             if (!points.is_empty()) {
@@ -319,11 +337,11 @@ bool ResonanceBaker::bake_with_probe_array(IPLContext context, IPLScene scene, I
                                         points, num_bounces, num_rays, reflection_type, probe_data_res, progress_callback, progress_user_data, pathing_scheduled, num_threads, ambisonics_order);
             }
         }
-        UtilityFunctions::push_error("ResonanceBaker: Steam probe array generated 0 probes. Check volume and scene geometry.");
+        _baker_push_error("ResonanceBaker: Steam probe array generated 0 probes. Check volume and scene geometry.");
         return false;
     }
     if (eng && eng->is_editor_hint()) {
-        UtilityFunctions::print_rich("[color=cyan]Nexus Resonance:[/color] Probe array generated " + String::num(num_probes) + " probes.");
+        _baker_print_rich("[color=cyan]Nexus Resonance:[/color] Probe array generated " + String::num(num_probes) + " probes.");
     }
     PackedVector3Array positions_for_viz;
     for (int i = 0; i < num_probes; i++) {
@@ -358,7 +376,7 @@ bool ResonanceBaker::bake_with_probe_array(IPLContext context, IPLScene scene, I
     IPLsize size = iplSerializedObjectGetSize(serializedObject);
     IPLbyte* data = iplSerializedObjectGetData(serializedObject);
     if (size == 0 || !data) {
-        UtilityFunctions::push_error("Nexus Resonance Bake: iplReflectionsBakerBake produced no data. Possible causes: missing scene geometry, invalid probe positions, or invalid bake parameters. Check Steam Audio log (Godot Output) for details.");
+        _baker_push_error("Nexus Resonance Bake: iplReflectionsBakerBake produced no data. Possible causes: missing scene geometry, invalid probe positions, or invalid bake parameters. Check Steam Audio log (Godot Output) for details.");
         return false;
     }
     PackedByteArray pba;
@@ -373,7 +391,11 @@ bool ResonanceBaker::bake_with_probe_array(IPLContext context, IPLScene scene, I
     }
     if (eng && eng->is_editor_hint() && !path.is_empty()) {
         int kb = (int)((size + 1023) / 1024);
-        UtilityFunctions::print_rich("[color=cyan]Nexus Resonance:[/color] Saved " + String::num(kb) + " kilobytes (Probe Array bake).");
+        if (_baker_on_main_thread() && !pathing_scheduled) {
+            _baker_print_rich("[color=cyan]Nexus Resonance:[/color] Saved " + String::num(kb) + " kilobytes (Probe Array bake).");
+        } else {
+            _baker_print_rich("[color=cyan]Nexus Resonance:[/color] Probe Array bake ready (" + String::num(kb) + " KB in memory).");
+        }
     }
     return true;
 }
@@ -386,23 +408,23 @@ bool ResonanceBaker::bake_manual_grid(IPLContext context, IPLScene scene, IPLSce
         String msg = pathing_scheduled
                          ? String("Starting Bake (") + refl_name + " + Pathing) Process..."
                          : String("Starting Bake (") + refl_name + ") Process...";
-        UtilityFunctions::print_rich("[color=cyan]Nexus Resonance:[/color] " + msg);
+        _baker_print_rich("[color=cyan]Nexus Resonance:[/color] " + msg);
     }
 
     if (probe_positions.size() == 0) {
-        UtilityFunctions::push_error("ResonanceBaker: No points to bake!");
+        _baker_push_error("ResonanceBaker: No points to bake!");
         return false;
     }
     if (probe_positions.size() > resonance::kMaxProbesPerVolume) {
-        UtilityFunctions::push_error("ResonanceBaker: Probe count exceeds limit (", (int)resonance::kMaxProbesPerVolume, "). Reduce spacing or volume size.");
+        _baker_push_error("ResonanceBaker: Probe count exceeds limit (" + String::num_int64((int64_t)resonance::kMaxProbesPerVolume) + "). Reduce spacing or volume size.");
         return false;
     }
     if (probe_data_res.is_null()) {
-        UtilityFunctions::push_error("ResonanceBaker: Resource is null.");
+        _baker_push_error("ResonanceBaker: Resource is null.");
         return false;
     }
     if (!context || !scene) {
-        UtilityFunctions::push_error("ResonanceBaker: Steam Audio Context/Scene missing.");
+        _baker_push_error("ResonanceBaker: Steam Audio Context/Scene missing.");
         return false;
     }
 
@@ -421,7 +443,7 @@ bool ResonanceBaker::bake_manual_grid(IPLContext context, IPLScene scene, IPLSce
     iplProbeBatchCommit(probeBatch);
 
     if (eng && eng->is_editor_hint()) {
-        UtilityFunctions::print_rich("[color=cyan]Nexus Resonance:[/color] Batch committed with " + String::num((int)probe_positions.size()) + " probes. Calculating Reverb...");
+        _baker_print_rich("[color=cyan]Nexus Resonance:[/color] Batch committed with " + String::num((int)probe_positions.size()) + " probes. Calculating Reverb...");
     }
 
     // `_fill_reflections_bake_params` sets flags so conv/param/hybrid can run from one bake.
@@ -447,7 +469,7 @@ bool ResonanceBaker::bake_manual_grid(IPLContext context, IPLScene scene, IPLSce
     IPLsize size = iplSerializedObjectGetSize(serializedObject);
     IPLbyte* data = iplSerializedObjectGetData(serializedObject);
     if (size == 0 || !data) {
-        UtilityFunctions::push_error("Nexus Resonance Bake: iplReflectionsBakerBake produced no data. Possible causes: missing scene geometry (add ResonanceGeometry nodes), invalid probe positions, or invalid bake parameters. Check Steam Audio log (Godot Output) for details.");
+        _baker_push_error("Nexus Resonance Bake: iplReflectionsBakerBake produced no data. Possible causes: missing scene geometry (add ResonanceGeometry nodes), invalid probe positions, or invalid bake parameters. Check Steam Audio log (Godot Output) for details.");
         return false;
     }
 
@@ -465,7 +487,11 @@ bool ResonanceBaker::bake_manual_grid(IPLContext context, IPLScene scene, IPLSce
     }
     if (eng && eng->is_editor_hint() && !path.is_empty()) {
         int kb = (int)((size + 1023) / 1024);
-        UtilityFunctions::print_rich("[color=cyan]Nexus Resonance:[/color] Saved " + String::num(kb) + " kilobytes to " + path);
+        if (_baker_on_main_thread() && !pathing_scheduled) {
+            _baker_print_rich("[color=cyan]Nexus Resonance:[/color] Saved " + String::num(kb) + " kilobytes to " + path);
+        } else {
+            _baker_print_rich("[color=cyan]Nexus Resonance:[/color] Manual grid bake ready (" + String::num(kb) + " KB in memory).");
+        }
     }
 
     return true;
@@ -475,17 +501,17 @@ bool ResonanceBaker::bake_pathing(IPLContext context, IPLScene scene, Ref<Resona
                                   float vis_range, float path_range, int num_samples, float radius, float threshold,
                                   void (*progress_callback)(float, void*), void* progress_user_data, int num_threads) {
     if (probe_data_res.is_null() || probe_data_res->get_data().is_empty()) {
-        UtilityFunctions::push_error("Nexus Resonance: bake_pathing requires probe_data with existing baked reflections.");
+        _baker_push_error("Nexus Resonance: bake_pathing requires probe_data with existing baked reflections.");
         return false;
     }
     if (!context || !scene) {
-        UtilityFunctions::push_error("Nexus Resonance: bake_pathing requires initialized context and scene.");
+        _baker_push_error("Nexus Resonance: bake_pathing requires initialized context and scene.");
         return false;
     }
 
     IPLProbeBatch batch = _load_probe_batch_from_resource(context, probe_data_res);
     if (!batch) {
-        UtilityFunctions::push_error("Nexus Resonance: bake_pathing failed to load probe batch from probe_data.");
+        _baker_push_error("Nexus Resonance: bake_pathing failed to load probe batch from probe_data.");
         return false;
     }
     IPLScopedRelease<IPLProbeBatch> batchGuard(batch, iplProbeBatchRelease);
@@ -519,7 +545,7 @@ bool ResonanceBaker::bake_pathing(IPLContext context, IPLScene scene, Ref<Resona
     IPLsize size = iplSerializedObjectGetSize(serializedObject);
     IPLbyte* data = iplSerializedObjectGetData(serializedObject);
     if (size == 0 || !data) {
-        UtilityFunctions::push_error("Nexus Resonance: bake_pathing produced no data. Possible causes: insufficient probes, scene geometry blocking paths, or invalid pathing parameters (vis_range, path_range). Check Steam Audio log (Godot Output) for details.");
+        _baker_push_error("Nexus Resonance: bake_pathing produced no data. Possible causes: insufficient probes, scene geometry blocking paths, or invalid pathing parameters (vis_range, path_range). Check Steam Audio log (Godot Output) for details.");
         return false;
     }
     PackedByteArray newPba;
@@ -527,22 +553,9 @@ bool ResonanceBaker::bake_pathing(IPLContext context, IPLScene scene, Ref<Resona
     memcpy(newPba.ptrw(), data, size);
     probe_data_res->set_data(newPba);
 
-    // Persist hash here (matches GDScript `_compute_pathing_hash`) - thread/async may drop return status.
-    {
-        Dictionary d;
-        d["vis_range"] = vis_range;
-        d["path_range"] = path_range;
-        d["num_samples"] = num_samples;
-        d["radius"] = radius;
-        d["threshold"] = threshold;
-        String s = UtilityFunctions::var_to_str(d);
-        int64_t ph = static_cast<int64_t>(s.hash());
-        probe_data_res->set_pathing_params_hash(ph);
-    }
-
     Engine* path_eng = Engine::get_singleton();
     if (path_eng && path_eng->is_editor_hint()) {
-        UtilityFunctions::print_rich("[color=cyan]Nexus Resonance:[/color] Pathing baked successfully.");
+        _baker_print_rich("[color=cyan]Nexus Resonance:[/color] Pathing baked successfully.");
     }
     return true;
 }
@@ -555,11 +568,11 @@ bool ResonanceBaker::_bake_static_endpoint(IPLContext context, IPLScene scene, I
                                            int ambisonics_order) {
     String prefix(error_prefix);
     if (probe_data_res.is_null() || probe_data_res->get_data().is_empty()) {
-        UtilityFunctions::push_error("Nexus Resonance: " + prefix + " requires probe_data with existing baked probes (Bake Probes first).");
+        _baker_push_error("Nexus Resonance: " + prefix + " requires probe_data with existing baked probes (Bake Probes first).");
         return false;
     }
     if (!context || !scene) {
-        UtilityFunctions::push_error("Nexus Resonance: " + prefix + " requires initialized context and scene.");
+        _baker_push_error("Nexus Resonance: " + prefix + " requires initialized context and scene.");
         return false;
     }
     if (influence_radius <= 0.0f)
@@ -567,7 +580,7 @@ bool ResonanceBaker::_bake_static_endpoint(IPLContext context, IPLScene scene, I
 
     IPLProbeBatch batch = _load_probe_batch_from_resource(context, probe_data_res);
     if (!batch) {
-        UtilityFunctions::push_error("Nexus Resonance: " + prefix + " failed to load probe batch.");
+        _baker_push_error("Nexus Resonance: " + prefix + " failed to load probe batch.");
         return false;
     }
     IPLScopedRelease<IPLProbeBatch> batchGuard(batch, iplProbeBatchRelease);
@@ -596,7 +609,7 @@ bool ResonanceBaker::_bake_static_endpoint(IPLContext context, IPLScene scene, I
     IPLsize size = iplSerializedObjectGetSize(serializedObject);
     IPLbyte* data = iplSerializedObjectGetData(serializedObject);
     if (size == 0 || !data) {
-        UtilityFunctions::push_error("Nexus Resonance: " + prefix + " produced no data. Possible causes: endpoint outside probe influence, missing scene geometry, or invalid parameters. Check Steam Audio log (Godot Output) for details.");
+        _baker_push_error("Nexus Resonance: " + prefix + " produced no data. Possible causes: endpoint outside probe influence, missing scene geometry, or invalid parameters. Check Steam Audio log (Godot Output) for details.");
         return false;
     }
     PackedByteArray newPba;
@@ -606,7 +619,7 @@ bool ResonanceBaker::_bake_static_endpoint(IPLContext context, IPLScene scene, I
 
     Engine* static_eng = Engine::get_singleton();
     if (static_eng && static_eng->is_editor_hint()) {
-        UtilityFunctions::print_rich("[color=cyan]Nexus Resonance:[/color] " + String(success_msg));
+        _baker_print_rich("[color=cyan]Nexus Resonance:[/color] " + String(success_msg));
     }
     return true;
 }
@@ -646,22 +659,22 @@ int32_t ResonanceBaker::probe_data_get_num_probes(IPLContext context, Ref<Resona
 
 bool ResonanceBaker::probe_data_remove_probe_at_index(IPLContext context, Ref<ResonanceProbeData> probe_data_res, int32_t index) const {
     if (!context || probe_data_res.is_null() || probe_data_res->get_data().is_empty()) {
-        UtilityFunctions::push_error("Nexus Resonance: probe_data_remove_probe_at_index requires context and non-empty probe data.");
+        _baker_push_error("Nexus Resonance: probe_data_remove_probe_at_index requires context and non-empty probe data.");
         return false;
     }
     IPLProbeBatch batch = _load_probe_batch_from_resource(context, probe_data_res);
     if (!batch) {
-        UtilityFunctions::push_error("Nexus Resonance: probe_data_remove_probe_at_index failed to load probe batch.");
+        _baker_push_error("Nexus Resonance: probe_data_remove_probe_at_index failed to load probe batch.");
         return false;
     }
     IPLScopedRelease<IPLProbeBatch> batch_guard(batch, iplProbeBatchRelease);
     int32_t n = iplProbeBatchGetNumProbes(batch);
     if (index < 0 || index >= n) {
         if (n <= 0)
-            UtilityFunctions::push_error("Nexus Resonance: probe batch has no probes.");
+            _baker_push_error("Nexus Resonance: probe batch has no probes.");
         else
-            UtilityFunctions::push_error("Nexus Resonance: probe index out of range (0 .. " +
-                                         String::num_int64(static_cast<int64_t>(n - 1)) + ").");
+            _baker_push_error("Nexus Resonance: probe index out of range (0 .. " +
+                              String::num_int64(static_cast<int64_t>(n - 1)) + ").");
         return false;
     }
     iplProbeBatchRemoveProbe(batch, index);
@@ -676,9 +689,9 @@ bool ResonanceBaker::probe_data_remove_probe_at_index(IPLContext context, Ref<Re
     probe_data_res->set_pathing_params_hash(0);
     Engine* eng = Engine::get_singleton();
     if (eng && eng->is_editor_hint()) {
-        UtilityFunctions::print_rich("[color=cyan]Nexus Resonance:[/color] Removed probe " +
-                                     String::num_int64(static_cast<int64_t>(index)) +
-                                     ". Re-bake pathing if needed; call reload_probe_batch on volumes using this resource.");
+        _baker_print_rich("[color=cyan]Nexus Resonance:[/color] Removed probe " +
+                          String::num_int64(static_cast<int64_t>(index)) +
+                          ". Re-bake pathing if needed; call reload_probe_batch on volumes using this resource.");
     }
     return true;
 }
@@ -686,15 +699,15 @@ bool ResonanceBaker::probe_data_remove_probe_at_index(IPLContext context, Ref<Re
 bool ResonanceBaker::probe_data_remove_baked_data_layer(IPLContext context, Ref<ResonanceProbeData> probe_data_res, int baked_data_type,
                                                         int variation, Vector3 endpoint, float influence_radius) const {
     if (!context || probe_data_res.is_null() || probe_data_res->get_data().is_empty()) {
-        UtilityFunctions::push_error("Nexus Resonance: probe_data_remove_baked_data_layer requires context and non-empty probe data.");
+        _baker_push_error("Nexus Resonance: probe_data_remove_baked_data_layer requires context and non-empty probe data.");
         return false;
     }
     if (baked_data_type < 0 || baked_data_type > 1) {
-        UtilityFunctions::push_error("Nexus Resonance: baked_data_type must be 0 (reflections) or 1 (pathing).");
+        _baker_push_error("Nexus Resonance: baked_data_type must be 0 (reflections) or 1 (pathing).");
         return false;
     }
     if (variation < 0 || variation > 3) {
-        UtilityFunctions::push_error("Nexus Resonance: variation must be 0–3 (reverb, static source, static listener, dynamic).");
+        _baker_push_error("Nexus Resonance: variation must be 0–3 (reverb, static source, static listener, dynamic).");
         return false;
     }
     IPLBakedDataIdentifier id{};
@@ -706,13 +719,13 @@ bool ResonanceBaker::probe_data_remove_baked_data_layer(IPLContext context, Ref<
     }
     IPLProbeBatch batch = _load_probe_batch_from_resource(context, probe_data_res);
     if (!batch) {
-        UtilityFunctions::push_error("Nexus Resonance: probe_data_remove_baked_data_layer failed to load probe batch.");
+        _baker_push_error("Nexus Resonance: probe_data_remove_baked_data_layer failed to load probe batch.");
         return false;
     }
     IPLScopedRelease<IPLProbeBatch> batch_guard(batch, iplProbeBatchRelease);
     IPLsize layer_size = iplProbeBatchGetDataSize(batch, &id);
     if (layer_size == 0) {
-        UtilityFunctions::push_warning(
+        _baker_push_warning(
             "Nexus Resonance: No baked data for the requested layer (type=" +
             String::num_int64(static_cast<int64_t>(baked_data_type)) + ", variation=" +
             String::num_int64(static_cast<int64_t>(variation)) + "). Nothing was removed.");
@@ -735,7 +748,7 @@ bool ResonanceBaker::probe_data_remove_baked_data_layer(IPLContext context, Ref<
         invalidate_probe_data_bake_params_hash(probe_data_res);
     Engine* eng = Engine::get_singleton();
     if (eng && eng->is_editor_hint()) {
-        UtilityFunctions::print_rich(
+        _baker_print_rich(
             "[color=cyan]Nexus Resonance:[/color] Removed baked data layer. Call reload_probe_batch on volumes using this resource.");
     }
     return true;

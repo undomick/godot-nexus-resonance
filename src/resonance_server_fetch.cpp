@@ -222,24 +222,10 @@ bool ResonanceServer::fetch_reverb_params(int32_t handle, IPLReflectionEffectPar
             result = true;
             instrumentation_fetch_refl_stale_epoch_fallback.fetch_add(1, std::memory_order_relaxed);
             instrumentation_fetch_cache_hit.fetch_add(1, std::memory_order_relaxed);
+        } else if (source_outputs_reflections_[static_cast<size_t>(handle)].load(std::memory_order_relaxed) == 0) {
+            instrumentation_fetch_cache_skip.fetch_add(1, std::memory_order_relaxed);
         } else {
-            const int back = 1 - front;
-            const uint32_t epoch_back = reflection_param_cache_epoch_[back];
-            const CachedReflectionParams& e_back = reflection_param_cache_[static_cast<size_t>(back)][static_cast<size_t>(handle)];
-            if (e_back.epoch == epoch_back) {
-                copy_conv_entry(e_back);
-                result = true;
-                instrumentation_fetch_cache_hit.fetch_add(1, std::memory_order_relaxed);
-            } else if (reflection_params_still_usable_for_mix(reflection_type, e_back.params)) {
-                copy_conv_entry(e_back);
-                result = true;
-                instrumentation_fetch_refl_stale_epoch_fallback.fetch_add(1, std::memory_order_relaxed);
-                instrumentation_fetch_cache_hit.fetch_add(1, std::memory_order_relaxed);
-            } else if (source_outputs_reflections_[static_cast<size_t>(handle)].load(std::memory_order_relaxed) == 0) {
-                instrumentation_fetch_cache_skip.fetch_add(1, std::memory_order_relaxed);
-            } else {
-                instrumentation_fetch_cache_miss.fetch_add(1, std::memory_order_relaxed);
-            }
+            instrumentation_fetch_cache_miss.fetch_add(1, std::memory_order_relaxed);
         }
     }
 
@@ -268,7 +254,7 @@ bool ResonanceServer::fetch_pathing_params(int32_t handle, IPLPathEffectParams& 
         memset(&out_params, 0, sizeof(out_params));
         for (int i = 0; i < resonance::kReverbBandCount; i++)
             out_params.eqCoeffs[i] = e.eqCoeffs[i];
-        // Valid only for this audio callback; mix copies SH into player-local tail storage.
+        // Pointer into front cache; mix must deep-copy SH before Apply (live + EOS).
         out_params.shCoeffs = const_cast<float*>(e.shCoeffs.data());
         out_params.order = e.order;
         out_params.binaural = pathing_binaural ? IPL_TRUE : IPL_FALSE;

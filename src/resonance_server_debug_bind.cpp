@@ -1,4 +1,5 @@
 #include "resonance_constants.h"
+#include "resonance_pathing_inputs_policy.h"
 #include "resonance_server.h"
 #include "resonance_utils.h"
 #include <algorithm>
@@ -15,6 +16,16 @@ void ResonanceServer::set_debug_reflections(bool p_enabled) { debug_reflections.
 bool ResonanceServer::is_debug_reflections_enabled() const { return debug_reflections.load(std::memory_order_acquire); }
 void ResonanceServer::set_debug_pathing(bool p_enabled) { debug_pathing.store(p_enabled, std::memory_order_release); }
 bool ResonanceServer::is_debug_pathing_enabled() const { return debug_pathing.load(std::memory_order_acquire); }
+
+void ResonanceServer::set_pathing_enabled(bool p_enabled) {
+    if (resonance::pathing_enable_requires_simulator_recreate(p_enabled, simulator_created_with_pathing_)) {
+        UtilityFunctions::push_warning(
+            "Nexus Resonance: pathing_enabled cannot turn on until the simulator is recreated with "
+            "IPL_SIMULATIONFLAGS_PATHING (toggle ResonanceRuntimeConfig.pathing_enabled so the runtime reinits).");
+        return;
+    }
+    pathing_enabled = p_enabled;
+}
 
 Array ResonanceServer::get_pathing_visualization_segments() {
     Array result;
@@ -392,12 +403,17 @@ void ResonanceServer::_bind_methods() {
     ClassDB::bind_method(D_METHOD("bake_manual_grid", "pts", "dat"), &ResonanceServer::bake_manual_grid);
     ClassDB::bind_method(D_METHOD("set_bake_params", "params"), &ResonanceServer::set_bake_params);
     ClassDB::bind_method(D_METHOD("set_bake_static_scene_asset", "p_asset"), &ResonanceServer::set_bake_static_scene_asset);
+    ClassDB::bind_method(D_METHOD("set_bake_static_scenes_from_assets", "assets", "transforms"),
+                         &ResonanceServer::set_bake_static_scenes_from_assets);
     ClassDB::bind_method(D_METHOD("load_static_scene_from_asset", "p_asset", "p_transform"), &ResonanceServer::load_static_scene_from_asset, DEFVAL(Transform3D()));
     ClassDB::bind_method(D_METHOD("add_static_scene_from_asset", "p_asset", "p_transform"), &ResonanceServer::add_static_scene_from_asset, DEFVAL(Transform3D()));
+    ClassDB::bind_method(D_METHOD("add_or_replace_static_pack", "object_id", "p_asset", "p_transform"),
+                         &ResonanceServer::add_or_replace_static_pack);
+    ClassDB::bind_method(D_METHOD("remove_static_pack", "object_id"), &ResonanceServer::remove_static_pack);
     ClassDB::bind_method(D_METHOD("clear_static_scenes"), &ResonanceServer::clear_static_scenes);
     ClassDB::bind_method(D_METHOD("set_bake_pipeline_pathing", "pathing"), &ResonanceServer::set_bake_pipeline_pathing);
-    ClassDB::bind_method(D_METHOD("bake_probes_for_volume", "volume_transform", "extents", "spacing", "generation_type", "height_above_floor", "probe_data"),
-                         &ResonanceServer::bake_probes_for_volume);
+    ClassDB::bind_method(D_METHOD("bake_probes_for_volume", "volume_transform", "extents", "spacing", "generation_type", "height_above_floor", "probe_data", "exclusion_boxes"),
+                         &ResonanceServer::bake_probes_for_volume, DEFVAL(Array()));
     ClassDB::bind_method(D_METHOD("bake_pathing", "dat"), &ResonanceServer::bake_pathing);
     ClassDB::bind_method(D_METHOD("bake_static_source", "dat", "endpoint_position", "influence_radius"), &ResonanceServer::bake_static_source);
     ClassDB::bind_method(D_METHOD("bake_static_listener", "dat", "endpoint_position", "influence_radius"), &ResonanceServer::bake_static_listener);
@@ -412,6 +428,7 @@ void ResonanceServer::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_geometry_asset_hash", "asset"), &ResonanceServer::get_geometry_asset_hash);
     ClassDB::bind_method(D_METHOD("cancel_reflections_bake"), &ResonanceServer::cancel_reflections_bake);
     ClassDB::bind_method(D_METHOD("cancel_pathing_bake"), &ResonanceServer::cancel_pathing_bake);
+    ClassDB::bind_method(D_METHOD("get_bake_progress"), &ResonanceServer::get_bake_progress);
     ClassDB::bind_method(D_METHOD("load_probe_batch", "dat"), &ResonanceServer::load_probe_batch);
     ClassDB::bind_method(D_METHOD("remove_probe_batch", "handle"), &ResonanceServer::remove_probe_batch);
     ClassDB::bind_method(D_METHOD("clear_probe_batches"), &ResonanceServer::clear_probe_batches);
@@ -474,6 +491,7 @@ void ResonanceServer::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_simulation_worker_timing"), &ResonanceServer::get_simulation_worker_timing);
     ClassDB::bind_method(D_METHOD("get_active_source_count"), &ResonanceServer::get_active_source_count);
     ClassDB::bind_method(D_METHOD("get_active_probe_batch_count"), &ResonanceServer::get_active_probe_batch_count);
+    ClassDB::bind_method(D_METHOD("get_source_lifecycle_epoch"), &ResonanceServer::get_source_lifecycle_epoch);
     ClassDB::bind_method(D_METHOD("peek_reverb_params_likely_available", "source_handle"), &ResonanceServer::peek_reverb_params_likely_available);
     ClassDB::bind_method(D_METHOD("get_convolution_audio_timing"), &ResonanceServer::get_convolution_audio_timing);
     ClassDB::bind_method(D_METHOD("get_simulation_tracer_profile"), &ResonanceServer::get_simulation_tracer_profile);

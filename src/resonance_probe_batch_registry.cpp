@@ -56,7 +56,11 @@ int32_t ResonanceProbeBatchRegistry::load_batch(IPLContext ctx, IPLSimulator sim
     }
 
     iplProbeBatchCommit(batch);
-    {
+
+    // Lock order: simulation_mutex before mutex_ when both are needed. The simulation worker
+    // already holds simulation_mutex when it calls get_pathing_batch / for_each_probe_data
+    // (which take mutex_). Taking mutex_ first then simulation_mutex deadlocks that path.
+    auto register_loaded_batch = [&]() -> int32_t {
         std::lock_guard<std::mutex> lock(mutex_);
         auto it = hash_to_handle_.find(data_hash);
         if (it != hash_to_handle_.end()) {
@@ -84,81 +88,87 @@ int32_t ResonanceProbeBatchRegistry::load_batch(IPLContext ctx, IPLSimulator sim
         handle_has_pathing_[handle] = (data->get_pathing_params_hash() > 0);
         handle_baked_refl_[handle] = data->get_baked_reflection_type();
         handle_to_probe_data_[handle] = data;
-        {
-            if (sim_mutex) {
-                std::lock_guard<std::mutex> sim_lock(*sim_mutex);
-                iplSimulatorAddProbeBatch(sim, batch);
-                iplSimulatorCommit(sim);
-            } else {
-                iplSimulatorAddProbeBatch(sim, batch);
-                iplSimulatorCommit(sim);
-            }
+        has_any_batches_.store(true, std::memory_order_release);
+        if (sim) {
+            iplSimulatorAddProbeBatch(sim, batch);
+            iplSimulatorCommit(sim);
         }
         if (Engine::get_singleton() && Engine::get_singleton()->is_editor_hint()) {
             UtilityFunctions::print_rich("[color=cyan]Nexus Resonance:[/color] Probe batch loaded successfully. Reverb simulation active.");
         }
         return handle;
+    };
+
+    if (sim_mutex) {
+        std::lock_guard<std::mutex> sim_lock(*sim_mutex);
+        return register_loaded_batch();
     }
+    return register_loaded_batch();
 }
 
 void ResonanceProbeBatchRegistry::remove_batch(int32_t handle, IPLSimulator sim, std::mutex* sim_mutex) {
-    IPLProbeBatch batch = nullptr;
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        auto ref_it = refcount_.find(handle);
-        if (ref_it == refcount_.end())
-            return;
-        ref_it->second--;
-        if (ref_it->second > 0)
-            return;
-        refcount_.erase(ref_it);
-        handle_has_pathing_.erase(handle);
-        handle_baked_refl_.erase(handle);
-        handle_to_probe_data_.erase(handle);
-        auto hash_it = handle_to_hash_.find(handle);
-        if (hash_it != handle_to_hash_.end()) {
-            hash_to_handle_.erase(hash_it->second);
-            handle_to_hash_.erase(hash_it);
+    auto remove_under_locks = [&]() {
+        IPLProbeBatch batch = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            auto ref_it = refcount_.find(handle);
+            if (ref_it == refcount_.end())
+                return;
+            ref_it->second--;
+            if (ref_it->second > 0)
+                return;
+            refcount_.erase(ref_it);
+            handle_has_pathing_.erase(handle);
+            handle_baked_refl_.erase(handle);
+            handle_to_probe_data_.erase(handle);
+            auto hash_it = handle_to_hash_.find(handle);
+            if (hash_it != handle_to_hash_.end()) {
+                hash_to_handle_.erase(hash_it->second);
+                handle_to_hash_.erase(hash_it);
+            }
+            has_any_batches_.store(!handle_to_hash_.empty(), std::memory_order_release);
+            batch = probe_batch_manager_.take_batch(handle);
         }
-        batch = probe_batch_manager_.take_batch(handle);
-    }
-    if (batch && sim) {
-        if (sim_mutex) {
-            std::lock_guard<std::mutex> lock(*sim_mutex);
+        if (batch && sim) {
             iplSimulatorRemoveProbeBatch(sim, batch);
             iplSimulatorCommit(sim);
             iplProbeBatchRelease(&batch);
-        } else {
-            iplSimulatorRemoveProbeBatch(sim, batch);
-            iplSimulatorCommit(sim);
+        } else if (batch) {
             iplProbeBatchRelease(&batch);
         }
+    };
+
+    if (sim_mutex) {
+        std::lock_guard<std::mutex> sim_lock(*sim_mutex);
+        remove_under_locks();
+    } else {
+        remove_under_locks();
     }
 }
 
 void ResonanceProbeBatchRegistry::clear_batches(IPLSimulator sim, std::mutex* sim_mutex) {
-    std::vector<IPLProbeBatch> batches;
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        hash_to_handle_.clear();
-        handle_to_hash_.clear();
-        refcount_.clear();
-        handle_has_pathing_.clear();
-        handle_baked_refl_.clear();
-        handle_to_probe_data_.clear();
-        probe_batch_manager_.get_all_batches(batches);
-    }
-    if (batches.empty())
-        return;
-    if (!sim) {
-        for (auto& batch : batches) {
-            if (batch)
-                iplProbeBatchRelease(&batch);
+    auto clear_under_locks = [&]() {
+        std::vector<IPLProbeBatch> batches;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            hash_to_handle_.clear();
+            handle_to_hash_.clear();
+            refcount_.clear();
+            handle_has_pathing_.clear();
+            handle_baked_refl_.clear();
+            handle_to_probe_data_.clear();
+            has_any_batches_.store(false, std::memory_order_release);
+            probe_batch_manager_.get_all_batches(batches);
         }
-        return;
-    }
-    if (sim_mutex) {
-        std::lock_guard<std::mutex> lock(*sim_mutex);
+        if (batches.empty())
+            return;
+        if (!sim) {
+            for (auto& batch : batches) {
+                if (batch)
+                    iplProbeBatchRelease(&batch);
+            }
+            return;
+        }
         for (auto& batch : batches) {
             if (batch) {
                 iplSimulatorRemoveProbeBatch(sim, batch);
@@ -166,11 +176,13 @@ void ResonanceProbeBatchRegistry::clear_batches(IPLSimulator sim, std::mutex* si
             }
         }
         iplSimulatorCommit(sim);
+    };
+
+    if (sim_mutex) {
+        std::lock_guard<std::mutex> sim_lock(*sim_mutex);
+        clear_under_locks();
     } else {
-        for (auto& batch : batches) {
-            if (batch)
-                iplProbeBatchRelease(&batch);
-        }
+        clear_under_locks();
     }
 }
 
@@ -205,6 +217,14 @@ IPLProbeBatch ResonanceProbeBatchRegistry::get_pathing_batch(int32_t preferred_h
     return nullptr;
 }
 
+bool ResonanceProbeBatchRegistry::handle_has_pathing(int32_t handle) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (handle < 0 || !handle_to_hash_.count(handle))
+        return false;
+    auto it = handle_has_pathing_.find(handle);
+    return it != handle_has_pathing_.end() && it->second;
+}
+
 bool ResonanceProbeBatchRegistry::is_compatible(int32_t handle, int reflection_type, bool pathing_enabled) const {
     int baked_type = -1;
     bool has_pathing = false;
@@ -225,8 +245,7 @@ bool ResonanceProbeBatchRegistry::is_compatible(int32_t handle, int reflection_t
 }
 
 bool ResonanceProbeBatchRegistry::has_any_batches() const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    return !handle_to_hash_.empty();
+    return has_any_batches_.load(std::memory_order_acquire);
 }
 
 void ResonanceProbeBatchRegistry::get_all_batches_for_shutdown(std::vector<IPLProbeBatch>& out) {
@@ -237,6 +256,7 @@ void ResonanceProbeBatchRegistry::get_all_batches_for_shutdown(std::vector<IPLPr
     handle_has_pathing_.clear();
     handle_baked_refl_.clear();
     handle_to_probe_data_.clear();
+    has_any_batches_.store(false, std::memory_order_release);
     probe_batch_manager_.get_all_batches(out);
 }
 

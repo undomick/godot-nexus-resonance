@@ -61,8 +61,8 @@ elif env["platform"] == "ios":
     env.Append(LIBPATH=[os.path.join(steam_audio_lib, "ios")])
     env.Append(LIBS=["phonon"])
 
-# TARGET PATH (Targeting your specific project folder)
-target_base = "audio_resonance_tool/addons/nexus_resonance/bin/"
+# TARGET PATH (addon source of truth under repo root)
+target_base = "addons/nexus_resonance/bin/"
 target_name = "nexus_resonance"
 
 # Platform-specific subdirectories
@@ -93,7 +93,7 @@ _target = env.get("target", "template_debug")
 if _target in ["editor", "template_debug", "template_release"]:
 	try:
 		os.makedirs("src/gen", exist_ok=True)
-		doc_xml = Glob("audio_resonance_tool/addons/nexus_resonance/doc_classes/*.xml")
+		doc_xml = Glob("addons/nexus_resonance/doc_classes/*.xml")
 		doc_data = env.GodotCPPDocData("src/gen/doc_data.gen.cpp", source=doc_xml)
 		sources.append(doc_data)
 	except (AttributeError, TypeError):
@@ -171,6 +171,11 @@ if build_tests:
         build_dir + "test/test_reflection_ir_fingerprint_stub.cpp",
         build_dir + "test/test_ambisonics_decode_orientation.cpp",
         test_obj_dir + "resonance_ambisonics_decode_orientation.cpp",
+        build_dir + "test/test_probe_exclusion_math.cpp",
+        build_dir + "test/test_probe_batch_lock_order.cpp",
+        build_dir + "test/test_pathing_inputs_policy.cpp",
+        build_dir + "test/test_source_handle_policy.cpp",
+        build_dir + "test/test_static_export_policy.cpp",
     ]
     test_dir = "build/tests"
     test_exe = env_test.Program(os.path.join(test_dir, "nexus_resonance_tests"), test_sources)

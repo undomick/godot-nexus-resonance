@@ -1,9 +1,0 @@
-[gd_resource type="ResonanceMaterial" format=3 uid="uid://xcosf2557cs5"]
-
-[resource]
-absorption_low = 0.232
-absorption_mid = 0.576
-absorption_high = 0.8
-scattering = 0.2
-transmission_mid = 0.005
-transmission_high = 0.001

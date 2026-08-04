@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="ResonanceProbeExclusion" inherits="Node3D" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../class.xsd">
+	<brief_description>
+		Box that skips probe placement inside its volume when parented under a ResonanceProbeVolume.
+	</brief_description>
+	<description>
+		Place as a descendant of [ResonanceProbeVolume]. During bake (and editor probe preview), candidates whose world position lies inside this oriented box ([member region_size] in local space) are discarded.
+		Disabled boxes ([member enabled] off) are ignored. Moving, resizing, or enabling a box marks the parent volume bake outdated.
+	</description>
+	<tutorials>
+	</tutorials>
+	<members>
+		<member name="region_size" type="Vector3" setter="set_region_size" getter="get_region_size" default="Vector3(4, 4, 4)">
+			Local box size in meters (X, Y, Z). Minimum per axis is 0.1.
+		</member>
+		<member name="enabled" type="bool" setter="set_enabled" getter="is_enabled" default="true">
+			When false, this box does not exclude probes and is hidden in the editor gizmo.
+		</member>
+	</members>
+</class>

@@ -5,6 +5,7 @@
 #include <functional>
 #include <queue>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 // Replicates HandleManagerBase alloc/recycle logic for unit testing without phonon.h.
@@ -114,6 +115,81 @@ TEST_CASE("HandleManager add/remove consistency", "[handle_manager]") {
 
 TEST_CASE("kMaxProbeBatches is 1024", "[handle_manager]") {
     REQUIRE(resonance::kMaxProbeBatches == 1024);
+}
+
+TEST_CASE("HandleManager remove without recycle blocks reuse until recycle", "[handle_manager]") {
+    // Mirrors SourceManager destroy deferral: handle must not be reused while lifecycle queues
+    // still reference it (pending add / post-remove cleanup).
+    struct DeferRecycleManager {
+        int32_t next_handle = 0;
+        std::priority_queue<int32_t, std::vector<int32_t>, std::greater<int32_t>> free_handles;
+        std::unordered_map<int32_t, int> items;
+        std::unordered_set<int32_t> deferred_recycle;
+
+        int32_t alloc_handle() {
+            if (!free_handles.empty()) {
+                int32_t h = free_handles.top();
+                free_handles.pop();
+                return h;
+            }
+            return next_handle++;
+        }
+
+        int32_t add(int value) {
+            int32_t h = alloc_handle();
+            items[h] = value;
+            return h;
+        }
+
+        bool remove(int32_t handle, bool recycle) {
+            auto it = items.find(handle);
+            if (it == items.end())
+                return false;
+            items.erase(it);
+            if (recycle)
+                free_handles.push(handle);
+            else
+                deferred_recycle.insert(handle);
+            return true;
+        }
+
+        bool recycle(int32_t handle) {
+            if (deferred_recycle.erase(handle) == 0)
+                return false;
+            free_handles.push(handle);
+            return true;
+        }
+    };
+
+    DeferRecycleManager m;
+    int32_t h0 = m.add(10);
+    REQUIRE(m.remove(h0, false));
+    int32_t h1 = m.add(20);
+    REQUIRE(h1 != h0); // Must not reuse while deferred
+    REQUIRE(m.recycle(h0));
+    int32_t h2 = m.add(30);
+    REQUIRE(h2 == h0); // Reuse only after recycle
+    REQUIRE(m.items[h2] == 30);
+}
+
+TEST_CASE("HandleManager deferred recycle is idempotent", "[handle_manager]") {
+    struct DeferRecycleManager {
+        std::priority_queue<int32_t, std::vector<int32_t>, std::greater<int32_t>> free_handles;
+        std::unordered_set<int32_t> deferred_recycle;
+
+        bool recycle(int32_t handle) {
+            if (deferred_recycle.erase(handle) == 0)
+                return false;
+            free_handles.push(handle);
+            return true;
+        }
+    };
+
+    DeferRecycleManager m;
+    m.deferred_recycle.insert(3);
+    REQUIRE(m.recycle(3));
+    REQUIRE_FALSE(m.recycle(3));
+    REQUIRE(m.free_handles.size() == 1u);
 }
 
 TEST_CASE("HandleManager overflow returns -1", "[handle_manager]") {

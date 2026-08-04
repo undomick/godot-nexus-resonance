@@ -6,6 +6,7 @@
 #include "resonance_ipl_guard.h"
 #include "resonance_log.h"
 #include "resonance_material.h"
+#include "resonance_static_export_policy.h"
 #include "resonance_static_scene.h"
 #include "resonance_utils.h"
 #include <cstdint>
@@ -82,17 +83,30 @@ void clear_nexus_obj_staging_best_effort(const String& staging_dir, const String
         DirAccess::remove_absolute(staging_dir);
 }
 
+bool subtree_has_resonance_static_scene(Node* node) {
+    if (!node)
+        return false;
+    if (node->is_class("ResonanceStaticScene"))
+        return true;
+    for (int i = 0; i < node->get_child_count(); i++) {
+        if (subtree_has_resonance_static_scene(node->get_child(i)))
+            return true;
+    }
+    return false;
+}
+
 } // namespace
 
 void ResonanceSceneManager::collect_static_geometry_recursive(Node* node, Node* export_root, std::vector<ResonanceGeometry*>& out) {
     if (!node)
         return;
-    // Nested sub-scene packs: do not merge geometry already owned by a child's exported static asset.
-    if (node != export_root && node->is_class("ResonanceStaticScene")) {
-        ResonanceStaticScene* ss = Object::cast_to<ResonanceStaticScene>(node);
-        if (ss && ss->has_valid_asset())
-            return;
-    }
+    const bool is_export_root = (node == export_root);
+    const bool is_rss = node->is_class("ResonanceStaticScene");
+    const bool has_scene_path = !node->get_scene_file_path().is_empty();
+    // Instance prune needs a subtree scan; skip when already pruning as nested RSS.
+    const bool subtree_rss = !is_export_root && !is_rss && has_scene_path && subtree_has_resonance_static_scene(node);
+    if (resonance::should_prune_static_export_subtree(is_export_root, is_rss, has_scene_path, subtree_rss))
+        return;
     if (node->is_class("ResonanceGeometry")) {
         ResonanceGeometry* geom = Object::cast_to<ResonanceGeometry>(node);
         if (geom && !geom->is_dynamic()) {
@@ -459,7 +473,8 @@ bool ResonanceSceneManager::load_scene_data(IPLContext ctx, IPLScene* out_scene,
 
 void ResonanceSceneManager::add_static_scene_from_asset(IPLContext ctx, IPLScene scene, const Ref<ResonanceGeometryAsset>& asset,
                                                         RayTraceDebugContext* debug_ctx, bool wants_debug_viz, RuntimeSceneState& state,
-                                                        const Transform3D& transform, IPLSceneType scene_type, IPLEmbreeDevice embree, IPLRadeonRaysDevice radeon) {
+                                                        const Transform3D& transform, IPLSceneType scene_type, IPLEmbreeDevice embree,
+                                                        IPLRadeonRaysDevice radeon, bool force_instanced) {
     if (!ctx) {
         ResonanceLog::error("ResonanceSceneManager: null context (add_static_scene_from_asset).");
         return;
@@ -476,7 +491,7 @@ void ResonanceSceneManager::add_static_scene_from_asset(IPLContext ctx, IPLScene
         return;
     }
 
-    const bool use_instanced = !transform.is_equal_approx(Transform3D());
+    const bool use_instanced = force_instanced || !transform.is_equal_approx(Transform3D());
     int tri = asset->get_triangle_count();
 
     if (use_instanced) {
@@ -519,6 +534,10 @@ void ResonanceSceneManager::add_static_scene_from_asset(IPLContext ctx, IPLScene
 
         state.sub_scenes.push_back(sub_scene);
         state.instanced_meshes.push_back(inst_mesh);
+        state.instanced_transforms.push_back(ResonanceUtils::to_ipl_matrix(transform));
+        // Keep the StaticMesh retain so callers can Remove+Release from the sub-scene.
+        if (state.meshes_in_sub)
+            state.meshes_in_sub->push_back(loadMesh);
     } else {
         IPLStaticMesh loadMesh = nullptr;
         if (iplStaticMeshLoad(scene, serialObj, nullptr, nullptr, &loadMesh) != IPL_STATUS_SUCCESS) {
@@ -579,6 +598,20 @@ void ResonanceSceneManager::clear_static_scenes(IPLScene scene, RayTraceDebugCon
         }
     }
     state.instanced_meshes.clear();
+    state.instanced_transforms.clear();
+    if (state.meshes_in_sub) {
+        const size_t n = state.meshes_in_sub->size();
+        for (size_t i = 0; i < n; i++) {
+            IPLStaticMesh& m = (*state.meshes_in_sub)[i];
+            IPLScene sub = (i < state.sub_scenes.size()) ? state.sub_scenes[i] : nullptr;
+            if (m && sub) {
+                iplStaticMeshRemove(m, sub);
+                iplStaticMeshRelease(&m);
+            }
+            m = nullptr;
+        }
+        state.meshes_in_sub->clear();
+    }
     for (IPLScene& sub : state.sub_scenes) {
         if (sub)
             iplSceneRelease(&sub);

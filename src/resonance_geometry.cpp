@@ -154,11 +154,8 @@ void ResonanceGeometry::_exit_tree() {
     server_init_retry_count_ = 0;
     // Godot frees child nodes automatically when parent is removed; do not queue_free.
     viz_geometry_override = nullptr;
-    // Skip clear in editor: modifying IPL scene during scene switch (after bake) can crash.
-    // Destructor still runs _clear_meshes when node is freed.
-    if (Engine::get_singleton() && Engine::get_singleton()->is_editor_hint()) {
-        return;
-    }
+    // Always detach IPL handles under simulation_mutex. Bake uses an isolated temp scene, so
+    // editor scene switches no longer race a multi-minute live-scene bake lock.
     _clear_meshes();
 }
 
@@ -350,7 +347,7 @@ void ResonanceGeometry::_clear_meshes_impl() {
 
         IPLScene scene_for_static = dynamic_object ? sub_scene : server->get_scene_handle();
         // Dynamic sub_scene: after InstancedMesh detach+commit on global scene, per-mesh Remove/Release on
-        // sub_scene can crash (Phonon 4.8.x). Drop handles and release the sub_scene only.
+        // sub_scene can crash (Phonon 4.8.x). Drop handles; iplSceneRelease(sub_scene) owns mesh cleanup.
         if (dynamic_object && sub_scene) {
             static_meshes.clear();
         } else {
@@ -477,78 +474,73 @@ void ResonanceGeometry::_create_meshes() {
     Transform3D xform = dynamic_object ? Transform3D() : get_mesh_bake_transform();
 
     if (use_asset_path) {
-        auto lock = server->scoped_simulation_lock();
-        _clear_meshes_impl();
-        // --- Load from serialized asset (iplStaticMeshLoad) ---
-        // Sub-scene must match global scene ray tracer (Embree / Default / Radeon Rays); see ResonanceServer::_init_scene_and_simulator.
+        // Build new IPL resources into locals first; only clear the previous mesh after success
+        // so a failed reload does not leave global_triangle_count permanently reduced.
         IPLSceneSettings sceneSettings{};
         sceneSettings.type = server->get_phonon_mesh_scene_type();
         sceneSettings.embreeDevice = server->get_embree_device_handle();
         sceneSettings.radeonRaysDevice = server->get_radeon_rays_device_handle();
 
-        if (iplSceneCreate(server->get_context_handle(), &sceneSettings, &sub_scene) != IPL_STATUS_SUCCESS) {
-            ResonanceLog::error("ResonanceGeometry: iplSceneCreate failed (asset path).");
-            return;
-        }
-
-        // iplStaticMeshLoad reads serialized data; avoid duplicating the asset blob into a temp PackedByteArray.
         const int64_t blob_sz = mesh_asset->get_size();
         const uint8_t* blob = mesh_asset->get_data_ptr();
         if (!blob || blob_sz <= 0) {
             ResonanceLog::error("ResonanceGeometry: mesh_asset has no serialized data (asset path).");
-            iplSceneRelease(&sub_scene);
-            sub_scene = nullptr;
             return;
         }
+
+        IPLScene new_sub = nullptr;
+        IPLStaticMesh local_mesh = nullptr;
+        IPLInstancedMesh new_inst = nullptr;
+        auto lock = server->scoped_simulation_lock();
+
+        if (iplSceneCreate(server->get_context_handle(), &sceneSettings, &new_sub) != IPL_STATUS_SUCCESS) {
+            ResonanceLog::error("ResonanceGeometry: iplSceneCreate failed (asset path).");
+            return;
+        }
+
         IPLSerializedObjectSettings serialSettings{};
         serialSettings.data = const_cast<IPLbyte*>(reinterpret_cast<const IPLbyte*>(blob));
         serialSettings.size = static_cast<IPLsize>(blob_sz);
-
         IPLSerializedObject serialObj = nullptr;
         if (iplSerializedObjectCreate(server->get_context_handle(), &serialSettings, &serialObj) != IPL_STATUS_SUCCESS) {
             ResonanceLog::error("ResonanceGeometry: iplSerializedObjectCreate failed.");
-            iplSceneRelease(&sub_scene);
-            sub_scene = nullptr;
+            iplSceneRelease(&new_sub);
             return;
         }
 
-        IPLStaticMesh local_mesh = nullptr;
-        IPLerror loadErr = iplStaticMeshLoad(sub_scene, serialObj, nullptr, nullptr, &local_mesh);
+        IPLerror loadErr = iplStaticMeshLoad(new_sub, serialObj, nullptr, nullptr, &local_mesh);
         iplSerializedObjectRelease(&serialObj);
-
         if (loadErr != IPL_STATUS_SUCCESS || !local_mesh) {
             ResonanceLog::error("ResonanceGeometry: iplStaticMeshLoad failed.");
-            iplSceneRelease(&sub_scene);
-            sub_scene = nullptr;
+            iplSceneRelease(&new_sub);
             return;
         }
 
-        iplStaticMeshAdd(local_mesh, sub_scene);
-        static_meshes.push_back(local_mesh);
-
+        iplStaticMeshAdd(local_mesh, new_sub);
         if (material.is_valid()) {
             IPLMaterial mat = material->get_ipl_material();
-            iplStaticMeshSetMaterial(local_mesh, sub_scene, &mat, 0);
+            iplStaticMeshSetMaterial(local_mesh, new_sub, &mat, 0);
         }
-
-        iplSceneCommit(sub_scene);
+        iplSceneCommit(new_sub);
 
         IPLInstancedMeshSettings instSettings{};
-        instSettings.subScene = sub_scene;
+        instSettings.subScene = new_sub;
         instSettings.transform = ResonanceUtils::to_ipl_matrix(get_mesh_bake_transform());
-
-        if (iplInstancedMeshCreate(server->get_scene_handle(), &instSettings, &instanced_mesh) != IPL_STATUS_SUCCESS) {
+        if (iplInstancedMeshCreate(server->get_scene_handle(), &instSettings, &new_inst) != IPL_STATUS_SUCCESS) {
             ResonanceLog::error("ResonanceGeometry: iplInstancedMeshCreate failed (asset path).");
-            iplStaticMeshRemove(local_mesh, sub_scene);
+            iplStaticMeshRemove(local_mesh, new_sub);
             iplStaticMeshRelease(&local_mesh);
-            iplSceneRelease(&sub_scene);
-            sub_scene = nullptr;
-            static_meshes.clear();
-        } else {
-            iplInstancedMeshAdd(instanced_mesh, server->get_scene_handle());
-            triangle_count = mesh_asset->get_triangle_count();
-            log_dynamic_instanced_mesh_registered(server, triangle_count);
+            iplSceneRelease(&new_sub);
+            return;
         }
+
+        _clear_meshes_impl();
+        sub_scene = new_sub;
+        static_meshes.push_back(local_mesh);
+        instanced_mesh = new_inst;
+        iplInstancedMeshAdd(instanced_mesh, server->get_scene_handle());
+        triangle_count = mesh_asset->get_triangle_count();
+        log_dynamic_instanced_mesh_registered(server, triangle_count);
     } else {
         // --- Runtime mesh parsing: parse outside lock to reduce lock duration ---
         Ref<Mesh> mesh = mesh_for_geom;
@@ -572,7 +564,6 @@ void ResonanceGeometry::_create_meshes() {
 
         {
             auto lock = server->scoped_simulation_lock();
-            _clear_meshes_impl();
 
             if (dynamic_object) {
                 IPLSceneSettings sceneSettings{};
@@ -580,48 +571,50 @@ void ResonanceGeometry::_create_meshes() {
                 sceneSettings.embreeDevice = server->get_embree_device_handle();
                 sceneSettings.radeonRaysDevice = server->get_radeon_rays_device_handle();
 
-                if (iplSceneCreate(server->get_context_handle(), &sceneSettings, &sub_scene) == IPL_STATUS_SUCCESS) {
+                IPLScene new_sub = nullptr;
+                IPLStaticMesh local_mesh = nullptr;
+                IPLInstancedMesh new_inst = nullptr;
 
-                    IPLStaticMesh local_mesh = nullptr;
-                    if (iplStaticMeshCreate(sub_scene, &mesh_settings, &local_mesh) == IPL_STATUS_SUCCESS) {
-
-                        iplStaticMeshAdd(local_mesh, sub_scene);
-                        static_meshes.push_back(local_mesh);
-                        iplSceneCommit(sub_scene);
-
-                        IPLInstancedMeshSettings instSettings{};
-                        instSettings.subScene = sub_scene;
-                        instSettings.transform = ResonanceUtils::to_ipl_matrix(get_mesh_bake_transform());
-
-                        if (iplInstancedMeshCreate(server->get_scene_handle(), &instSettings, &instanced_mesh) != IPL_STATUS_SUCCESS) {
-                            ResonanceLog::error("ResonanceGeometry: iplInstancedMeshCreate failed (dynamic).");
-                            iplStaticMeshRemove(local_mesh, sub_scene);
-                            iplStaticMeshRelease(&local_mesh);
-                            iplSceneRelease(&sub_scene);
-                            sub_scene = nullptr;
-                            static_meshes.clear();
-                        } else {
-                            iplInstancedMeshAdd(instanced_mesh, server->get_scene_handle());
-                            triangle_count += (int)ipl_triangles.size();
-                            log_dynamic_instanced_mesh_registered(server, (int)ipl_triangles.size());
-                        }
-                    } else {
-                        ResonanceLog::error("ResonanceGeometry: iplStaticMeshCreate failed (dynamic).");
-                        iplSceneRelease(&sub_scene);
-                        sub_scene = nullptr;
-                    }
-                } else {
+                if (iplSceneCreate(server->get_context_handle(), &sceneSettings, &new_sub) != IPL_STATUS_SUCCESS) {
                     ResonanceLog::error("ResonanceGeometry: iplSceneCreate failed (dynamic).");
+                    return;
                 }
+                if (iplStaticMeshCreate(new_sub, &mesh_settings, &local_mesh) != IPL_STATUS_SUCCESS) {
+                    ResonanceLog::error("ResonanceGeometry: iplStaticMeshCreate failed (dynamic).");
+                    iplSceneRelease(&new_sub);
+                    return;
+                }
+                iplStaticMeshAdd(local_mesh, new_sub);
+                iplSceneCommit(new_sub);
+
+                IPLInstancedMeshSettings instSettings{};
+                instSettings.subScene = new_sub;
+                instSettings.transform = ResonanceUtils::to_ipl_matrix(get_mesh_bake_transform());
+                if (iplInstancedMeshCreate(server->get_scene_handle(), &instSettings, &new_inst) != IPL_STATUS_SUCCESS) {
+                    ResonanceLog::error("ResonanceGeometry: iplInstancedMeshCreate failed (dynamic).");
+                    iplStaticMeshRemove(local_mesh, new_sub);
+                    iplStaticMeshRelease(&local_mesh);
+                    iplSceneRelease(&new_sub);
+                    return;
+                }
+
+                _clear_meshes_impl();
+                sub_scene = new_sub;
+                static_meshes.push_back(local_mesh);
+                instanced_mesh = new_inst;
+                iplInstancedMeshAdd(instanced_mesh, server->get_scene_handle());
+                triangle_count = (int)ipl_triangles.size();
+                log_dynamic_instanced_mesh_registered(server, triangle_count);
             } else {
                 IPLStaticMesh new_mesh = nullptr;
                 if (iplStaticMeshCreate(server->get_scene_handle(), &mesh_settings, &new_mesh) != IPL_STATUS_SUCCESS) {
                     ResonanceLog::error("ResonanceGeometry: iplStaticMeshCreate failed (static).");
-                } else {
-                    iplStaticMeshAdd(new_mesh, server->get_scene_handle());
-                    static_meshes.push_back(new_mesh);
-                    triangle_count += (int)ipl_triangles.size();
+                    return;
                 }
+                _clear_meshes_impl();
+                iplStaticMeshAdd(new_mesh, server->get_scene_handle());
+                static_meshes.push_back(new_mesh);
+                triangle_count = (int)ipl_triangles.size();
             }
 
             if (triangle_count > 0 && server->wants_debug_reflection_viz()) {

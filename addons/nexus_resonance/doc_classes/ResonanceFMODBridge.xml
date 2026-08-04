@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="ResonanceFMODBridge" inherits="Object" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../class.xsd">
+	<brief_description>
+		Optional bridge connecting Nexus Resonance (Steam Audio) with FMOD Studio via phonon_fmod plugin.
+	</brief_description>
+	<description>
+		When using fmod-gdextension with Nexus Resonance, the bridge loads the Steam Audio FMOD plugin dynamically and passes ResonanceServer's context, HRTF, simulation settings, and reverb source to it. Use resonance_fmod_bridge.gd for GDScript access. See docs/FMOD_BRIDGE.md for setup.
+	</description>
+	<methods>
+		<method name="init_bridge">
+			<return type="bool" />
+			<description>Initialize: load plugin and call iplFMODInitialize etc. Requires ResonanceServer initialized. Returns true on success.</description>
+		</method>
+		<method name="shutdown_bridge">
+			<return type="void" />
+			<description>Shutdown and unload plugin.</description>
+		</method>
+		<method name="rebind_after_reinit">
+			<return type="bool" />
+			<description>After ResonanceServer audio-engine reinit, terminate and re-initialize the plugin against the new IPLContext without unloading the shared library. Returns true on success.</description>
+		</method>
+		<method name="is_bridge_loaded" qualifiers="const">
+			<return type="bool" />
+			<description>Whether the plugin is loaded.</description>
+		</method>
+		<method name="is_bridge_initialized" qualifiers="const">
+			<return type="bool" />
+			<description>Whether iplFMODInitialize has been called successfully for the current server context.</description>
+		</method>
+		<method name="add_fmod_source">
+			<return type="int" />
+			<param index="0" name="resonance_source_handle" type="int" />
+			<description>Register Resonance source for FMOD Spatializer. Returns handle for DSP parameter.</description>
+		</method>
+		<method name="remove_fmod_source">
+			<return type="void" />
+			<param index="0" name="fmod_handle" type="int" />
+			<description>Unregister when FMOD event stops.</description>
+		</method>
+	</methods>
+</class>

@@ -11,7 +11,7 @@ Requirements:
 Environment / Arguments:
 - FMOD_ROOT or --fmod-root: Path to FMOD Studio API root (contains api/inc, api/lib)
 - STEAM_AUDIO_ROOT or --steam-audio-root: Path to Steam Audio SDK (default: references/steam-audio-4.8.1)
-- --deploy: Copy built plugin to audio_resonance_tool/addons/nexus_resonance/bin/fmod_plugin/
+- --deploy: Copy built plugin to addons/nexus_resonance/bin/fmod_plugin/
             or to addons/fmod/lib/ if fmod-gdextension structure exists
 
 Usage:
@@ -27,7 +27,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FMOD_REF = os.path.join(PROJECT_ROOT, "references", "steam-audio-4.8.1", "fmod")
 STEAM_AUDIO_ROOT_DEFAULT = os.path.join(PROJECT_ROOT, "src", "lib", "steamaudio")
 BUILD_DIR = os.path.join(PROJECT_ROOT, "build", "steam_audio_fmod")
-DEPLOY_DIR = os.path.join(PROJECT_ROOT, "audio_resonance_tool", "addons", "nexus_resonance", "bin", "fmod_plugin")
+DEPLOY_DIR = os.path.join(PROJECT_ROOT, "addons", "nexus_resonance", "bin", "fmod_plugin")
 
 
 def main():

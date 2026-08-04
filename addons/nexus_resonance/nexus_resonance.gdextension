@@ -1,0 +1,104 @@
+[configuration]
+
+entry_symbol = "nexus_resonance_library_init"
+compatibility_minimum = "4.1"
+doc_path = "res://addons/nexus_resonance/doc_classes"
+
+[libraries]
+
+; Windows (x86_64)
+windows.debug.x86_64 = "res://addons/nexus_resonance/bin/windows/nexus_resonance.dll"
+windows.release.x86_64 = "res://addons/nexus_resonance/bin/windows/nexus_resonance.dll"
+
+; Linux (x86_64)
+linux.debug.x86_64 = "res://addons/nexus_resonance/bin/linux/libnexus_resonance.so"
+linux.release.x86_64 = "res://addons/nexus_resonance/bin/linux/libnexus_resonance.so"
+
+; macOS (arm64)
+macos.debug.arm64 = "res://addons/nexus_resonance/bin/macos/libnexus_resonance.dylib"
+macos.release.arm64 = "res://addons/nexus_resonance/bin/macos/libnexus_resonance.dylib"
+macos.debug.x86_64 = "res://addons/nexus_resonance/bin/macos/libnexus_resonance.dylib"
+macos.release.x86_64 = "res://addons/nexus_resonance/bin/macos/libnexus_resonance.dylib"
+
+; Android (arm64)
+android.debug.arm64 = "res://addons/nexus_resonance/bin/android/arm64-v8a/libnexus_resonance.so"
+android.release.arm64 = "res://addons/nexus_resonance/bin/android/arm64-v8a/libnexus_resonance.so"
+android.arm64-v8a = "res://addons/nexus_resonance/bin/android/arm64-v8a/libnexus_resonance.so"
+
+; Android (x86_64)
+android.debug.x86_64 = "res://addons/nexus_resonance/bin/android/x86_64/libnexus_resonance.so"
+android.release.x86_64 = "res://addons/nexus_resonance/bin/android/x86_64/libnexus_resonance.so"
+android.x86_64 = "res://addons/nexus_resonance/bin/android/x86_64/libnexus_resonance.so"
+
+; iOS (arm64)
+ios.debug.arm64 = "res://addons/nexus_resonance/bin/ios/libnexus_resonance.a"
+ios.release.arm64 = "res://addons/nexus_resonance/bin/ios/libnexus_resonance.a"
+
+[dependencies]
+
+windows.debug.x86_64 = {
+    "res://addons/nexus_resonance/bin/windows/phonon.dll": "",
+    "res://addons/nexus_resonance/bin/windows/TrueAudioNext.dll": "",
+    "res://addons/nexus_resonance/bin/windows/GPUUtilities.dll": ""
+}
+windows.release.x86_64 = {
+    "res://addons/nexus_resonance/bin/windows/phonon.dll": "",
+    "res://addons/nexus_resonance/bin/windows/TrueAudioNext.dll": "",
+    "res://addons/nexus_resonance/bin/windows/GPUUtilities.dll": ""
+}
+linux.debug.x86_64 = {
+    "res://addons/nexus_resonance/bin/linux/libphonon.so": ""
+}
+linux.release.x86_64 = {
+    "res://addons/nexus_resonance/bin/linux/libphonon.so": ""
+}
+macos.debug.arm64 = {
+    "res://addons/nexus_resonance/bin/macos/libphonon.dylib": ""
+}
+macos.release.arm64 = {
+    "res://addons/nexus_resonance/bin/macos/libphonon.dylib": ""
+}
+macos.debug.x86_64 = {
+    "res://addons/nexus_resonance/bin/macos/libphonon.dylib": ""
+}
+macos.release.x86_64 = {
+    "res://addons/nexus_resonance/bin/macos/libphonon.dylib": ""
+}
+android.debug.arm64 = {
+    "res://addons/nexus_resonance/bin/android/arm64-v8a/libphonon.so": ""
+}
+android.release.arm64 = {
+    "res://addons/nexus_resonance/bin/android/arm64-v8a/libphonon.so": ""
+}
+android.debug.x86_64 = {
+    "res://addons/nexus_resonance/bin/android/x86_64/libphonon.so": ""
+}
+android.release.x86_64 = {
+    "res://addons/nexus_resonance/bin/android/x86_64/libphonon.so": ""
+}
+ios.debug.arm64 = {
+    "res://addons/nexus_resonance/bin/ios/libphonon.a": "",
+    "res://addons/nexus_resonance/bin/ios/libgodot-cpp.ios.template_debug.arm64.a": "",
+    "res://addons/nexus_resonance/bin/ios/libpffft.a": "",
+    "res://addons/nexus_resonance/bin/ios/libmysofa.a": ""
+}
+ios.release.arm64 = {
+    "res://addons/nexus_resonance/bin/ios/libphonon.a": "",
+    "res://addons/nexus_resonance/bin/ios/libgodot-cpp.ios.template_release.arm64.a": "",
+    "res://addons/nexus_resonance/bin/ios/libpffft.a": "",
+    "res://addons/nexus_resonance/bin/ios/libmysofa.a": ""
+}
+
+[icons]
+ResonanceProbeVolume = "res://addons/nexus_resonance/ui/icons/probe_volume_3d_icon.svg"
+ResonanceGeometry = "res://addons/nexus_resonance/ui/icons/resonance_geometry_icon.svg"
+ResonanceStaticGeometry = "res://addons/nexus_resonance/ui/icons/resonance_static_geometry_icon.svg"
+ResonanceDynamicGeometry = "res://addons/nexus_resonance/ui/icons/resonance_dyn_geometry.svg"
+ResonancePlayer = "res://addons/nexus_resonance/ui/icons/audio_stream_player_3d_icon.svg"
+ResonanceAmbisonicPlayer = "res://addons/nexus_resonance/ui/icons/resonance_ambisonic_player_icon.svg"
+ResonanceStaticScene = "res://addons/nexus_resonance/ui/icons/resonance_staticScene_icon.svg"
+ResonanceFmodEventEmitter = "res://addons/nexus_resonance/ui/icons/fmod_emitter_icon.svg"
+ResonanceCodaEventEmitter = "res://addons/nexus_resonance/ui/icons/coda_emitter_icon.svg"
+ResonanceRuntime = "res://addons/nexus_resonance/ui/icons/resonance_runtime.svg"
+ResonanceListener = "res://addons/nexus_resonance/ui/icons/resonance_listener.svg"
+ResonanceProbeExclusion = "res://addons/nexus_resonance/ui/icons/probe_exclusion_3d_icon.svg"

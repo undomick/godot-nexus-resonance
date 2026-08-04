@@ -1,26 +1,9 @@
+# Full multi-platform GDExtension builds (Linux, Android, Windows, macOS, iOS).
+# Expensive (especially macOS minutes). Not for every push/PR - use release.yml on tags
+# or trigger this workflow manually when you need fresh cross-platform binaries.
 name: Build GDExtension
 
 on:
-  push:
-    branches: [main, master]
-    paths:
-      - 'src/**'
-      - 'SConstruct'
-      - 'scripts/install_steam_audio.py'
-      - 'audio_resonance_tool/addons/nexus_resonance/**/*.gdextension'
-      - 'audio_resonance_tool/addons/nexus_resonance/bin/**'
-      - '.github/workflows/build.yml'
-      - '.github/scripts/**'
-  pull_request:
-    branches: [main, master]
-    paths:
-      - 'src/**'
-      - 'SConstruct'
-      - 'scripts/install_steam_audio.py'
-      - 'audio_resonance_tool/addons/nexus_resonance/**/*.gdextension'
-      - 'audio_resonance_tool/addons/nexus_resonance/bin/**'
-      - '.github/workflows/build.yml'
-      - '.github/scripts/**'
   workflow_dispatch:
 
 concurrency:
@@ -28,40 +11,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  changes:
-    name: Check changes
-    runs-on: ubuntu-latest
-    outputs:
-      cpp: ${{ steps.result.outputs.cpp }}
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          fetch-depth: 2
-
-      - uses: dorny/paths-filter@v4
-        id: filter
-        if: github.event_name != 'workflow_dispatch'
-        with:
-          filters: |
-            cpp:
-              - 'src/**'
-              - 'SConstruct'
-              - 'scripts/install_steam_audio.py'
-              - 'audio_resonance_tool/addons/nexus_resonance/**/*.gdextension'
-              - 'audio_resonance_tool/addons/nexus_resonance/bin/**'
-
-      - id: result
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "cpp=true" >> $GITHUB_OUTPUT
-          else
-            echo "cpp=${{ steps.filter.outputs.cpp }}" >> $GITHUB_OUTPUT
-          fi
-
   build-linux-android:
     name: Linux / Android
-    needs: changes
-    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.cpp == 'true'
     timeout-minutes: 90
     runs-on: ubuntu-22.04
     steps:
@@ -107,12 +58,12 @@ jobs:
 
       - name: Create bin directories
         run: |
-          BIN=audio_resonance_tool/addons/nexus_resonance/bin
+          BIN=addons/nexus_resonance/bin
           mkdir -p "$BIN"/{linux,android/arm64-v8a,android/x86_64}
 
       - name: Copy Steam Audio runtime libraries
         run: |
-          BIN=audio_resonance_tool/addons/nexus_resonance/bin
+          BIN=addons/nexus_resonance/bin
           cp src/lib/steamaudio/lib/linux-x64/libphonon.so "$BIN/linux/"
           cp src/lib/steamaudio/lib/android-armv8/libphonon.so "$BIN/android/arm64-v8a/"
           cp src/lib/steamaudio/lib/android-x64/libphonon.so "$BIN/android/x86_64/"
@@ -142,12 +93,10 @@ jobs:
         uses: actions/upload-artifact@v5
         with:
           name: bin-linux-android
-          path: audio_resonance_tool/addons/nexus_resonance/bin/
+          path: addons/nexus_resonance/bin/
 
   build-windows:
     name: Windows (MSVC)
-    needs: changes
-    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.cpp == 'true'
     timeout-minutes: 60
     runs-on: windows-2022
     defaults:
@@ -185,12 +134,12 @@ jobs:
 
       - name: Create bin directories
         run: |
-          BIN=audio_resonance_tool/addons/nexus_resonance/bin
+          BIN=addons/nexus_resonance/bin
           mkdir -p "$BIN"/windows
 
       - name: Copy Steam Audio runtime libraries
         run: |
-          BIN=audio_resonance_tool/addons/nexus_resonance/bin
+          BIN=addons/nexus_resonance/bin
           cp src/lib/steamaudio/lib/windows-x64/phonon.dll "$BIN/windows/"
           for dll in GPUUtilities.dll TrueAudioNext.dll; do
             [ -f "src/lib/steamaudio/lib/windows-x64/$dll" ] && cp "src/lib/steamaudio/lib/windows-x64/$dll" "$BIN/windows/"
@@ -205,19 +154,17 @@ jobs:
 
       - name: Remove MSVC build artifacts
         run: |
-          BIN=audio_resonance_tool/addons/nexus_resonance/bin/windows
+          BIN=addons/nexus_resonance/bin/windows
           rm -f "$BIN"/*.exp "$BIN"/*.lib
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v5
         with:
           name: bin-windows
-          path: audio_resonance_tool/addons/nexus_resonance/bin/
+          path: addons/nexus_resonance/bin/
 
   build-macos-ios:
     name: macOS / iOS
-    needs: changes
-    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.cpp == 'true'
     timeout-minutes: 90
     runs-on: macos-latest
     steps:
@@ -250,12 +197,12 @@ jobs:
 
       - name: Create bin directories
         run: |
-          BIN=audio_resonance_tool/addons/nexus_resonance/bin
+          BIN=addons/nexus_resonance/bin
           mkdir -p "$BIN"/{macos,ios}
 
       - name: Copy Steam Audio runtime libraries
         run: |
-          BIN=audio_resonance_tool/addons/nexus_resonance/bin
+          BIN=addons/nexus_resonance/bin
           cp src/lib/steamaudio/lib/osx/libphonon.dylib "$BIN/macos/"
           cp src/lib/steamaudio/lib/ios/libphonon.a "$BIN/ios/"
 
@@ -278,7 +225,7 @@ jobs:
 
       - name: Copy iOS static libraries
         run: |
-          BIN=audio_resonance_tool/addons/nexus_resonance/bin/ios
+          BIN=addons/nexus_resonance/bin/ios
           cp src/lib/godot-cpp/bin/libgodot-cpp.ios.template_debug.arm64.a "$BIN/"
           cp src/lib/godot-cpp/bin/libgodot-cpp.ios.template_release.arm64.a "$BIN/"
 
@@ -286,4 +233,4 @@ jobs:
         uses: actions/upload-artifact@v5
         with:
           name: bin-macos-ios
-          path: audio_resonance_tool/addons/nexus_resonance/bin/
+          path: addons/nexus_resonance/bin/

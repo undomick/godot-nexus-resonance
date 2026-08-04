@@ -16,8 +16,12 @@ class ResonanceStaticScene : public Node3D {
     String scene_name_when_exported;
     int64_t export_hash = 0; // Hash of geometry at last export; used to skip re-export when unchanged
 
+    void _register_static_pack();
+    void _unregister_static_pack();
+
   protected:
     static void _bind_methods();
+    void _notification(int p_what);
 
   public:
     ResonanceStaticScene();

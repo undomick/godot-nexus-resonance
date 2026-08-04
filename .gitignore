@@ -2,11 +2,19 @@
 .godot/
 .nomedia
 
+# Editor / IDE (local)
+.vscode/
+.vs/
+
 # Local toolchain extracts
 .tools/
 
-# Visual Studio
-.vs/
+# Local / relocated project trees
+blender/
+project/
+references/
+tests/
+wiki/
 
 # PowerShell artifact
 $null
@@ -31,10 +39,7 @@ build/
 src/gen/
 
 # GDExtension binaries (built by CI, distributed via GitHub Releases)
-audio_resonance_tool/addons/nexus_resonance/bin/
-
-# GUT sidecar mesh test output (ResourceSaver)
-audio_resonance_tool/test/unit/_gut_reso_sidecar/
+addons/nexus_resonance/bin/
 
 # Affinity Designer lock files while a document is open (repo-root icons/ sources)
 *~lock~

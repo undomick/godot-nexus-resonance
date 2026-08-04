@@ -1,4 +1,5 @@
 #include "resonance_constants.h"
+#include "resonance_pathing_inputs_policy.h"
 #include "resonance_server.h"
 #include <algorithm>
 #include <chrono>
@@ -49,7 +50,8 @@ bool ResonanceServer::_tick_schedule_simulation(float delta, const std::vector<i
         reflections_interval_elapsed = 0.0f;
         reflection_sim_heavy_requested.store(true, std::memory_order_release);
     }
-    if (pathing_enabled && (pathing_sim_interval <= 0.0f || pathing_interval_elapsed >= pathing_sim_interval)) {
+    if (resonance::simulator_supports_pathing_run(pathing_enabled, simulator_created_with_pathing_) &&
+        (pathing_sim_interval <= 0.0f || pathing_interval_elapsed >= pathing_sim_interval)) {
         pathing_interval_elapsed = 0.0f;
         pathing_sim_heavy_requested.store(true, std::memory_order_release);
     }
@@ -179,7 +181,7 @@ uint64_t ResonanceServer::_ipl_simulator_commit_assume_locked() {
 }
 
 uint64_t ResonanceServer::_run_pathing_sim_assume_locked(bool run_pathing_sim) {
-    if (!run_pathing_sim || !pathing_enabled)
+    if (!run_pathing_sim || !resonance::simulator_supports_pathing_run(pathing_enabled, simulator_created_with_pathing_))
         return 0;
 
     int cooldown = pathing_crash_cooldown.load();
@@ -311,6 +313,9 @@ void ResonanceServer::_run_phonon_simulation_locked(const IPLCoordinateSpace3& c
         const uint64_t us_path = _run_pathing_sim_assume_locked(run_pathing_sim);
         instrumentation_worker_us_run_pathing.store(us_path, std::memory_order_relaxed);
     }
+    // Source updates retain pathing probe batches until after RunPathing. Drain on every tick so
+    // early pathing skips (no listener, cooldown, light-only ticks) cannot accumulate retains.
+    _drain_pathing_probe_batch_releases();
     instrumentation_worker_us_run_reflections.store(us_refl, std::memory_order_relaxed);
 
     const auto t0 = std::chrono::steady_clock::now();

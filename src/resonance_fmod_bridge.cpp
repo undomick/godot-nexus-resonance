@@ -16,7 +16,9 @@ namespace godot {
 void ResonanceFMODBridge::_bind_methods() {
     ClassDB::bind_method(D_METHOD("init_bridge"), &ResonanceFMODBridge::init_bridge);
     ClassDB::bind_method(D_METHOD("shutdown_bridge"), &ResonanceFMODBridge::shutdown_bridge);
+    ClassDB::bind_method(D_METHOD("rebind_after_reinit"), &ResonanceFMODBridge::rebind_after_reinit);
     ClassDB::bind_method(D_METHOD("is_bridge_loaded"), &ResonanceFMODBridge::is_bridge_loaded);
+    ClassDB::bind_method(D_METHOD("is_bridge_initialized"), &ResonanceFMODBridge::is_bridge_initialized);
     ClassDB::bind_method(D_METHOD("add_fmod_source", "resonance_source_handle"), &ResonanceFMODBridge::add_fmod_source);
     ClassDB::bind_method(D_METHOD("remove_fmod_source", "fmod_handle"), &ResonanceFMODBridge::remove_fmod_source);
 }
@@ -175,6 +177,16 @@ void ResonanceFMODBridge::shutdown_bridge() {
     }
     initialized_ = false;
     unload_plugin();
+}
+
+bool ResonanceFMODBridge::rebind_after_reinit() {
+    // Engine reinit destroys the IPLContext that iplFMODInitialize retained. Terminate and
+    // re-init against the new context; keep the shared library loaded to avoid dlopen churn.
+    if (initialized_ && fn_iplFMODTerminate_) {
+        fn_iplFMODTerminate_();
+        initialized_ = false;
+    }
+    return init_bridge();
 }
 
 int32_t ResonanceFMODBridge::add_fmod_source(int32_t resonance_source_handle) {

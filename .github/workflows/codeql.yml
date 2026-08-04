@@ -1,32 +1,25 @@
+# CodeQL is a full C++ rebuild + analysis (expensive).
+# Manual only: private repos need GitHub Code Scanning / Advanced Security enabled
+# before scheduled or tag runs can upload results.
 name: CodeQL
 
 on:
-  push:
-    branches: [main, master]
-    tags:
-      - 'v*'
-    paths:
-      - 'src/**'
-      - 'SConstruct'
-      - 'scripts/install_steam_audio.py'
-      - '.github/workflows/codeql.yml'
-  pull_request:
-    branches: [main, master]
-    paths:
-      - 'src/**'
-      - 'SConstruct'
-      - 'scripts/install_steam_audio.py'
-      - '.github/workflows/codeql.yml'
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  security-events: write
+  actions: read
+  contents: read
 
 jobs:
   analyze:
     name: Analyze
     runs-on: ubuntu-latest
-    permissions:
-      security-events: write
-      actions: read
-      contents: read
+    timeout-minutes: 90
 
     steps:
       - name: Checkout
@@ -39,7 +32,7 @@ jobs:
         run: python3 scripts/install_steam_audio.py
 
       - name: Create bin directory
-        run: mkdir -p audio_resonance_tool/addons/nexus_resonance/bin
+        run: mkdir -p addons/nexus_resonance/bin
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4

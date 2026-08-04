@@ -127,6 +127,9 @@ void ResonanceServer::load_scene_data(String filename) {
     bool loaded = false;
     {
         std::lock_guard<std::mutex> lock(simulation_mutex);
+        // Drop instanced packs before SceneManager releases the IPL scene; otherwise pack
+        // handles dangle and later remove/replace calls into a freed scene.
+        _clear_static_packs_assume_locked();
         loaded = scene_manager_.load_scene_data(_ctx(), &scene, simulator, _tracer_type_for_mesh_operations(), _embree(), _radeon(), filename,
                                                 &global_triangle_count);
     }

@@ -48,6 +48,7 @@ class ResonanceMixerProcessor {
     std::vector<float> pending_stereo_left{};
     std::vector<float> pending_stereo_right{};
     size_t pending_read_index = 0;
+    size_t pending_len_ = 0; // Valid samples in pending_* (fixed capacity; no hotpath resize)
 
     void _write_stereo_to_audio_frames_with_carry(AudioFrame* out_frames, int frame_count);
     void _decode_ambisonic_to_stereo_buffer(IPLAudioBuffer* ambi_in, const IPLCoordinateSpace3& listener_coords);

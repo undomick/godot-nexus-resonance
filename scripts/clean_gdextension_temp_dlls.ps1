@@ -4,8 +4,8 @@
 
 $ErrorActionPreference = "Continue"
 $roots = @(
-    Join-Path $PSScriptRoot "..\audio_resonance_tool\addons\nexus_resonance\bin\windows",
-    Join-Path $PSScriptRoot "..\audio_resonance_tool\addons\nexus_first_person\bin"
+    Join-Path $PSScriptRoot "..\addons\nexus_resonance\bin\windows",
+    Join-Path $PSScriptRoot "..\project\addons\nexus_resonance\bin\windows"
 )
 foreach ($d in $roots) {
     $full = [System.IO.Path]::GetFullPath($d)

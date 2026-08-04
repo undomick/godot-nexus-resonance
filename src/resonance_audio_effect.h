@@ -36,6 +36,8 @@ class ResonanceAudioEffectInstance : public AudioEffectInstance {
 
     /// Main-thread IPL setup when ResonanceServer is ready (avoids alloc in first bus _process).
     bool try_prewarm_processor();
+    /// Main-thread: retry prewarm for all live bus instances (e.g. after reflection mixer publish).
+    static void try_prewarm_all_live_instances();
 
     /// Called by ResonanceServer before iplContextRelease (userdata = this).
     static void ipl_context_reinit_cleanup(void* userdata);

@@ -49,11 +49,9 @@ void ResonanceRuntime::refresh_group_caches_for_frame(bool use_physics_frame) {
     SceneTree* tree = get_tree();
     if (tree == nullptr) {
         cached_listener_nodes = TypedArray<Node>();
-        cached_player_nodes = TypedArray<Node>();
         return;
     }
     cached_listener_nodes = tree->get_nodes_in_group("resonance_listener");
-    cached_player_nodes = tree->get_nodes_in_group("resonance_player");
 }
 
 // CollisionObject3D RIDs along the active camera parent chain plus resonance_listener group nodes. With the Custom
@@ -194,7 +192,7 @@ void ResonanceRuntime::fill_activator_buffer() {
 }
 
 void ResonanceRuntime::_process(double delta) {
-    if (editor_hint()) {
+    if (editor_hint() || !is_primary_runtime()) {
         return;
     }
     refresh_group_caches_for_frame(false);
@@ -252,7 +250,7 @@ void ResonanceRuntime::_process(double delta) {
 }
 
 void ResonanceRuntime::_physics_process(double delta) {
-    if (editor_hint()) {
+    if (editor_hint() || !is_primary_runtime()) {
         return;
     }
     refresh_group_caches_for_frame(true);

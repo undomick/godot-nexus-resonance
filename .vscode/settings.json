@@ -1,4 +1,4 @@
 {
-  "godot_tools.editor_path": "C:\\Godot\\Godot_v4.6.1-stable_win64\\Godot_v4.6.1-stable_win64.exe",
-  "godotTools.editorPath": "C:\\Godot\\Godot_v4.6.1-stable_win64\\Godot_v4.6.1-stable_win64.exe"
+	"godotTools.editorPath.godot4": "c:\\Godot\\Godot_v4.6.3-stable_win64\\Godot_v4.6.3-stable_win64.exe",
+	"godotTools.editorProjectPath": "${workspaceFolder}/audio_resonance_tool"
 }

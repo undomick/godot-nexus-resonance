@@ -11,6 +11,7 @@
 #include "resonance_material.h"
 #include "resonance_player.h"
 #include "resonance_probe_data.h"
+#include "resonance_probe_exclusion.h"
 #include "resonance_probe_volume.h"
 #include "resonance_runtime.h"
 #include "resonance_server.h"
@@ -61,6 +62,7 @@ void initialize_nexus_resonance_module(godot::ModuleInitializationLevel p_level)
         ClassDB::register_internal_class<ResonanceAmbisonicInternalPlayback>();
 
         // Probes
+        ClassDB::register_class<ResonanceProbeExclusion>();
         ClassDB::register_class<ResonanceProbeVolume>();
 
         // Runtime orchestrator (native port of the runtime node)

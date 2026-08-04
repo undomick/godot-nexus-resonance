@@ -4,25 +4,27 @@ on:
   push:
     branches: [main, master]
     paths:
-      - 'audio_resonance_tool/addons/nexus_resonance/**/*.gd'
-      - 'audio_resonance_tool/test/**/*.gd'
+      - 'addons/nexus_resonance/**/*.gd'
+      - '.github/workflows/gdscript-lint.yml'
   pull_request:
     branches: [main, master]
     paths:
-      - 'audio_resonance_tool/addons/nexus_resonance/**/*.gd'
-      - 'audio_resonance_tool/test/**/*.gd'
+      - 'addons/nexus_resonance/**/*.gd'
+      - '.github/workflows/gdscript-lint.yml'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+  pull-requests: read
+
 jobs:
   lint:
     name: GDScript format & lint
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: audio_resonance_tool
+    timeout-minutes: 10
 
     steps:
       - name: Checkout
@@ -35,17 +37,20 @@ jobs:
         uses: dorny/paths-filter@v4
         with:
           list-files: shell
+          base: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           filters: |
             gd:
-              - 'audio_resonance_tool/addons/nexus_resonance/**/*.gd'
-              - 'audio_resonance_tool/test/**/*.gd'
+              - 'addons/nexus_resonance/**/*.gd'
 
       - name: Setup GDScript Toolkit
+        if: steps.changed.outputs.gd == 'true'
         uses: actions/setup-python@v6
         with:
           python-version: '3.x'
 
       - name: Install GDScript Toolkit
+        if: steps.changed.outputs.gd == 'true'
         run: pip install "gdtoolkit==4.5.0"
 
       - name: Check GDScript format (changed files only)
@@ -55,8 +60,7 @@ jobs:
         run: |
           eval "set -- $GD_FILES"
           for file in "$@"; do
-            rel="${file#audio_resonance_tool/}"
-            [ -n "$rel" ] && gdformat --check "$rel"
+            [ -n "$file" ] && gdformat --check "$file"
           done
 
       - name: Lint GDScript (changed files only)
@@ -66,8 +70,7 @@ jobs:
         run: |
           eval "set -- $GD_FILES"
           for file in "$@"; do
-            rel="${file#audio_resonance_tool/}"
-            [ -n "$rel" ] && gdlint "$rel"
+            [ -n "$file" ] && gdlint "$file"
           done
 
       - name: Skip (no changed GDScript files)

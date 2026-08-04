@@ -8,6 +8,7 @@
 #include <phonon.h>
 #include <queue>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace godot {
@@ -92,11 +93,20 @@ class SourceManager : public HandleManagerBase<IPLSource, _handle_release_source
     ~SourceManager();
     /// Retains source (takes ownership of a ref). Caller may release their ref after. Returns handle or -1 for null.
     int32_t add_source(IPLSource source);
-    void remove_source(int32_t handle);
+    /// Removes the source from the map and releases the manager retain.
+    /// When [param recycle] is false, the handle stays reserved until [method recycle_source_handle]
+    /// (needed so create cannot reuse a handle while worker lifecycle queues still reference it).
+    void remove_source(int32_t handle, bool recycle = true);
+    /// Returns a deferred-recycle handle to the free list. No-op if not pending.
+    void recycle_source_handle(int32_t handle);
     IPLSource get_source(int32_t handle);
     /// True if handle is currently assigned (thread-safe).
     bool has_handle(int32_t handle) const;
     void get_all_handles(std::vector<int32_t>& out);
+
+  private:
+    /// Handles removed with recycle=false; must not be alloc'd again until recycle_source_handle.
+    std::unordered_set<int32_t> deferred_recycle_;
 };
 
 class ProbeBatchManager : public HandleManagerBase<IPLProbeBatch, _handle_release_batch> {

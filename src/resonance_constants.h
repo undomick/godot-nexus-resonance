@@ -10,7 +10,7 @@ namespace resonance {
 
 /// Version string (centralized; override via NEXUS_RESONANCE_VERSION when building)
 #ifndef NEXUS_RESONANCE_VERSION
-#define NEXUS_RESONANCE_VERSION "0.9.19"
+#define NEXUS_RESONANCE_VERSION "1.0.0"
 #endif
 constexpr const char* kVersion = NEXUS_RESONANCE_VERSION;
 
@@ -254,8 +254,10 @@ constexpr int kProbeVolumeMaxRuntimeLoadRetries = 5;
 constexpr float kProbeFloorRaycastDepth = 100.0f;
 /// ResonanceProbeVolume: retry interval (seconds) before re-attempting viz update when instance count is 0
 constexpr double kProbeVizRetryIntervalSec = 1.0;
-/// ResonanceProbeVolume: default output directory for baked probe data
-constexpr const char* kProbeBakeOutputDir = "res://audio_data/";
+/// Default bake/export root (Project Settings bake/default_output_directory).
+constexpr const char* kProbeBakeOutputDir = "res://resonance_data/";
+/// Subdirectory under the bake output root for probe batch assets.
+constexpr const char* kProbeBakeBatchesSubdir = "batches/";
 /// ResonanceProbeVolume: debounce time (seconds) for deferred viz updates
 constexpr double kProbeVizDebounceSec = 0.2;
 /// ResonanceProbeVolume: SphereMesh radius/height for probe viz

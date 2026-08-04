@@ -19,6 +19,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <limits>
 #include <mutex>
 #include <phonon.h>
@@ -113,6 +114,8 @@ class ResonanceStreamPlayback : public AudioStreamPlayback {
     PlaybackParameters params_current;
 
     bool is_initialized = false;
+    /// Audio sets when IPL context handle drifts; Main calls resolve_stale_steam_context_on_main().
+    std::atomic<bool> steam_context_stale_{false};
     int current_sample_rate = 44100;
 
     /// Extra retain for the active sim source; acquired on main in update_parameters, released on handle change/cleanup.
@@ -270,7 +273,14 @@ class ResonanceStreamPlayback : public AudioStreamPlayback {
     void _lazy_init_steam_audio(int sampling_rate); // Alloc IPL processors/buffers on first need
     void _cleanup_steam_audio();
     void _process_steam_audio_block(); // One `frame_size_` IPL pipeline step
-    void _sync_params();               // Sync parameters from next to current
+    float _debug_sa_in_mono_rms() const;
+    bool _feed_convolution_mixer(ResonanceServer* srv, IPLReflectionEffectParams& params, float curr_refl_mix,
+                                 float refl_wet_output_gain, bool store_tail_params, float& out_dbg_reverb);
+    void _apply_reflections_wet(ResonanceServer* srv, float wet_occ, float refl_wet_output_gain,
+                                bool& out_reverb_to_player, float& out_dbg_reverb);
+    float _apply_pathing_wet(ResonanceServer* srv, const IPLCoordinateSpace3& listener_cs);
+    void _process_passthrough_block();
+    void _sync_params(); // Sync parameters from next to current
     void _retain_source_for_main(int32_t handle);
     void _release_retained_source();
     void _add_reverb_to_output(IPLAudioBuffer* reverb_buf, float refl_mix, bool split_output,
@@ -296,8 +306,10 @@ class ResonanceStreamPlayback : public AudioStreamPlayback {
     virtual int32_t _mix(AudioFrame* buffer, float rate_scale, int32_t frames) override; // Mixes audio frames into the buffer
     virtual void _start(double from_pos) override;                                       // Starts playback from a specific position
 
-    /// Alloc IPL effects/buffers before first _mix (avoids audio-thread stall); idempotent. Same as implicit lazy init but earlier.
+    /// Alloc IPL effects/buffers before first _mix (avoids audio-thread stall); idempotent.
     bool prewarm_steam_audio();
+    /// Main thread: if audio flagged a stale IPL context, teardown + prewarm (no cleanup in _mix).
+    void resolve_stale_steam_context_on_main();
     /// True if the audio-side initialisation is complete and _mix will skip the lazy path.
     bool is_steam_audio_initialised() const { return is_initialized; }
 
@@ -439,6 +451,8 @@ class ResonancePlayer : public AudioStreamPlayer3D {
     void _detach_playback_source_retains();
 
     int32_t source_handle = -1;
+    /// Captured from ResonanceServer::get_source_lifecycle_epoch() at create; mismatch => stale after reinit.
+    uint32_t source_lifecycle_epoch_ = 0;
     // Cached effective volume (linear), updated on main thread, read on audio thread.
     std::atomic<float> cached_effective_volume_linear_{1.0f};
     NodePath pathing_probe_volume; // Scene-specific: which ProbeVolume to use for pathing
@@ -520,8 +534,16 @@ class ResonancePlayer : public AudioStreamPlayer3D {
     ResonanceDirectivityDrawer directivity_drawer_;
     bool show_directivity_gizmo_ = false;
 
-    void _update_stream_setup();  // Ensures the internal stream is set up correctly
+    void _update_stream_setup(); // Ensures the internal stream is set up correctly
+    /// With player_config: disable Godot ASP3D attenuation/max_distance so Steam owns distance (also after runtime config assign).
+    void _apply_steam_mode_asp3d_guards();
+    /// Refresh host gain cache from volume_db/max_db (applied to dry input before Steam DSP).
+    void _refresh_effective_volume_cache();
     void _ensure_source_exists(); // Ensures the source handle exists in the ResonanceServer
+    /// Drop source_handle when server lifecycle epoch advanced (reinit recycled IDs).
+    void _invalidate_source_handle_if_stale(ResonanceServer* srv);
+    /// After engine reinit: clear stale handle and recreate IPL source.
+    void reload_source_after_reinit();
     /// Lazy-create IPL source when server is ready (ordering: nodes before runtime).
     /// Returns true if a new handle was created. Optionally defers playback param push when already playing.
     bool _try_ensure_source_and_sync(ResonanceServer* srv, bool deferred_playback_push_if_playing);
@@ -567,10 +589,10 @@ class ResonancePlayer : public AudioStreamPlayer3D {
     bool reverb_split_output_ = false;
     /// When [member player_config] is set: spawn a helper that converts TYPE_AUDIO tracks on the current scene
     /// to [method play_animation_audio_clip] once (Steam-safe path; native polyphonic cannot be wrapped).
-    bool convert_animation_audio_tracks_at_runtime_ = false;
+    bool convert_anim_audio_runtime_ = false;
     bool exclude_from_debug_ = false;
     /// When true (default), register descendant CollisionObject3D RIDs with ResonanceServer for Custom-scene ray excludes.
-    bool physics_ray_auto_exclude_collision_bodies_ = true;
+    bool auto_exclude_colliders_ = true;
     int physics_auto_exclude_resync_counter_ = 0;
     std::vector<RID> registered_physics_auto_exclude_rids_;
     void _sync_physics_ray_auto_exclude_rids();
@@ -581,6 +603,9 @@ class ResonancePlayer : public AudioStreamPlayer3D {
     bool dry_finished_deferred_queued_ = false;
     uint64_t play_serial_ = 0;
     uint64_t dry_finished_deferred_serial_ = 0;
+    /// Soft-stop watchdog: seconds since stop() requested soft-stop (-1 = inactive).
+    /// Forces AudioStreamPlayer3D::stop if audio-thread drain never signals (e.g. Dummy driver / no _mix).
+    double soft_stop_elapsed_sec_ = -1.0;
 
     float _config_float(const char* key, float default_val) const;
     int _config_int(const char* key, int default_val) const;
@@ -610,7 +635,7 @@ class ResonancePlayer : public AudioStreamPlayer3D {
 
     void play(float from_position = 0.0f);
     void play_stream(double from_position = 0.0);
-    /// Use from AnimationPlayer **method** tracks (or enable [member convert_animation_audio_tracks_at_runtime]).
+    /// Use from AnimationPlayer **method** tracks (or enable [member convert_anim_audio_runtime]).
     /// Sets [member stream] and calls [method play]. [param from_position] is usually the clip's start offset (trim).
     void play_animation_audio_clip(const Ref<AudioStream>& p_stream, float from_position = 0.0f);
     void stop();
@@ -628,11 +653,11 @@ class ResonancePlayer : public AudioStreamPlayer3D {
     void set_exclude_from_debug(bool p_exclude);
     bool get_exclude_from_debug() const { return exclude_from_debug_; }
 
-    void set_physics_ray_auto_exclude_collision_bodies(bool p_enable);
-    bool get_physics_ray_auto_exclude_collision_bodies() const { return physics_ray_auto_exclude_collision_bodies_; }
+    void set_auto_exclude_colliders(bool p_enable);
+    bool get_auto_exclude_colliders() const { return auto_exclude_colliders_; }
 
-    void set_convert_animation_audio_tracks_at_runtime(bool p_enable);
-    bool get_convert_animation_audio_tracks_at_runtime() const { return convert_animation_audio_tracks_at_runtime_; }
+    void set_convert_anim_audio_runtime(bool p_enable);
+    bool get_convert_anim_audio_runtime() const { return convert_anim_audio_runtime_; }
 
     void set_show_directivity_gizmo(bool p_enable);
     bool get_show_directivity_gizmo() const { return show_directivity_gizmo_; }
@@ -650,7 +675,8 @@ class ResonancePlayer : public AudioStreamPlayer3D {
 
     /// Returns audio instrumentation dict for dropout debugging. Keys include pathing_sh_rms, pathing_sh_energy (sum c^2),
     /// pathing_out_rms (path effect stereo RMS before add to final mix), pathing_sh_order (-1 if n/a). When player_config is set,
-    /// also godot_attenuation_model, godot_pitch_scale, godot_max_distance, godot_max_db, godot_unit_size (AudioStreamPlayer3D snapshot).
+    /// also godot_attenuation_model, godot_pitch_scale, godot_max_distance, godot_max_db, godot_volume_db, godot_unit_size,
+    /// effective_volume_linear (AudioStreamPlayer3D snapshot + source loudness applied pre-Steam).
     /// Empty when no player_config.
     Dictionary get_audio_instrumentation();
     /// Reset instrumentation counters on this player's playback. Call to clear and re-observe dropouts.

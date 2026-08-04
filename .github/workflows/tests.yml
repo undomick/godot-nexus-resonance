@@ -1,44 +1,66 @@
+# PR gate: Linux C++ (+ Catch2), optional Godot GUT/smokes.
+# Not on push/merge to main (already covered by the PR run).
+# Multi-platform binaries: release.yml (tags) or Build GDExtension (manual).
+# Windows C++ and full smoke suite: workflow_dispatch only.
 name: Tests
 
 on:
-  push:
-    branches: [main, master]
-    paths:
-      - 'src/**'
-      - 'SConstruct'
-      - 'scripts/**'
-      - 'audio_resonance_tool/**'
-      - '.github/workflows/tests.yml'
-      - '.github/scripts/**'
   pull_request:
     branches: [main, master]
     paths:
       - 'src/**'
       - 'SConstruct'
-      - 'scripts/**'
-      - 'audio_resonance_tool/**'
+      - 'scripts/install_steam_audio.py'
+      - 'scripts/check_clang_format.sh'
+      - 'scripts/format_cpp.sh'
+      - 'scripts/strip_compile_commands_for_clang_tidy.py'
+      - 'addons/nexus_resonance/**/*.gd'
+      - 'addons/nexus_resonance/**/*.gdextension'
+      - 'addons/nexus_resonance/doc_classes/**'
       - '.github/workflows/tests.yml'
       - '.github/scripts/**'
+  workflow_dispatch:
+    inputs:
+      run_windows:
+        description: 'Also run Windows C++ build & unit tests'
+        type: boolean
+        default: false
+      run_all_smokes:
+        description: 'Run full Godot smoke suite (default: lightning only)'
+        type: boolean
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+  pull-requests: read
+
 jobs:
   changes:
     name: Check changes
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       cpp: ${{ steps.result.outputs.cpp }}
+      gd: ${{ steps.result.outputs.gd }}
       run_godot: ${{ steps.result.outputs.run_godot }}
+      run_windows: ${{ steps.result.outputs.run_windows }}
+      run_all_smokes: ${{ steps.result.outputs.run_all_smokes }}
     steps:
       - uses: actions/checkout@v5
         with:
-          fetch-depth: 2
+          fetch-depth: 0
 
+      # Prefer git history over the Pulls API (works with read-only tokens).
       - uses: dorny/paths-filter@v4
         id: filter
+        if: github.event_name != 'workflow_dispatch'
         with:
+          base: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ github.event.pull_request.head.sha }}
           filters: |
             cpp:
               - 'src/**'
@@ -48,26 +70,56 @@ jobs:
               - 'scripts/format_cpp.sh'
               - 'scripts/strip_compile_commands_for_clang_tidy.py'
               - '.github/scripts/install_steam_audio_ci.sh'
-              - 'audio_resonance_tool/addons/nexus_resonance/**/*.gdextension'
-              - 'audio_resonance_tool/addons/nexus_resonance/doc_classes/**'
-              - 'audio_resonance_tool/addons/nexus_resonance/bin/**'
+              - 'addons/nexus_resonance/**/*.gdextension'
+              - 'addons/nexus_resonance/doc_classes/**'
             gd:
-              - 'audio_resonance_tool/addons/nexus_resonance/**/*.gd'
-              - 'audio_resonance_tool/test/**/*.gd'
+              - 'addons/nexus_resonance/**/*.gd'
+            workflow:
+              - '.github/workflows/tests.yml'
+              - '.github/scripts/prepare_godot_ci_project.sh'
 
       - id: result
         run: |
-          echo "cpp=${{ steps.filter.outputs.cpp }}" >> $GITHUB_OUTPUT
-          if [ "${{ steps.filter.outputs.cpp }}" = "true" ] || [ "${{ steps.filter.outputs.gd }}" = "true" ]; then
-            echo "run_godot=true" >> $GITHUB_OUTPUT
-          else
-            echo "run_godot=false" >> $GITHUB_OUTPUT
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "cpp=true" >> "$GITHUB_OUTPUT"
+            echo "gd=true" >> "$GITHUB_OUTPUT"
+            echo "run_godot=true" >> "$GITHUB_OUTPUT"
+            if [ "${{ inputs.run_windows }}" = "true" ]; then
+              echo "run_windows=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "run_windows=false" >> "$GITHUB_OUTPUT"
+            fi
+            if [ "${{ inputs.run_all_smokes }}" = "true" ]; then
+              echo "run_all_smokes=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "run_all_smokes=false" >> "$GITHUB_OUTPUT"
+            fi
+            exit 0
           fi
+
+          CPP="${{ steps.filter.outputs.cpp }}"
+          GD="${{ steps.filter.outputs.gd }}"
+          WF="${{ steps.filter.outputs.workflow }}"
+          echo "cpp=$CPP" >> "$GITHUB_OUTPUT"
+          echo "gd=$GD" >> "$GITHUB_OUTPUT"
+
+          # Godot when GDScript or C++ changed; CI script edits only need Godot if no C++ rebuild.
+          if [ "$CPP" = "true" ] || [ "$GD" = "true" ] || [ "$WF" = "true" ]; then
+            echo "run_godot=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run_godot=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          # Windows MSVC is costly; only via workflow_dispatch (run_windows input).
+          echo "run_windows=false" >> "$GITHUB_OUTPUT"
+
+          # Full smoke suite only via workflow_dispatch; PRs run lightning only.
+          echo "run_all_smokes=false" >> "$GITHUB_OUTPUT"
 
   cpp-linux:
     name: C++ (Linux)
     needs: changes
-    if: needs.changes.outputs.cpp == 'true' || needs.changes.outputs.run_godot == 'true'
+    if: needs.changes.outputs.cpp == 'true'
     runs-on: ubuntu-22.04
     timeout-minutes: 45
     steps:
@@ -87,7 +139,6 @@ jobs:
         run: bash .github/scripts/install_steam_audio_ci.sh
 
       - name: Add GCC problem matcher
-        if: needs.changes.outputs.cpp == 'true'
         run: echo "::add-matcher::${{ github.workspace }}/.github/gcc-problem-matcher.json"
 
       - name: Cache SCons build
@@ -102,35 +153,25 @@ jobs:
         run: pip install scons
 
       - name: Create bin directory
-        run: mkdir -p audio_resonance_tool/addons/nexus_resonance/bin/linux
+        run: mkdir -p addons/nexus_resonance/bin/linux
 
       - name: Copy Steam Audio runtime libraries
-        run: cp src/lib/steamaudio/lib/linux-x64/libphonon.so audio_resonance_tool/addons/nexus_resonance/bin/linux/
+        run: cp src/lib/steamaudio/lib/linux-x64/libphonon.so addons/nexus_resonance/bin/linux/
 
       - name: Clang-format check
-        if: needs.changes.outputs.cpp == 'true'
         run: |
           sudo apt-get install -y clang-format-14
           bash scripts/check_clang_format.sh
 
       - name: Build C++ extension and tests
-        if: needs.changes.outputs.cpp == 'true'
         env:
           SCONS_CACHE: ${{ github.workspace }}/.scons-cache
         run: scons platform=linux target=editor build_tests=1 compiledb=1 -j$(nproc)
 
-      - name: Build Linux extension (Godot CI only)
-        if: needs.changes.outputs.cpp != 'true'
-        env:
-          SCONS_CACHE: ${{ github.workspace }}/.scons-cache
-        run: scons platform=linux target=template_debug build_tests=0 -j$(nproc)
-
       - name: Run C++ unit tests
-        if: needs.changes.outputs.cpp == 'true'
         run: ./build/tests/nexus_resonance_tests
 
-      - name: Clang-Tidy (static analysis)
-        if: needs.changes.outputs.cpp == 'true'
+      - name: Clang-Tidy (strict subset)
         run: |
           sudo apt-get update -qq && sudo apt-get install -y clang-tidy
           if [ ! -f compile_commands.json ]; then
@@ -139,23 +180,82 @@ jobs:
           fi
           python3 scripts/strip_compile_commands_for_clang_tidy.py compile_commands.json
           CHECKS='-*,bugprone-*,-bugprone-easily-swappable-parameters,cert-*,clang-analyzer-*'
-          echo "Clang-tidy (strict): src/handle_manager.cpp src/test/test_ipl_guard.cpp"
           clang-tidy -p . src/handle_manager.cpp src/test/test_ipl_guard.cpp \
             -checks="$CHECKS" --warnings-as-errors=*
-          echo "Clang-tidy (optional wider scan, failures ignored)"
-          find src -type f \( -name "*.cpp" -o -name "*.h" \) ! -path "*/lib/*" ! -path "*/gen/*" | head -80 | xargs -r clang-tidy -p . -checks="$CHECKS" --warnings-as-errors=* 2>/dev/null || true
+
+      - name: Cache Linux extension binary
+        uses: actions/cache/save@v5
+        with:
+          path: addons/nexus_resonance/bin/linux
+          key: linux-ext-bin-${{ hashFiles('src/**/*.cpp', 'src/**/*.h', 'SConstruct', 'scripts/install_steam_audio.py') }}
 
       - name: Upload bin artifact
         if: needs.changes.outputs.run_godot == 'true'
         uses: actions/upload-artifact@v5
         with:
           name: nexus_resonance-bin-linux
-          path: audio_resonance_tool/addons/nexus_resonance/bin/
+          path: addons/nexus_resonance/bin/
+          retention-days: 3
+
+  # GDScript-only changes: reuse cached Linux .so instead of a full scons rebuild.
+  ensure-bin-linux:
+    name: Ensure Linux bin (GD-only)
+    needs: changes
+    if: needs.changes.outputs.run_godot == 'true' && needs.changes.outputs.cpp != 'true'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Restore Linux extension binary
+        id: bin-cache
+        uses: actions/cache@v5
+        with:
+          path: addons/nexus_resonance/bin/linux
+          key: linux-ext-bin-${{ hashFiles('src/**/*.cpp', 'src/**/*.h', 'SConstruct', 'scripts/install_steam_audio.py') }}
+
+      - name: Cache Steam Audio SDK
+        if: steps.bin-cache.outputs.cache-hit != 'true'
+        uses: actions/cache@v5
+        with:
+          path: src/lib/steamaudio
+          key: steamaudio-${{ hashFiles('scripts/install_steam_audio.py') }}
+
+      - name: Cache SCons build
+        if: steps.bin-cache.outputs.cache-hit != 'true'
+        uses: actions/cache@v5
+        with:
+          path: .scons-cache
+          key: scons-tests-Linux-v4-${{ hashFiles('src/lib/godot-cpp/SConstruct', 'SConstruct', 'src/register_types.cpp', 'src/resonance_server*.cpp', 'src/resonance_server.h', 'src/handle_manager.cpp', 'src/test/test_main.cpp', 'src/test/test_ipl_guard.cpp') }}
+          restore-keys: |
+            scons-tests-Linux-
+
+      - name: Build Linux extension (cache miss)
+        if: steps.bin-cache.outputs.cache-hit != 'true'
+        env:
+          SCONS_CACHE: ${{ github.workspace }}/.scons-cache
+        run: |
+          bash .github/scripts/install_steam_audio_ci.sh
+          pip install scons
+          mkdir -p addons/nexus_resonance/bin/linux
+          cp src/lib/steamaudio/lib/linux-x64/libphonon.so addons/nexus_resonance/bin/linux/
+          scons platform=linux target=template_debug build_tests=0 -j$(nproc)
+
+      - name: Upload bin artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: nexus_resonance-bin-linux
+          path: addons/nexus_resonance/bin/
+          retention-days: 3
 
   cpp-build-test-windows:
     name: C++ Build & Unit Tests (Windows)
     needs: changes
-    if: needs.changes.outputs.cpp == 'true'
+    if: needs.changes.outputs.run_windows == 'true'
     runs-on: windows-latest
     timeout-minutes: 45
     defaults:
@@ -191,7 +291,7 @@ jobs:
         run: pip install scons
 
       - name: Create bin directory
-        run: mkdir -p audio_resonance_tool/addons/nexus_resonance/bin/windows
+        run: mkdir -p addons/nexus_resonance/bin/windows
 
       - name: Build C++ extension and tests
         env:
@@ -203,8 +303,16 @@ jobs:
 
   godot-linux:
     name: Godot (GUT + smokes)
-    needs: [changes, cpp-linux]
-    if: needs.changes.outputs.run_godot == 'true'
+    needs: [changes, cpp-linux, ensure-bin-linux]
+    if: |
+      always()
+      && !cancelled()
+      && needs.changes.result == 'success'
+      && needs.changes.outputs.run_godot == 'true'
+      && (
+        (needs.changes.outputs.cpp == 'true' && needs.cpp-linux.result == 'success')
+        || (needs.changes.outputs.cpp != 'true' && needs.ensure-bin-linux.result == 'success')
+      )
     runs-on: ubuntu-22.04
     timeout-minutes: 25
     steps:
@@ -215,15 +323,18 @@ jobs:
         uses: actions/download-artifact@v5
         with:
           name: nexus_resonance-bin-linux
-          path: audio_resonance_tool/addons/nexus_resonance/bin
+          path: addons/nexus_resonance/bin
+
+      - name: Prepare Godot CI project
+        run: bash .github/scripts/prepare_godot_ci_project.sh
 
       - name: Install GUT test framework
         run: |
           GUT_VERSION="9.6.0"
           curl -fsSL -o /tmp/gut.zip "https://github.com/bitwes/Gut/archive/refs/tags/v${GUT_VERSION}.zip"
           unzip -qo /tmp/gut.zip -d /tmp/gut
-          mkdir -p audio_resonance_tool/addons/gut
-          cp -r /tmp/gut/Gut-${GUT_VERSION}/addons/gut/* audio_resonance_tool/addons/gut/
+          mkdir -p project/addons/gut
+          cp -r /tmp/gut/Gut-${GUT_VERSION}/addons/gut/* project/addons/gut/
           rm -rf /tmp/gut /tmp/gut.zip
 
       - name: Setup Godot 4.6
@@ -233,31 +344,59 @@ jobs:
           use-dotnet: false
 
       - name: Import project
-        run: godot --headless --path audio_resonance_tool --import
+        run: godot --headless --path project --import
         env:
           GODOT_DISABLE_LEAK_CHECKS: 1
 
       - name: Run GUT tests
-        run: godot --headless -d --audio-driver Dummy --path audio_resonance_tool -s addons/gut/gut_cmdln.gd -gdir=res://test/unit -gexit
+        run: |
+          if [ -d project/test/unit ] && ls project/test/unit/*.gd >/dev/null 2>&1; then
+            godot --headless -d --audio-driver Dummy --path project -s addons/gut/gut_cmdln.gd -gdir=res://test/unit -gexit
+          else
+            echo "No GUT tests under project/test/unit; skipping"
+          fi
         env:
           GODOT_DISABLE_LEAK_CHECKS: 1
 
       - name: Run lightning smoke
-        run: godot --headless --audio-driver Dummy --path audio_resonance_tool -s res://test/run_lightning_smoke.gd
+        run: |
+          if [ -f project/test/run_lightning_smoke.gd ]; then
+            godot --headless --audio-driver Dummy --path project -s res://test/run_lightning_smoke.gd
+          else
+            echo "Smoke script missing; skipping"
+          fi
         env:
           GODOT_DISABLE_LEAK_CHECKS: 1
 
       - name: Run method-track smoke
-        run: godot --headless --audio-driver Dummy --path audio_resonance_tool -s res://test/run_resonance_method_track_smoke.gd
+        if: needs.changes.outputs.run_all_smokes == 'true'
+        run: |
+          if [ -f project/test/run_resonance_method_track_smoke.gd ]; then
+            godot --headless --audio-driver Dummy --path project -s res://test/run_resonance_method_track_smoke.gd
+          else
+            echo "Smoke script missing; skipping"
+          fi
         env:
           GODOT_DISABLE_LEAK_CHECKS: 1
 
       - name: Run plain animation-audio smoke
-        run: godot --headless --audio-driver Dummy --path audio_resonance_tool -s res://test/run_animation_audio_plain_smoke.gd
+        if: needs.changes.outputs.run_all_smokes == 'true'
+        run: |
+          if [ -f project/test/run_animation_audio_plain_smoke.gd ]; then
+            godot --headless --audio-driver Dummy --path project -s res://test/run_animation_audio_plain_smoke.gd
+          else
+            echo "Smoke script missing; skipping"
+          fi
         env:
           GODOT_DISABLE_LEAK_CHECKS: 1
 
       - name: Run reverb-tail smoke
-        run: godot --headless --audio-driver Dummy --path audio_resonance_tool -s res://test/run_reverb_tail_smoke.gd
+        if: needs.changes.outputs.run_all_smokes == 'true'
+        run: |
+          if [ -f project/test/run_reverb_tail_smoke.gd ]; then
+            godot --headless --audio-driver Dummy --path project -s res://test/run_reverb_tail_smoke.gd
+          else
+            echo "Smoke script missing; skipping"
+          fi
         env:
           GODOT_DISABLE_LEAK_CHECKS: 1

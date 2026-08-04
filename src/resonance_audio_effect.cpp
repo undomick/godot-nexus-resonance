@@ -7,11 +7,48 @@
 #include <chrono>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
+#include <mutex>
+#include <vector>
 
 using namespace godot;
 
-// One warning if Godot’s `frame_count` != server `audio_frame_size` (avoids log spam).
+// One warning if Godot's frame_count != server audio_frame_size (avoids log spam).
 static bool s_frame_size_mismatch_warned = false;
+
+namespace {
+std::mutex g_bus_fx_mu;
+std::vector<ResonanceAudioEffectInstance*> g_bus_fx_live;
+
+void bus_fx_register(ResonanceAudioEffectInstance* inst) {
+    if (!inst)
+        return;
+    std::lock_guard<std::mutex> lock(g_bus_fx_mu);
+    for (ResonanceAudioEffectInstance* p : g_bus_fx_live) {
+        if (p == inst)
+            return;
+    }
+    g_bus_fx_live.push_back(inst);
+}
+
+void bus_fx_unregister(ResonanceAudioEffectInstance* inst) {
+    if (!inst)
+        return;
+    std::lock_guard<std::mutex> lock(g_bus_fx_mu);
+    g_bus_fx_live.erase(std::remove(g_bus_fx_live.begin(), g_bus_fx_live.end(), inst), g_bus_fx_live.end());
+}
+} // namespace
+
+void ResonanceAudioEffectInstance::try_prewarm_all_live_instances() {
+    std::vector<ResonanceAudioEffectInstance*> copy;
+    {
+        std::lock_guard<std::mutex> lock(g_bus_fx_mu);
+        copy = g_bus_fx_live;
+    }
+    for (ResonanceAudioEffectInstance* inst : copy) {
+        if (inst)
+            inst->try_prewarm_processor();
+    }
+}
 
 // Copy prior bus chain into `dst` (IPL mix_return: dry/chain first, then add wet). `src` may alias `dst` or be null (silence).
 static void copy_bus_input_to_dst(const void* src_buffer, AudioFrame* dst_buffer, int32_t frame_count) {
@@ -49,6 +86,7 @@ void ResonanceAudioEffectInstance::_reset_ipl_mixer_for_context_lifecycle() {
 }
 
 ResonanceAudioEffectInstance::~ResonanceAudioEffectInstance() {
+    bus_fx_unregister(this);
     _reset_ipl_mixer_for_context_lifecycle();
 }
 
@@ -104,7 +142,8 @@ void ResonanceAudioEffectInstance::_process(const void* src_buffer, AudioFrame* 
 
     int server_frame_size = srv->get_audio_frame_size();
 
-    if (!initialized_processor && !try_prewarm_processor()) {
+    if (!initialized_processor) {
+        // Main-thread try_prewarm_processor / try_prewarm_all_live_instances only - no IPL create here.
         for (int i = 0; i < frame_count; i++) {
             dst_buffer[i].left = 0.0f;
             dst_buffer[i].right = 0.0f;
@@ -119,9 +158,8 @@ void ResonanceAudioEffectInstance::_process(const void* src_buffer, AudioFrame* 
         }
         if (!s_frame_size_mismatch_warned) {
             s_frame_size_mismatch_warned = true;
-            ResonanceLog::warn("Reverb bus frame_count (" + String::num_int64(frame_count) + ") != audio_frame_size (" +
-                               String::num_int64(server_frame_size) +
-                               "). Set ResonanceRuntimeConfig.audio_frame_size to Auto (0) to derive from Project Settings, or match manually.");
+            ResonanceLog::warn_cstr(
+                "Reverb bus frame_count != audio_frame_size. Use Auto (0) frame size or match Project Settings.");
         }
     }
 
@@ -239,6 +277,7 @@ Ref<AudioEffectInstance> ResonanceAudioEffect::_instantiate() {
     Ref<ResonanceAudioEffectInstance> ins;
     ins.instantiate();
     ins->set_effect(Ref<ResonanceAudioEffect>(this));
+    bus_fx_register(ins.ptr());
     ins->try_prewarm_processor();
     return ins;
 }

@@ -50,6 +50,13 @@ inline float baked_reverb_wet_occlusion_factor(float occlusion, float transmissi
     return factor;
 }
 
+/// ASP3D node volume for ResonancePlayback: Godot ceiling `min(volume_db, max_db)` as linear gain.
+/// Applied to the dry decoder buffer *before* Steam Direct/HRTF/wet (source loudness; wet follows).
+inline float effective_asp3d_volume_linear(float volume_db, float max_db) {
+    const float eff_db = std::fmin(sanitize_audio_float(volume_db), sanitize_audio_float(max_db));
+    return sanitize_audio_float(std::pow(10.0f, eff_db / 20.0f));
+}
+
 /// Linear gain ramp across `num_samples` (parameter moves without zipper noise).
 inline void apply_volume_ramp(float start_vol, float end_vol, int num_samples, float* buffer) {
     if (num_samples == 0 || !buffer)
