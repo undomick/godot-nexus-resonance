@@ -69,13 +69,19 @@ func _parse_property(
 func _on_update_targets_pressed(vol: Object) -> void:
 	if vol == null or not vol.is_class("ResonanceProbeVolume"):
 		return
-	var result: Dictionary = ResonanceBakeDiscovery.update_volume_bake_targets_from_scan(vol as Node)
+	var result: Dictionary = ResonanceBakeDiscovery.update_volume_bake_targets_from_scan(
+		vol as Node
+	)
 	if editor_interface:
 		editor_interface.mark_scene_as_unsaved()
 	print(
 		(
 			"Nexus Resonance: Updated bake targets (%s sources, %s listeners from %s scan roots)."
-			% [result.get("sources", 0), result.get("listeners", 0), result.get("scan_roots_used", 0)]
+			% [
+				result.get("sources", 0),
+				result.get("listeners", 0),
+				result.get("scan_roots_used", 0)
+			]
 		)
 	)
 

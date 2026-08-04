@@ -29,10 +29,14 @@ static func estimate_probe_count(vol: Node) -> int:
 	if vol.has_method("collect_exclusion_boxes") and count > 0 and gen_type != 0:
 		var boxes: Array = vol.collect_exclusion_boxes()
 		if not boxes.is_empty():
-			var vol_xform: Transform3D = vol.global_transform if vol is Node3D else Transform3D.IDENTITY
+			var vol_xform: Transform3D = (
+				vol.global_transform if vol is Node3D else Transform3D.IDENTITY
+			)
 			var kept := 0
 			# Coarse: sample grid like Uniform Floor / Volume and count survivors.
-			var height: float = float(vol.get("height_above_floor")) if "height_above_floor" in vol else 1.5
+			var height: float = (
+				float(vol.get("height_above_floor")) if "height_above_floor" in vol else 1.5
+			)
 			var points := _estimate_sample_points(vol_xform, extents, spacing, gen_type, height)
 			for p in points:
 				var excluded := false
@@ -57,7 +61,11 @@ static func estimate_probe_count(vol: Node) -> int:
 
 
 static func _estimate_sample_points(
-	volume_transform: Transform3D, extents: Vector3, spacing: float, gen_type: int, height_above_floor: float
+	volume_transform: Transform3D,
+	extents: Vector3,
+	spacing: float,
+	gen_type: int,
+	height_above_floor: float
 ) -> PackedVector3Array:
 	var points := PackedVector3Array()
 	var size: Vector3 = extents * 2.0
@@ -73,7 +81,9 @@ static func _estimate_sample_points(
 		for ix in count_x:
 			for iz in count_z:
 				var local := Vector3(
-					-extents.x + ix * spacing + offset_x, plane_y, -extents.z + iz * spacing + offset_z
+					-extents.x + ix * spacing + offset_x,
+					plane_y,
+					-extents.z + iz * spacing + offset_z
 				)
 				points.append(volume_transform * local)
 		return points
@@ -90,8 +100,11 @@ static func _estimate_sample_points(
 	for ix in count_x2:
 		for iy in count_y2:
 			for iz in count_z2:
-				var local2 := -extents + Vector3(
-					ix * spacing + offset.x, iy * spacing + offset.y, iz * spacing + offset.z
+				var local2 := (
+					-extents
+					+ Vector3(
+						ix * spacing + offset.x, iy * spacing + offset.y, iz * spacing + offset.z
+					)
 				)
 				points.append(volume_transform * local2)
 	return points

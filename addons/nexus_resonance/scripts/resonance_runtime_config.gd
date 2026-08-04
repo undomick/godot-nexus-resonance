@@ -363,7 +363,11 @@ func get_bus_effective() -> StringName:
 
 ## Returns effective reverb bus name. Empty config = ResonanceReverb.
 func get_reverb_bus_name_effective() -> StringName:
-	return reverb_bus_name if not reverb_bus_name.is_empty() else ResonancePaths.DEFAULT_REVERB_BUS_NAME
+	return (
+		reverb_bus_name
+		if not reverb_bus_name.is_empty()
+		else ResonancePaths.DEFAULT_REVERB_BUS_NAME
+	)
 
 
 func _sofa_asset_data_nonempty(asset: ResonanceSOFAAsset) -> bool:

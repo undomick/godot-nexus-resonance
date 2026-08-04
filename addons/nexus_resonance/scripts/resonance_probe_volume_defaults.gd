@@ -14,7 +14,9 @@ static func ensure_resources(vol: Object) -> bool:
 	var changed := false
 	if vol.has_method("ensure_default_resources"):
 		var before_pd: Variant = vol.get_probe_data() if vol.has_method("get_probe_data") else null
-		var before_bc: Variant = vol.get_bake_config() if vol.has_method("get_bake_config") else null
+		var before_bc: Variant = (
+			vol.get_bake_config() if vol.has_method("get_bake_config") else null
+		)
 		vol.ensure_default_resources()
 		var after_pd: Variant = vol.get_probe_data() if vol.has_method("get_probe_data") else null
 		var after_bc: Variant = vol.get_bake_config() if vol.has_method("get_bake_config") else null

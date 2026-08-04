@@ -831,13 +831,11 @@ func _run_convert_animation_audio_all_scenes_confirmed() -> void:
 	var ei: EditorInterface = get_editor_interface()
 	var fs: EditorFileSystem = ei.get_resource_filesystem()
 	if fs == null:
-		ResonanceEditorDialogs.show_warning(
-			ei, tr(UIStrings.ERR_EDITOR_FILESYSTEM_UNAVAILABLE)
-		)
+		ResonanceEditorDialogs.show_warning(ei, tr(UIStrings.ERR_EDITOR_FILESYSTEM_UNAVAILABLE))
 		return
 	var paths: PackedStringArray = ResonanceEditorSceneIndex.collect_tscn_paths(ei)
-	var summary: Dictionary = (
-		ResonanceAnimationAudioConverter.convert_packed_scene_files_on_disk(paths)
+	var summary: Dictionary = ResonanceAnimationAudioConverter.convert_packed_scene_files_on_disk(
+		paths
 	)
 	var toast: String = (
 		tr(UIStrings.INFO_CONVERT_ALL_SCENES_SUMMARY)
@@ -863,7 +861,9 @@ func _notification(what: int) -> void:
 func _on_editor_pre_save_animation_audio() -> void:
 	if not _editor_plugin_ui_active:
 		return
-	if not bool(ProjectSettings.get_setting(ResonancePaths.SETTING_EDITOR_AUTO_CONVERT_ANIMATION, false)):
+	if not bool(
+		ProjectSettings.get_setting(ResonancePaths.SETTING_EDITOR_AUTO_CONVERT_ANIMATION, false)
+	):
 		return
 	var root: Node = get_editor_interface().get_edited_scene_root()
 	if root == null:

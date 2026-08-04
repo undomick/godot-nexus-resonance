@@ -122,7 +122,9 @@ static func _warn_rss_no_asset_rec(node: Node, export_root: Node) -> void:
 			var rel: String = String(export_root.get_path_to(node))
 			if rel.is_empty():
 				rel = str(node.name)
-			var msg: String = TranslationServer.translate(UIStrings.WARN_STATIC_SCENE_NO_ASSET_EXCLUDED)
+			var msg: String = TranslationServer.translate(
+				UIStrings.WARN_STATIC_SCENE_NO_ASSET_EXCLUDED
+			)
 			push_warning(msg % rel)
 		# Nested RSS always pruned; do not walk into its children for further merge warnings.
 		return
