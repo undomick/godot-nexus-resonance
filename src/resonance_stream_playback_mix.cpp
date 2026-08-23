@@ -865,7 +865,7 @@ void ResonanceStreamPlayback::reset_instrumentation() {
 }
 
 int32_t ResonanceStreamPlayback::_mix_drain_zero_input_tails(AudioFrame* buffer, int32_t frames,
-                                                              ResonanceServer* srv_guard) {
+                                                             ResonanceServer* srv_guard) {
     prev_mix_had_partial_input_pad_ = false;
     prev_mix_had_eos_tapered_input_pad_ = false;
     if (!is_initialized || steam_context_stale_.load(std::memory_order_acquire))
@@ -1044,7 +1044,7 @@ int32_t ResonanceStreamPlayback::_mix_drain_zero_input_tails(AudioFrame* buffer,
     }
     if (to_copy < frames) {
         resonance::pad_output_with_cosine_underrun_fade(buffer, frames, to_copy, last_mix_out_l_, last_mix_out_r_,
-                                            last_mix_out_valid_);
+                                                        last_mix_out_valid_);
     }
     // Near-silence with no tail residue: end grace early.
     if (to_copy == 0 && !produced_any && last_mix_out_valid_ &&
@@ -1223,7 +1223,7 @@ void ResonanceStreamPlayback::_mix_emit_output_frames(AudioFrame* buffer, int32_
 
     if (valid_copy < frames) {
         resonance::pad_output_with_cosine_underrun_fade(buffer, frames, valid_copy, last_mix_out_l_, last_mix_out_r_,
-                                            last_mix_out_valid_);
+                                                        last_mix_out_valid_);
     }
 
     if (frames > 0) {

@@ -84,7 +84,9 @@ TEST_CASE("EOS silent full buffer triggers zero-input tail drain", "[playback][e
 
 namespace {
 
-enum class EosReflectionTailBranch { None, ConvOrTan, ParametricOrHybrid };
+enum class EosReflectionTailBranch { None,
+                                     ConvOrTan,
+                                     ParametricOrHybrid };
 
 EosReflectionTailBranch eos_reflection_tail_branch(int reflection_type) {
     if (reflection_type == kReflectionConvolution || reflection_type == kReflectionTan)
