@@ -1,9 +1,13 @@
 #ifndef RESONANCE_PATHING_INPUTS_POLICY_H
 #define RESONANCE_PATHING_INPUTS_POLICY_H
 
+#include <algorithm>
 #include <cstdint>
 
 namespace resonance {
+
+/// Max pathing Ambisonic order (order 3 -> 16 SH coeffs).
+constexpr int kPathingApplyOrderMax = 3;
 
 /// Phonon iplSourceSetInputs quirk (Steam Audio 4.8.1):
 /// pathingInputs is only mutated when the *selector* argument includes PATHING.
@@ -43,6 +47,18 @@ inline bool simulator_supports_pathing_run(bool pathing_enabled, bool simulator_
 /// True when toggling pathing on requires audio-engine reinit (new iplSimulatorCreate).
 inline bool pathing_enable_requires_simulator_recreate(bool want_enabled, bool simulator_created_with_pathing) {
     return want_enabled && !simulator_created_with_pathing;
+}
+
+/// GetOutputs never writes pathing.order; Apply order comes from configured ambisonic_order.
+inline int pathing_apply_order(int configured_ambisonic_order) {
+    return std::clamp(configured_ambisonic_order, 0, kPathingApplyOrderMax);
+}
+
+/// Exact (order+1)^2; unlike ambisonic_num_channels_for_order this does not clamp to 1..3.
+inline int pathing_sh_coeff_count(int order) {
+    if (order < 0)
+        return 0;
+    return (order + 1) * (order + 1);
 }
 
 } // namespace resonance

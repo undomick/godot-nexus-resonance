@@ -373,6 +373,7 @@ void ResonanceServer::_bind_methods() {
     ClassDB::bind_method(D_METHOD("is_simulating"), &ResonanceServer::is_simulating);
     ClassDB::bind_method(D_METHOD("is_spatial_audio_output_ready"), &ResonanceServer::is_spatial_audio_output_ready);
     ClassDB::bind_method(D_METHOD("reset_spatial_audio_warmup_passes"), &ResonanceServer::reset_spatial_audio_warmup_passes);
+    ClassDB::bind_method(D_METHOD("arm_spatial_audio_output_gate"), &ResonanceServer::arm_spatial_audio_output_gate);
     ClassDB::bind_method(D_METHOD("get_sample_rate"), &ResonanceServer::get_sample_rate);
     ClassDB::bind_method(D_METHOD("get_audio_frame_size"), &ResonanceServer::get_audio_frame_size);
     ClassDB::bind_method(D_METHOD("get_direct_speaker_channels"), &ResonanceServer::get_direct_speaker_channels);

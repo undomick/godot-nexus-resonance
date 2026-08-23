@@ -257,7 +257,7 @@ void ResonanceRuntime::reload_after_reinit() {
 void ResonanceRuntime::deferred_reset_spatial_audio_warmup_passes() {
     ResonanceServer* srv = ResonanceServer::get_singleton();
     if (srv && srv->is_initialized()) {
-        srv->reset_spatial_audio_warmup_passes();
+        srv->arm_spatial_audio_output_gate();
     }
 }
 

@@ -43,3 +43,21 @@ TEST_CASE("enabling pathing without PATHING create requires recreate", "[pathing
     REQUIRE_FALSE(pathing_enable_requires_simulator_recreate(false, false));
     REQUIRE_FALSE(pathing_enable_requires_simulator_recreate(false, true));
 }
+
+TEST_CASE("pathing apply order clamps to Ambisonic 0..3", "[pathing_inputs]") {
+    REQUIRE(pathing_apply_order(2) == 2);
+    REQUIRE(pathing_apply_order(0) == 0);
+    REQUIRE(pathing_apply_order(99) == 3);
+    REQUIRE(pathing_apply_order(-1) == 0);
+    // Configured order 2 must win over zero-init GetOutputs order (never written by Steam Audio).
+    REQUIRE(pathing_apply_order(2) != 0);
+    REQUIRE(pathing_sh_coeff_count(pathing_apply_order(2)) == 9);
+}
+
+TEST_CASE("pathing SH coeff count is (order+1)^2", "[pathing_inputs]") {
+    REQUIRE(pathing_sh_coeff_count(0) == 1);
+    REQUIRE(pathing_sh_coeff_count(1) == 4);
+    REQUIRE(pathing_sh_coeff_count(2) == 9);
+    REQUIRE(pathing_sh_coeff_count(3) == 16);
+    REQUIRE(pathing_sh_coeff_count(-1) == 0);
+}

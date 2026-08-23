@@ -84,6 +84,8 @@ Run via Godot with GUT addon or CLI (`project/run_tests.ps1` after sync).
 
 **Manual regression (geometry teardown):** No C++ unit test covers full Phonon teardown. After changes to `ResonanceGeometry` cleanup, verify in a running project: attach **ResonanceDynamicGeometry** under a `MeshInstance3D`, run the game, then **change scene** (`change_scene_to_file` / equivalent). It must not crash; dynamic meshes are removed from the object’s `sub_scene` before `iplSceneRelease`, not from the global scene.
 
+**Manual / GUT regression (dynamic spawn cutout):** Continuous tone must not hard-mute when spawning `ResonanceDynamicGeometry` into a non-empty scene. Scene: [`test/manual/dynamic_geometry_spawn_audio/`](../test/manual/dynamic_geometry_spawn_audio/) (see its README). GUT twin: [`test/unit/test_dynamic_geometry_spawn_keeps_spatial_ready.gd`](../test/unit/test_dynamic_geometry_spawn_keeps_spatial_ready.gd).
+
 ## Release Workflow
 
 1. Update version in `src/resonance_constants.h` (NEXUS_RESONANCE_VERSION).

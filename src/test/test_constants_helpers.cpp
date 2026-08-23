@@ -44,6 +44,15 @@ TEST_CASE("spatial_audio_geometry_gate_allows_output warmup and commit", "[const
     REQUIRE(kSpatialAudioWarmupWorkerPasses > 0);
 }
 
+TEST_CASE("spatial_audio_geometry_notify_should_arm_gate only on empty-to-nonempty", "[constants]") {
+    REQUIRE(spatial_audio_geometry_notify_should_arm_gate(0, 10));
+    REQUIRE(spatial_audio_geometry_notify_should_arm_gate(-1, 1));
+    REQUIRE_FALSE(spatial_audio_geometry_notify_should_arm_gate(10, 20));
+    REQUIRE_FALSE(spatial_audio_geometry_notify_should_arm_gate(10, 5));
+    REQUIRE_FALSE(spatial_audio_geometry_notify_should_arm_gate(0, 0));
+    REQUIRE_FALSE(spatial_audio_geometry_notify_should_arm_gate(5, 0));
+}
+
 TEST_CASE("process priority chain listener before player before runtime", "[constants]") {
     REQUIRE(kResonanceListenerProcessPriority > kResonancePlayerProcessPriority);
     REQUIRE(kResonancePlayerProcessPriority > kResonanceRuntimeProcessPriority);

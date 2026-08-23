@@ -474,7 +474,6 @@ class ResonanceServer : public Object {
     /// Lets the main thread avoid calling fetch_reverb_params only for has_reverb UI/state (see peek_reverb_params_likely_available).
     mutable std::mutex reverb_params_likely_available_mutex_;
     std::unordered_map<int32_t, bool> reverb_params_likely_available_;
-    void _set_reverb_params_likely_available_hint(int32_t handle, bool likely);
     void _clear_reverb_params_likely_available_hints();
 
     // Pathing cache: worker copies SH coeffs into slot; audio reads lock-free by epoch.
@@ -825,10 +824,12 @@ class ResonanceServer : public Object {
     String get_version();
     bool is_initialized() const;
     bool is_simulating() const;
-    /// When false, ResonancePlayer/Ambisonic spatial output is silent (warmup after scene changes or runtime start).
+    /// When false, ResonancePlayer/Ambisonic spatial output is silent (warmup after cold start / scene load / first triangles).
     bool is_spatial_audio_output_ready() const;
-    /// Restart warmup counter (e.g. after loading static geometry). Call from main thread.
+    /// Restart warmup counter only. Prefer arm_spatial_audio_output_gate() for mute+warmup. Call from main thread.
     void reset_spatial_audio_warmup_passes();
+    /// Mute spatial output until Phonon scene commit + warmup (cold start / full scene reload). Main thread.
+    void arm_spatial_audio_output_gate();
     int get_sample_rate() const { return current_sample_rate; }
     int get_audio_frame_size() const { return frame_size; }
     /// Channel count for direct-path speaker panning when not using HRTF (Steam Audio standard layouts).

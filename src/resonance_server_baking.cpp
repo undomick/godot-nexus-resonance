@@ -1,4 +1,5 @@
 #include "resonance_constants.h"
+#include "resonance_epoch.h"
 #include "resonance_geometry_asset.h"
 #include "resonance_ipl_guard.h"
 #include "resonance_log.h"
@@ -219,8 +220,12 @@ bool ResonanceServer::_create_instanced_static_pack_assume_locked(const Ref<Reso
 
     // add_static_scene_from_asset with unused_gtc did not update global_triangle_count - fix that.
     const int added_tri = asset->get_triangle_count();
-    if (added_tri > 0)
-        global_triangle_count.fetch_add(added_tri, std::memory_order_release);
+    if (added_tri > 0) {
+        const int after = global_triangle_count.fetch_add(added_tri, std::memory_order_release) + added_tri;
+        const int before = after - added_tri;
+        if (resonance::spatial_audio_geometry_notify_should_arm_gate(before, after))
+            arm_spatial_audio_output_gate();
+    }
     scene_dirty.store(true, std::memory_order_release);
 
     out.sub_scene = subs[0];
@@ -238,7 +243,7 @@ void ResonanceServer::clear_static_scenes() {
         return;
     std::lock_guard<std::mutex> lock(simulation_mutex);
     _clear_static_packs_assume_locked();
-    reset_spatial_audio_warmup_passes();
+    arm_spatial_audio_output_gate();
 }
 
 void ResonanceServer::remove_static_pack(uint64_t object_id) {
@@ -250,7 +255,6 @@ void ResonanceServer::remove_static_pack(uint64_t object_id) {
         return;
     _release_static_pack_assume_locked(it->second);
     _runtime_static_packs.erase(it);
-    reset_spatial_audio_warmup_passes();
 }
 
 void ResonanceServer::add_or_replace_static_pack(uint64_t object_id, const Ref<ResonanceGeometryAsset>& p_asset,
@@ -269,13 +273,11 @@ void ResonanceServer::add_or_replace_static_pack(uint64_t object_id, const Ref<R
             _release_static_pack_assume_locked(it->second);
             _runtime_static_packs.erase(it);
         }
-        reset_spatial_audio_warmup_passes();
         return;
     }
     // Build the replacement first so an IPL/create failure keeps the existing pack.
     RuntimeStaticPack pack;
     if (!_create_instanced_static_pack_assume_locked(p_asset, p_transform, pack)) {
-        reset_spatial_audio_warmup_passes();
         return;
     }
     auto it = _runtime_static_packs.find(object_id);
@@ -285,7 +287,6 @@ void ResonanceServer::add_or_replace_static_pack(uint64_t object_id, const Ref<R
     }
     _runtime_static_triangle_count += pack.tri_count;
     _runtime_static_packs.emplace(object_id, pack);
-    reset_spatial_audio_warmup_passes();
 }
 
 void ResonanceServer::replace_static_scenes_from_assets(const TypedArray<ResonanceGeometryAsset>& assets,
@@ -299,7 +300,7 @@ void ResonanceServer::replace_static_scenes_from_assets(const TypedArray<Resonan
             UtilityFunctions::push_warning(
                 "Nexus Resonance: replace_static_scenes_from_assets has no effect when scene_type is Custom (Godot Physics).");
         }
-        reset_spatial_audio_warmup_passes();
+        arm_spatial_audio_output_gate();
         return;
     }
     const int n = assets.size();
@@ -316,7 +317,7 @@ void ResonanceServer::replace_static_scenes_from_assets(const TypedArray<Resonan
         _runtime_static_triangle_count += pack.tri_count;
         _runtime_static_packs.emplace(id, pack);
     }
-    reset_spatial_audio_warmup_passes();
+    arm_spatial_audio_output_gate();
 }
 
 void ResonanceServer::add_static_scene_from_asset(const Ref<ResonanceGeometryAsset>& p_asset, const Transform3D& p_transform) {
@@ -337,7 +338,7 @@ void ResonanceServer::load_static_scene_from_asset(const Ref<ResonanceGeometryAs
     std::lock_guard<std::mutex> lock(simulation_mutex);
     _clear_static_packs_assume_locked();
     if (!p_asset.is_valid() || !p_asset->is_valid()) {
-        reset_spatial_audio_warmup_passes();
+        arm_spatial_audio_output_gate();
         return;
     }
     const uint64_t id = _next_ephemeral_static_pack_id++;
@@ -346,7 +347,7 @@ void ResonanceServer::load_static_scene_from_asset(const Ref<ResonanceGeometryAs
         _runtime_static_triangle_count += pack.tri_count;
         _runtime_static_packs.emplace(id, pack);
     }
-    reset_spatial_audio_warmup_passes();
+    arm_spatial_audio_output_gate();
 }
 
 void ResonanceServer::set_bake_params(Dictionary params) {
@@ -818,15 +819,9 @@ void ResonanceServer::_clear_all_param_caches() {
     const int reverb_back = 1 - reverb_param_cache_front_.load(std::memory_order_acquire);
     const int refl_back = 1 - reflection_param_cache_front_.load(std::memory_order_acquire);
     const int path_back = 1 - pathing_param_cache_front_.load(std::memory_order_acquire);
-    reverb_param_cache_epoch_[reverb_back]++;
-    reflection_param_cache_epoch_[refl_back]++;
-    pathing_param_cache_epoch_[path_back]++;
-    if (reverb_param_cache_epoch_[reverb_back] == 0u)
-        reverb_param_cache_epoch_[reverb_back] = 1u;
-    if (reflection_param_cache_epoch_[refl_back] == 0u)
-        reflection_param_cache_epoch_[refl_back] = 1u;
-    if (pathing_param_cache_epoch_[path_back] == 0u)
-        pathing_param_cache_epoch_[path_back] = 1u;
+    resonance::bump_slot_epoch(reverb_param_cache_epoch_[reverb_back]);
+    resonance::bump_slot_epoch(reflection_param_cache_epoch_[refl_back]);
+    resonance::bump_slot_epoch(pathing_param_cache_epoch_[path_back]);
     reverb_param_cache_front_.store(reverb_back, std::memory_order_release);
     reflection_param_cache_front_.store(refl_back, std::memory_order_release);
     pathing_param_cache_front_.store(path_back, std::memory_order_release);

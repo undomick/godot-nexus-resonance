@@ -47,12 +47,13 @@ bool ResonanceServer::consume_geometry_transform_coalesce_tick() {
 void ResonanceServer::notify_geometry_changed_assume_locked(int triangle_delta) {
     if (!_ctx())
         return;
-    if (triangle_delta != 0)
-        global_triangle_count.fetch_add(triangle_delta, std::memory_order_release);
     if (triangle_delta != 0) {
-        phonon_scene_audio_ready_.store(false, std::memory_order_release);
-        reset_spatial_audio_warmup_passes();
+        const int after = global_triangle_count.fetch_add(triangle_delta, std::memory_order_release) + triangle_delta;
+        const int before = after - triangle_delta;
         scene_dirty.store(true, std::memory_order_release);
+        // Arm gate only when entering a non-empty scene (cold / first triangles), not on incremental add/remove.
+        if (resonance::spatial_audio_geometry_notify_should_arm_gate(before, after))
+            arm_spatial_audio_output_gate();
     } else if (consume_geometry_transform_coalesce_tick()) {
         scene_dirty.store(true, std::memory_order_release);
     }
@@ -155,7 +156,7 @@ void ResonanceServer::refresh_all_geometry_from_scene_tree() {
 
 void ResonanceServer::_deferred_refresh_all_geometry_after_scene_load() {
     refresh_all_geometry_from_scene_tree();
-    reset_spatial_audio_warmup_passes();
+    arm_spatial_audio_output_gate();
 }
 
 Error ResonanceServer::export_static_scene_to_asset(Node* scene_root, const String& p_path) {

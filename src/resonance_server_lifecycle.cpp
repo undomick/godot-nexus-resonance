@@ -1,7 +1,9 @@
 #include "resonance_constants.h"
+#include "resonance_epoch.h"
 #include "resonance_geometry.h"
 #include "resonance_log.h"
 #include "resonance_math.h"
+#include "resonance_reflection_type_policy.h"
 #include "resonance_server.h"
 #include "resonance_source_handle_policy.h"
 #include "resonance_utils.h"
@@ -41,6 +43,7 @@ String ambient_order_ordinal(int64_t n) {
         return String::num_int64(n) + "rd";
     return String::num_int64(n) + "th";
 }
+
 } // namespace
 
 std::atomic<bool> ResonanceServer::is_shutting_down_flag{false};
@@ -48,7 +51,7 @@ static ResonanceServer* g_resonance_server_singleton = nullptr;
 
 ResonanceServer::ResonanceServer() {
     g_resonance_server_singleton = this;
-    // No auto-init here!
+    // Init is explicit via init()/reinit(); ctor only primes cache slots.
     reverb_param_cache_front_.store(0, std::memory_order_release);
     reflection_param_cache_front_.store(0, std::memory_order_release);
     pathing_param_cache_front_.store(0, std::memory_order_release);
@@ -264,7 +267,7 @@ void ResonanceServer::_init_internal() {
     instrumentation_fetch_cache_skip.store(0, std::memory_order_relaxed);
     reset_pathing_instrumentation();
 
-    // Fresh init after teardown/reinit: clear shutdown/teardown flags so a new context is usable in-process (e.g. editor play again).
+    // Clear shutdown/teardown so a fresh context is usable after editor play / reinit.
     is_shutting_down_flag.store(false, std::memory_order_release);
     ipl_teardown_active_.store(false, std::memory_order_release);
 
@@ -333,11 +336,12 @@ bool ResonanceServer::_init_scene_and_simulator() {
     sceneSettings.type = _scene_type();
     sceneSettings.embreeDevice = _embree();
     sceneSettings.radeonRaysDevice = _radeon();
+    const int ray_batch =
+        (_scene_type() == IPL_SCENETYPE_CUSTOM) ? resonance::clamp_physics_ray_batch_size(physics_ray_batch_size) : 1;
     if (_scene_type() == IPL_SCENETYPE_CUSTOM) {
         sceneSettings.closestHitCallback = &ResonanceGodotPhysicsSceneBridge::closest_hit_callback;
         sceneSettings.anyHitCallback = &ResonanceGodotPhysicsSceneBridge::any_hit_callback;
-        const int batch = resonance::clamp_physics_ray_batch_size(physics_ray_batch_size);
-        if (batch > 1) {
+        if (ray_batch > 1) {
             sceneSettings.batchedClosestHitCallback = &ResonanceGodotPhysicsSceneBridge::batched_closest_hit_callback;
             sceneSettings.batchedAnyHitCallback = &ResonanceGodotPhysicsSceneBridge::batched_any_hit_callback;
         } else {
@@ -353,19 +357,15 @@ bool ResonanceServer::_init_scene_and_simulator() {
     }
 
     simulation_settings.flags = static_cast<IPLSimulationFlags>(IPL_SIMULATIONFLAGS_DIRECT | IPL_SIMULATIONFLAGS_REFLECTIONS);
-    // Pathing simulators are only allocated when PATHING is set at iplSimulatorCreate.
+    // Pathing requires PATHING at iplSimulatorCreate; later toggles cannot add it.
     if (pathing_enabled)
         simulation_settings.flags = static_cast<IPLSimulationFlags>(simulation_settings.flags | IPL_SIMULATIONFLAGS_PATHING);
-    // scene_type: Default / Embree / Radeon Rays / Custom (Godot physics callbacks).
     simulation_settings.sceneType = _scene_type();
-    simulation_settings.reflectionType =
-        (reflection_type == resonance::kReflectionParametric) ? IPL_REFLECTIONEFFECTTYPE_PARAMETRIC : (reflection_type == resonance::kReflectionHybrid) ? IPL_REFLECTIONEFFECTTYPE_HYBRID
-                                                                                                  : (reflection_type == resonance::kReflectionTan)      ? IPL_REFLECTIONEFFECTTYPE_TAN
-                                                                                                                                                        : IPL_REFLECTIONEFFECTTYPE_CONVOLUTION;
+    simulation_settings.reflectionType = resonance::reflection_type_for_simulator(reflection_type);
     simulation_settings.openCLDevice = _opencl();
     simulation_settings.tanDevice = _tan();
     simulation_settings.maxNumOcclusionSamples = max_occlusion_samples;
-    // maxNumRays==0 is valid (baked-only); no need to force a minimum for convolution-style modes.
+    // maxNumRays==0 is valid (baked-only).
     simulation_settings.maxNumRays = max_rays;
     simulation_settings.numDiffuseSamples = realtime_num_diffuse_samples;
     simulation_settings.maxDuration = max_reverb_duration;
@@ -375,10 +375,7 @@ bool ResonanceServer::_init_scene_and_simulator() {
     simulation_settings.numThreads = simulation_threads;
     simulation_settings.maxNumSources = max_simulation_sources;
     simulation_settings.numVisSamples = pathing_enabled ? pathing_num_vis_samples : 1;
-    {
-        const int batch = (_scene_type() == IPL_SCENETYPE_CUSTOM) ? resonance::clamp_physics_ray_batch_size(physics_ray_batch_size) : 1;
-        simulation_settings.rayBatchSize = batch;
-    }
+    simulation_settings.rayBatchSize = ray_batch;
 
     if (iplSimulatorCreate(_ctx(), &simulation_settings, &simulator) != IPL_STATUS_SUCCESS) {
         ResonanceLog::error("ResonanceServer: iplSimulatorCreate failed.");
@@ -388,14 +385,11 @@ bool ResonanceServer::_init_scene_and_simulator() {
     }
     simulator_created_with_pathing_ = pathing_enabled;
 
-    // Lazy FMOD reverb IPLSource: ensure_fmod_reverb_source() when the bridge is used.
-
     if (reflection_type == resonance::kReflectionConvolution || reflection_type == resonance::kReflectionTan) {
         IPLReflectionEffectSettings rs{};
         rs.type = (reflection_type == resonance::kReflectionTan) ? IPL_REFLECTIONEFFECTTYPE_TAN : IPL_REFLECTIONEFFECTTYPE_CONVOLUTION;
         rs.numChannels = get_num_channels_for_order();
-        rs.irSize = static_cast<IPLint32>(
-            std::lroundf(resonance::sanitize_audio_float(max_reverb_duration) * static_cast<float>(current_sample_rate)));
+        rs.irSize = resonance::reverb_ir_size_samples(current_sample_rate, max_reverb_duration);
         IPLReflectionMixer tmp_mixer = nullptr;
         if (iplReflectionMixerCreate(_ctx(), &audioSettings, &rs, &tmp_mixer) != IPL_STATUS_SUCCESS) {
             ResonanceLog::error("ResonanceServer: iplReflectionMixerCreate failed.");
@@ -413,8 +407,7 @@ bool ResonanceServer::_init_scene_and_simulator() {
     iplSimulatorCommit(simulator);
 
     {
-        const int batch = (_scene_type() == IPL_SCENETYPE_CUSTOM) ? resonance::clamp_physics_ray_batch_size(physics_ray_batch_size) : 1;
-        const bool batched_path = (_scene_type() == IPL_SCENETYPE_CUSTOM && batch > 1);
+        const bool batched_path = (_scene_type() == IPL_SCENETYPE_CUSTOM && ray_batch > 1);
         const char* st_label = "DEFAULT";
         if (_scene_type() == IPL_SCENETYPE_EMBREE)
             st_label = "EMBREE";
@@ -423,7 +416,7 @@ bool ResonanceServer::_init_scene_and_simulator() {
         else if (_scene_type() == IPL_SCENETYPE_CUSTOM)
             st_label = "CUSTOM";
         if (batched_path)
-            ResonanceLog::info(String("Nexus Resonance: simulator ") + st_label + ", rayBatchSize=" + String::num(batch) +
+            ResonanceLog::info(String("Nexus Resonance: simulator ") + st_label + ", rayBatchSize=" + String::num(ray_batch) +
                                " (Godot physics batched trace callbacks; Phonon BatchedReflectionSimulator path).");
         else if (_scene_type() == IPL_SCENETYPE_CUSTOM)
             ResonanceLog::info(String("Nexus Resonance: simulator ") + st_label + ", rayBatchSize=1 (single-ray callbacks per job).");
@@ -512,17 +505,17 @@ IPLSceneType ResonanceServer::_tracer_type_for_mesh_operations() const {
 }
 
 void ResonanceServer::_shutdown_steam_audio() {
-    // Invalidate client-held source/probe-batch handles before recycling IDs (Auto frame-size reinit, etc.).
+    // Bump client-held handle epoch before recycling IDs (e.g. auto frame-size reinit).
     source_lifecycle_epoch_.store(resonance::next_source_lifecycle_epoch(source_lifecycle_epoch_.load(std::memory_order_relaxed)),
                                   std::memory_order_release);
     _clear_physics_ray_excludes_state();
     godot_physics_bridge_.clear_world();
     if (!_ctx())
-        return; // Idempotent; safe to call multiple times
+        return;
 
     ipl_teardown_active_.store(true, std::memory_order_release);
 
-    // Reset atomic flags first to prevent late accesses during/after shutdown
+    // Reset gates before teardown so late audio/main paths stop using IPL.
     listener_seq_.store(0, std::memory_order_release);
     pending_listener_valid.store(false);
     simulation_requested.store(false);
@@ -550,7 +543,7 @@ void ResonanceServer::_shutdown_steam_audio() {
         if (worker_thread.joinable())
             worker_thread.join();
     }
-    // Worker stopped: release queued Remove retains; pending Adds without a worker attach are dropped with later release_all.
+    // Worker stopped: drain queued Remove retains; pending Adds without attach are dropped with later release_all.
     {
         std::vector<PendingSourceAdd> local_adds;
         std::vector<IPLSource> local_removes;
@@ -577,44 +570,28 @@ void ResonanceServer::_shutdown_steam_audio() {
         _source_attenuation_entries.clear();
     }
     _source_update_snapshot_.clear();
-    // Clear caches via epoch bump (avoid O(N) clears during teardown).
+    // Invalidate lock-free caches via epoch bump (avoid O(N) clears during teardown).
     reverb_param_cache_front_.store(0, std::memory_order_release);
     reflection_param_cache_front_.store(0, std::memory_order_release);
     pathing_param_cache_front_.store(0, std::memory_order_release);
     occlusion_cache_front_.store(0, std::memory_order_release);
     for (int slot = 0; slot < kCacheSlots; slot++) {
-        reverb_param_cache_epoch_[slot]++;
-        reflection_param_cache_epoch_[slot]++;
-        pathing_param_cache_epoch_[slot]++;
-        occlusion_cache_epoch_[slot]++;
-        if (reverb_param_cache_epoch_[slot] == 0u)
-            reverb_param_cache_epoch_[slot] = 1u;
-        if (reflection_param_cache_epoch_[slot] == 0u)
-            reflection_param_cache_epoch_[slot] = 1u;
-        if (pathing_param_cache_epoch_[slot] == 0u)
-            pathing_param_cache_epoch_[slot] = 1u;
-        if (occlusion_cache_epoch_[slot] == 0u)
-            occlusion_cache_epoch_[slot] = 1u;
+        resonance::bump_slot_epoch(reverb_param_cache_epoch_[slot]);
+        resonance::bump_slot_epoch(reflection_param_cache_epoch_[slot]);
+        resonance::bump_slot_epoch(pathing_param_cache_epoch_[slot]);
+        resonance::bump_slot_epoch(occlusion_cache_epoch_[slot]);
     }
     _clear_reverb_params_likely_available_hints();
 
-    // Drain ResonanceAudioEffect / InternalPlayback IPL users under AudioServer::lock before destroying IPLSource handles.
-    {
-        AudioServer* audio = AudioServer::get_singleton();
-        if (audio)
-            audio->lock();
-        _drain_ipl_context_clients_assume_audio_locked();
-        if (audio)
-            audio->unlock();
-    }
+    // Drain AudioEffect / InternalPlayback IPL users under AudioServer::lock before destroying IPLSource handles.
+    _drain_ipl_context_clients_before_context_destroy();
 
-    // Clean probe batches (remove from simulator before releasing). Snapshot under registry mutex only;
-    // simulator Remove runs below under simulation_mutex (never nest registry after holding sim here:
-    // worker is already joined).
+    // Snapshot probe batches under registry mutex only; Remove runs below under simulation_mutex
+    // (never nest registry after holding sim - worker is already joined).
     std::vector<IPLProbeBatch> batches_to_release;
     probe_batch_registry_.get_all_batches_for_shutdown(batches_to_release);
 
-    // Hold simulation_mutex for all IPL simulator/scene/source teardown so audio-thread try_lock paths cannot interleave.
+    // Hold simulation_mutex for IPL teardown so audio-thread try_lock paths cannot interleave.
     {
         std::lock_guard<std::mutex> sim_lock(simulation_mutex);
         _drain_pathing_probe_batch_releases();
@@ -628,14 +605,13 @@ void ResonanceServer::_shutdown_steam_audio() {
         if (simulator && !batches_to_release.empty())
             iplSimulatorCommit(simulator);
 
-        // FMOD Bridge: destroy reverb source before simulator release (cannot use destroy_source_handle: is_shutting_down blocks it).
+        // FMOD: destroy reverb source before simulator release (destroy_source_handle blocked while shutting down).
         if (fmod_reverb_source_handle_ >= 0) {
             _destroy_source_handle_under_simulation_lock(fmod_reverb_source_handle_);
             fmod_reverb_source_handle_ = -1;
         }
 
-        // SourceManager retains each IPLSource; release the simulator only after every source is removed and released.
-        // Otherwise the audio thread can win try_lock after the worker joined and call iplSourceGetOutputs on stale handles.
+        // Release every IPLSource before the simulator; otherwise audio can try_lock and GetOutputs on stale handles.
         {
             std::vector<int32_t> source_handles;
             source_manager.get_all_handles(source_handles);
@@ -680,6 +656,20 @@ void ResonanceServer::reset_spatial_audio_warmup_passes() {
     if (!is_initialized())
         return;
     spatial_audio_warmup_passes_remaining_.store(resonance::kSpatialAudioWarmupWorkerPasses, std::memory_order_release);
+}
+
+void ResonanceServer::arm_spatial_audio_output_gate() {
+    if (!is_initialized())
+        return;
+    // Clear ready and restart warmup; mark scene dirty so the next tick re-commits phonon_scene_audio_ready_.
+    phonon_scene_audio_ready_.store(false, std::memory_order_release);
+    reset_spatial_audio_warmup_passes();
+    scene_dirty.store(true, std::memory_order_release);
+    if (!_uses_main_thread_phonon_simulation() && thread_running) {
+        std::lock_guard<std::mutex> lock(worker_mutex);
+        simulation_requested = true;
+        worker_cv.notify_one();
+    }
 }
 
 void ResonanceServer::_worker_note_direct_sim_pass_completed() {

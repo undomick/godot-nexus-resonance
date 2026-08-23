@@ -320,7 +320,7 @@ void ResonanceGeometry::_update_viz_geometry_override() {
     viz_geometry_override->set_visible(show_geometry_override_in_viewport);
 }
 
-void ResonanceGeometry::_clear_meshes_impl() {
+void ResonanceGeometry::_clear_meshes_impl(bool notify_server) {
     // Do not drop static-scene-root cache here: _create_meshes often clears then rebuilds the same frame.
     _invalidate_topology_caches(false);
     ResonanceServer* server = ResonanceServer::get_singleton();
@@ -359,8 +359,9 @@ void ResonanceGeometry::_clear_meshes_impl() {
             static_meshes.clear();
         }
 
-        // Notify change if we removed triangles (caller holds simulation_mutex via _clear_meshes)
-        if (triangle_count > 0) {
+        // Notify change if we removed triangles (caller holds simulation_mutex via _clear_meshes).
+        // Rebuild paths pass notify_server=false and issue a single net notify after create.
+        if (notify_server && triangle_count > 0) {
             server->notify_geometry_changed_assume_locked(-triangle_count);
         }
     } else {
@@ -439,6 +440,7 @@ void ResonanceGeometry::_create_meshes() {
             return;
     }
 
+    const int previous_triangle_count = triangle_count;
     const bool use_asset_path = dynamic_object && mesh_asset.is_valid() && mesh_asset->is_valid();
     MeshInstance3D* mesh_instance = Object::cast_to<MeshInstance3D>(parent);
 
@@ -534,7 +536,7 @@ void ResonanceGeometry::_create_meshes() {
             return;
         }
 
-        _clear_meshes_impl();
+        _clear_meshes_impl(false);
         sub_scene = new_sub;
         static_meshes.push_back(local_mesh);
         instanced_mesh = new_inst;
@@ -598,7 +600,7 @@ void ResonanceGeometry::_create_meshes() {
                     return;
                 }
 
-                _clear_meshes_impl();
+                _clear_meshes_impl(false);
                 sub_scene = new_sub;
                 static_meshes.push_back(local_mesh);
                 instanced_mesh = new_inst;
@@ -611,7 +613,7 @@ void ResonanceGeometry::_create_meshes() {
                     ResonanceLog::error("ResonanceGeometry: iplStaticMeshCreate failed (static).");
                     return;
                 }
-                _clear_meshes_impl();
+                _clear_meshes_impl(false);
                 iplStaticMeshAdd(new_mesh, server->get_scene_handle());
                 static_meshes.push_back(new_mesh);
                 triangle_count = (int)ipl_triangles.size();
@@ -626,8 +628,12 @@ void ResonanceGeometry::_create_meshes() {
         }
     }
 
-    if (triangle_count > 0) {
-        server->notify_geometry_changed(triangle_count);
+    const int net_triangles = triangle_count - previous_triangle_count;
+    if (net_triangles != 0) {
+        server->notify_geometry_changed(net_triangles);
+    } else {
+        // Mesh replaced with the same triangle count; still need iplSceneCommit.
+        server->mark_scene_commit_pending();
     }
 }
 

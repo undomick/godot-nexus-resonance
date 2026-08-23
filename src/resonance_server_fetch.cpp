@@ -1,6 +1,8 @@
 #include "resonance_constants.h"
+#include "resonance_epoch.h"
 #include "resonance_math.h"
-#include "resonance_reflection_ir_fingerprint.h"
+#include "resonance_pathing_inputs_policy.h"
+#include "resonance_reflection_type_policy.h"
 #include "resonance_server.h"
 #include "resonance_utils.h"
 #include <algorithm>
@@ -30,25 +32,6 @@ bool reflection_params_still_usable_for_mix(int reflection_type, const IPLReflec
     default:
         return false;
     }
-}
-
-IPLReflectionEffectType reflection_effect_type_for_mode(int reflection_type, bool hybrid_convolution_and_parametric) {
-    if (reflection_type == resonance::kReflectionParametric)
-        return IPL_REFLECTIONEFFECTTYPE_PARAMETRIC;
-    if (reflection_type == resonance::kReflectionHybrid) {
-        if (hybrid_convolution_and_parametric)
-            return IPL_REFLECTIONEFFECTTYPE_HYBRID;
-        return IPL_REFLECTIONEFFECTTYPE_PARAMETRIC;
-    }
-    if (reflection_type == resonance::kReflectionTan)
-        return IPL_REFLECTIONEFFECTTYPE_TAN;
-    return IPL_REFLECTIONEFFECTTYPE_CONVOLUTION;
-}
-
-uint32_t bump_slot_epoch(uint32_t& slot_epoch) {
-    uint32_t e = slot_epoch + 1u;
-    slot_epoch = (e == 0u) ? 1u : e;
-    return slot_epoch;
 }
 
 } // namespace
@@ -141,11 +124,6 @@ void ResonanceServer::update_source_position(int32_t handle, Vector3 position, f
     params.use_sim_distance_attenuation = use_sim_distance_attenuation;
     params.min_distance = min_distance;
     update_source(handle, params);
-}
-
-void ResonanceServer::_set_reverb_params_likely_available_hint(int32_t handle, bool likely) {
-    std::lock_guard<std::mutex> lock(reverb_params_likely_available_mutex_);
-    reverb_params_likely_available_[handle] = likely;
 }
 
 void ResonanceServer::_clear_reverb_params_likely_available_hints() {
@@ -312,77 +290,80 @@ bool ResonanceServer::_worker_fetch_reflection_into_back(IPLSource src, int32_t 
                        (has_convolution || outputs.reflections.reverbTimes[0] > 0));
     bool has_tan = (reflection_type == resonance::kReflectionTan && outputs.reflections.tanSlot >= 0 && _tan());
 
-    bool refl_hint = false;
-    if (has_convolution || use_last_good_conv || (reflection_type == resonance::kReflectionParametric && has_parametric) || has_hybrid ||
-        has_tan) {
-        IPLReflectionEffectParams out_params = outputs.reflections;
-        if (use_last_good_conv) {
-            out_params = last_good_reflection_params_[static_cast<size_t>(handle)];
-            has_convolution = (out_params.ir != nullptr);
-        }
-        for (int i = 0; i < resonance::kReverbBandCount; i++) {
-            out_params.reverbTimes[i] = resonance::clamp_reverb_time(out_params.reverbTimes[i]);
-            out_params.eq[i] = resonance::sanitize_audio_float(out_params.eq[i]);
-        }
-        out_params.delay = resonance::sanitize_delay_samples(out_params.delay);
-        if (has_convolution && out_params.ir != nullptr) {
-            const int max_ir_samples = 480000;
-            const int max_ir_channels = 64;
-            if (out_params.irSize <= 0 || out_params.irSize > max_ir_samples || out_params.numChannels <= 0 ||
-                out_params.numChannels > max_ir_channels) {
-                if (handle >= 0 && handle < kMaxCacheHandles &&
-                    last_good_reflection_valid_[static_cast<size_t>(handle)].load(std::memory_order_relaxed) != 0) {
-                    out_params = last_good_reflection_params_[static_cast<size_t>(handle)];
-                    has_convolution = (out_params.ir != nullptr);
-                } else {
-                    out_params.ir = nullptr;
-                    has_convolution = false;
-                    has_hybrid = (reflection_type == resonance::kReflectionHybrid && outputs.reflections.reverbTimes[0] > 0);
-                }
-            }
-        }
-        const bool hybrid_conv_and_param = (reflection_type == resonance::kReflectionHybrid && has_convolution && has_parametric);
-        out_params.type = reflection_effect_type_for_mode(reflection_type, hybrid_conv_and_param);
-        if (reflection_type == resonance::kReflectionTan)
-            out_params.tanDevice = _tan();
-
-        uint16_t baked_energy_q16 = 0;
-        if (handle >= 0 && handle < kMaxCacheHandles) {
-            const IPLCoordinateSpace3 listener_cs = _read_listener_coords_seqlock();
-            const Vector3 listener_pos = ResonanceUtils::to_godot_vector3(listener_cs.origin);
-            if (_source_update_snapshot_[static_cast<size_t>(handle)].valid &&
-                _source_update_snapshot_[static_cast<size_t>(handle)].params.baked_data_variation == 1) {
-                const float baked_energy =
-                    _static_source_interpolated_baked_energy(_source_update_snapshot_[static_cast<size_t>(handle)].params, listener_pos);
-                baked_energy_q16 = reflection_baked_energy_to_q16(baked_energy);
-                reflection_baked_energy_last_[static_cast<size_t>(handle)] = baked_energy;
-            }
-        }
-
-        if (reflection_type == resonance::kReflectionParametric && has_parametric) {
-            CachedParametricReverb cr{};
-            for (int i = 0; i < resonance::kReverbBandCount; i++) {
-                cr.reverbTimes[i] = resonance::clamp_reverb_time(outputs.reflections.reverbTimes[i]);
-                cr.eq[i] = outputs.reflections.eq[i];
-            }
-            cr.epoch = reverb_param_cache_epoch_[reverb_back];
-            reverb_param_cache_[static_cast<size_t>(reverb_back)][static_cast<size_t>(handle)] = std::move(cr);
-        }
-        if (_uses_convolution_or_hybrid_or_tan() && (has_convolution || has_hybrid || has_tan)) {
-            CachedReflectionParams rp{};
-            rp.params = out_params;
-            rp.epoch = reflection_param_cache_epoch_[refl_back];
-            reflection_param_cache_[static_cast<size_t>(refl_back)][static_cast<size_t>(handle)] = std::move(rp);
-            if (has_convolution && out_params.ir != nullptr && handle >= 0 && handle < kMaxCacheHandles) {
-                last_good_reflection_params_[static_cast<size_t>(handle)] = out_params;
-                last_good_reflection_valid_[static_cast<size_t>(handle)].store(1, std::memory_order_relaxed);
-            }
-        }
-        refl_hint = true;
+    const bool usable = has_convolution || use_last_good_conv ||
+                        (reflection_type == resonance::kReflectionParametric && has_parametric) || has_hybrid || has_tan;
+    if (!usable) {
+        const auto t1 = std::chrono::steady_clock::now();
+        out_microseconds = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count());
+        return false;
     }
+
+    IPLReflectionEffectParams out_params = outputs.reflections;
+    if (use_last_good_conv) {
+        out_params = last_good_reflection_params_[static_cast<size_t>(handle)];
+        has_convolution = (out_params.ir != nullptr);
+    }
+    for (int i = 0; i < resonance::kReverbBandCount; i++) {
+        out_params.reverbTimes[i] = resonance::clamp_reverb_time(out_params.reverbTimes[i]);
+        out_params.eq[i] = resonance::sanitize_audio_float(out_params.eq[i]);
+    }
+    out_params.delay = resonance::sanitize_delay_samples(out_params.delay);
+
+    if (has_convolution && out_params.ir != nullptr) {
+        const bool ir_out_of_range = out_params.irSize <= 0 || out_params.irSize > resonance::kConvolutionIrSamplesHardMax ||
+                                     out_params.numChannels <= 0 ||
+                                     out_params.numChannels > resonance::kReflectionIrChannelsHardMax;
+        if (ir_out_of_range) {
+            if (handle >= 0 && handle < kMaxCacheHandles &&
+                last_good_reflection_valid_[static_cast<size_t>(handle)].load(std::memory_order_relaxed) != 0) {
+                out_params = last_good_reflection_params_[static_cast<size_t>(handle)];
+                has_convolution = (out_params.ir != nullptr);
+            } else {
+                out_params.ir = nullptr;
+                has_convolution = false;
+                has_hybrid = (reflection_type == resonance::kReflectionHybrid && outputs.reflections.reverbTimes[0] > 0);
+            }
+        }
+    }
+
+    const bool hybrid_conv_and_param = (reflection_type == resonance::kReflectionHybrid && has_convolution && has_parametric);
+    out_params.type = resonance::reflection_effect_type_for_mode(reflection_type, hybrid_conv_and_param);
+    if (reflection_type == resonance::kReflectionTan)
+        out_params.tanDevice = _tan();
+
+    if (handle >= 0 && handle < kMaxCacheHandles) {
+        const IPLCoordinateSpace3 listener_cs = _read_listener_coords_seqlock();
+        const Vector3 listener_pos = ResonanceUtils::to_godot_vector3(listener_cs.origin);
+        if (_source_update_snapshot_[static_cast<size_t>(handle)].valid &&
+            _source_update_snapshot_[static_cast<size_t>(handle)].params.baked_data_variation == 1) {
+            reflection_baked_energy_last_[static_cast<size_t>(handle)] = _static_source_interpolated_baked_energy(
+                _source_update_snapshot_[static_cast<size_t>(handle)].params, listener_pos);
+        }
+    }
+
+    if (reflection_type == resonance::kReflectionParametric && has_parametric) {
+        CachedParametricReverb cr{};
+        for (int i = 0; i < resonance::kReverbBandCount; i++) {
+            cr.reverbTimes[i] = resonance::clamp_reverb_time(outputs.reflections.reverbTimes[i]);
+            cr.eq[i] = outputs.reflections.eq[i];
+        }
+        cr.epoch = reverb_param_cache_epoch_[reverb_back];
+        reverb_param_cache_[static_cast<size_t>(reverb_back)][static_cast<size_t>(handle)] = std::move(cr);
+    }
+    if (_uses_convolution_or_hybrid_or_tan() && (has_convolution || has_hybrid || has_tan)) {
+        CachedReflectionParams rp{};
+        rp.params = out_params;
+        rp.epoch = reflection_param_cache_epoch_[refl_back];
+        reflection_param_cache_[static_cast<size_t>(refl_back)][static_cast<size_t>(handle)] = std::move(rp);
+        if (has_convolution && out_params.ir != nullptr && handle >= 0 && handle < kMaxCacheHandles) {
+            last_good_reflection_params_[static_cast<size_t>(handle)] = out_params;
+            last_good_reflection_valid_[static_cast<size_t>(handle)].store(1, std::memory_order_relaxed);
+        }
+    }
+
     const auto t1 = std::chrono::steady_clock::now();
     out_microseconds = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count());
-    return refl_hint;
+    return true;
 }
 
 void ResonanceServer::_worker_sync_fetch_caches(bool refresh_direct_outputs, bool refresh_reflection_outputs) {
@@ -406,13 +387,13 @@ void ResonanceServer::_worker_sync_fetch_caches(bool refresh_direct_outputs, boo
 
     // Bump epoch before fill so audio thread can detect stale slots after front flip.
     if (refresh_direct_outputs)
-        bump_slot_epoch(occlusion_cache_epoch_[occ_back]);
+        resonance::bump_slot_epoch(occlusion_cache_epoch_[occ_back]);
     if (refresh_reflection_outputs && reflection_type == resonance::kReflectionParametric)
-        bump_slot_epoch(reverb_param_cache_epoch_[reverb_back]);
+        resonance::bump_slot_epoch(reverb_param_cache_epoch_[reverb_back]);
     if (refresh_reflection_outputs && _uses_convolution_or_hybrid_or_tan())
-        bump_slot_epoch(reflection_param_cache_epoch_[refl_back]);
+        resonance::bump_slot_epoch(reflection_param_cache_epoch_[refl_back]);
     if (pathing_refresh)
-        bump_slot_epoch(pathing_param_cache_epoch_[path_back]);
+        resonance::bump_slot_epoch(pathing_param_cache_epoch_[path_back]);
 
     std::vector<std::pair<int32_t, bool>> reverb_hint_batch;
     if (refresh_reflection_outputs)
@@ -447,21 +428,18 @@ void ResonanceServer::_worker_sync_fetch_caches(bool refresh_direct_outputs, boo
             IPLSimulationOutputs pout{};
             iplSourceGetOutputs(src, IPL_SIMULATIONFLAGS_PATHING, &pout);
             if (pout.pathing.shCoeffs != nullptr) {
-                const int order = pout.pathing.order;
-                const int sh_count = (order >= 0) ? (order + 1) * (order + 1) : 0;
-                if (sh_count > 0) {
-                    CachedPathingParams pm{};
-                    pm.eqCoeffs[0] = pout.pathing.eqCoeffs[0];
-                    pm.eqCoeffs[1] = pout.pathing.eqCoeffs[1];
-                    pm.eqCoeffs[2] = pout.pathing.eqCoeffs[2];
-                    if (_pathing_copy_sh_coeffs(pm.shCoeffs, pout.pathing.shCoeffs, sh_count)) {
-                        pm.order = order;
-                        pm.epoch = pathing_param_cache_epoch_[path_back];
-                        pathing_param_cache_[static_cast<size_t>(path_back)][static_cast<size_t>(handle)] = std::move(pm);
-                        instrumentation_pathing_fetch_sh_ok.fetch_add(1, std::memory_order_relaxed);
-                    } else {
-                        instrumentation_pathing_fetch_sh_bad_order.fetch_add(1, std::memory_order_relaxed);
-                    }
+                // Order from ambisonic_order; pout.pathing.order is never written by Steam Audio.
+                const int order = resonance::pathing_apply_order(ambisonic_order);
+                const int sh_count = resonance::pathing_sh_coeff_count(order);
+                CachedPathingParams pm{};
+                pm.eqCoeffs[0] = pout.pathing.eqCoeffs[0];
+                pm.eqCoeffs[1] = pout.pathing.eqCoeffs[1];
+                pm.eqCoeffs[2] = pout.pathing.eqCoeffs[2];
+                if (_pathing_copy_sh_coeffs(pm.shCoeffs, pout.pathing.shCoeffs, sh_count)) {
+                    pm.order = order;
+                    pm.epoch = pathing_param_cache_epoch_[path_back];
+                    pathing_param_cache_[static_cast<size_t>(path_back)][static_cast<size_t>(handle)] = std::move(pm);
+                    instrumentation_pathing_fetch_sh_ok.fetch_add(1, std::memory_order_relaxed);
                 } else {
                     instrumentation_pathing_fetch_sh_bad_order.fetch_add(1, std::memory_order_relaxed);
                 }

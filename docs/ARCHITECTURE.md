@@ -87,9 +87,14 @@ Separate (do not nest with `simulation_mutex` unless a call site documents it): 
 
 ## Spatial output startup gate
 
-When triangle geometry is registered (`notify_geometry_changed` with non-zero delta), the server clears `phonon_scene_audio_ready_` and resets `spatial_audio_warmup_passes_remaining_` to `kSpatialAudioWarmupWorkerPasses`. The worker sets `phonon_scene_audio_ready_` after `iplSceneCommit` for that edit. `is_spatial_audio_output_ready()` combines warmup and commit (`spatial_audio_geometry_gate_allows_output` in `resonance_constants.h`); audio and main read it via atomics only.
+Spatial output is muted only on **cold start / full scene reload / first triangles into an empty scene**, not on incremental geometry edits (e.g. spawning `ResonanceDynamicGeometry` into an already non-empty scene).
 
-Until ready, `ResonancePlayer` does not push playback parameters (`params_ever_synced_` stays false), and `ResonanceStreamPlayback::_process_steam_audio_block` zeros spatial output instead of running direct/reflection/pathing. This avoids audible unoccluded output before the Phonon scene matches registered meshes.
+- `notify_geometry_changed` with a non-zero triangle delta updates `global_triangle_count` and marks the scene dirty. It calls `arm_spatial_audio_output_gate()` only when the count crosses **0 -> N** (`spatial_audio_geometry_notify_should_arm_gate` in `resonance_constants.h`).
+- `arm_spatial_audio_output_gate()` clears `phonon_scene_audio_ready_` and resets `spatial_audio_warmup_passes_remaining_` to `kSpatialAudioWarmupWorkerPasses`. Explicit callers: runtime init/handoff/reinit, deferred refresh after `load_scene_data`, and hard static-pack clear/replace/load.
+- The worker sets `phonon_scene_audio_ready_` after `iplSceneCommit`. `is_spatial_audio_output_ready()` combines warmup and commit (`spatial_audio_geometry_gate_allows_output`); audio and main read it via atomics only.
+- Mesh rebuilds inside `ResonanceGeometry::_create_meshes` use a silent clear plus a single net triangle notify so clear+create does not falsely look like 0 -> N.
+
+Until ready, `ResonancePlayer` does not push playback parameters (`params_ever_synced_` stays false), and `ResonanceStreamPlayback::_process_steam_audio_block` zeros spatial output instead of running direct/reflection/pathing. This avoids audible unoccluded output before the Phonon scene matches registered meshes on cold start. Incremental adds keep last spatial output (stale occlusion) until the next commit and direct sim update.
 
 ## Double-Buffering
 

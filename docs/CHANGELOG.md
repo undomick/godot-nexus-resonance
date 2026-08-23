@@ -5,7 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),  
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [1.0.1] - 2026-08-23
+
+### Fixed
+
+- **Pathing directionless / order always 0** - Apply `order` no longer comes from `iplSourceGetOutputs`. Fetch and mix use configured `ambisonic_order` (issue #14).
+- **Spatial cutout on ResonanceDynamicGeometry spawn** - Incremental geometry add/remove no longer hard-mutes all Nexus spatial output. The spatial gate arms only on cold start, full scene reload, or first triangles into an empty scene.
+
+
+
 ## [1.0.0] - 2026-08-04
+
+
 
 ### Added
 
@@ -17,9 +30,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **ResonanceFmodEventEmitter** / **ResonanceCodaEventEmitter (native)** - Experimental bridge emitters in C++.
 - And several other additions (editor icons, reworked class-reference tooltips, reflection IR fingerprint helpers).
 
+
+
 ### Removed
 
 - **Probe volume inspector** - **Probe batch (advanced)** UI; prefer `ResonanceProbeExclusion` and a full re-bake.
+
+
 
 ### Changed
 
@@ -30,6 +47,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Material presets** - Built-in materials retuned so hard vs soft surfaces sound more distinct in gameplay.
 - And several other changes (server/worker refactor, bake progress polling, inspector renames).
 
+
+
 ### Fixed
 
 - **Exit crash** - `prepare_for_shutdown` plus bake-params `Variant` lifetime fix (`get_bake_params_for_runtime` use-after-free).
@@ -39,7 +58,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Audio thread** - No IPL teardown / prewarm from `_mix`; lock-free fetch gates; source destroy vs fetch-cache races; main-thread prewarm retry after reinit.
 - And several other bugfixes (export warnings).
 
+
+
 ## [0.9.18] - 2026-05-07
+
+
 
 ### Added
 
@@ -47,10 +70,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Air absorption on baked reverb wet path** - Baked reflection modes (REVERB / STATICSOURCE / STATICLISTENER) now run the wet mono tap through a 3-band air-absorption pre-EQ before `iplReflectionEffectApply`, so distant baked sources lose high-frequency energy the same way realtime ray-traced IRs do (which encode air absorption per ray).
 - **Listener-centric probe lookup for baked REVERB** - Baked REVERB now selects the probe nearest the **listener** (instead of the source), so crossing room boundaries no longer plays the wrong IR. Controlled by API `baked_reverb_use_listener_probe` (default **on**) and / or `reflections_sampling_mode` in configs.
 
+
+
 ### Changed
 
 - `reverb_max_distance` now defaults to **100 m** (was 0 / off). Wet reflections fade out smoothly past this distance instead of staying at full level forever.
 - **Wet distance attenuation** - The reverb / pathing wet path now follows a dedicated 1/d falloff (with smooth fade-to-zero in the last 10 % of `min_distance..max_distance`) for **all** attenuation modes — not just `LINEAR` / `CUSTOM_CURVE`. Previously, `INVERSE_NO_SIM` left the wet at unity at any distance and `INVERSE` stayed asymptotic, so distant baked reverb appeared to "stay loud forever". `LINEAR` / `CUSTOM_CURVE` users still see the direct curve win when it is steeper than 1/d. New helper `resonance::reverb_wet_distance_attenuation(dist, min, max)`.
+
+
 
 ### Fixed
 
@@ -58,29 +85,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **ResonancePlayer.finished** - `finished` now emits when the **dry path** ends (not after wet/pathing tail drain), so equal-length clips fire deterministically regardless of reverb tail length.
 - **Wet path distance attenuation in** `INVERSE_NO_SIM` **/** `INVERSE` **modes** - `_compute_attenuation` no longer returns 1.0 (constant) for the wet path in `INVERSE_NO_SIM`, and no longer leaves the wet asymptotic in `INVERSE`. Both modes now decay with the new wet 1/d helper and reach zero at `max_distance`.
 
+
+
 ## [0.9.17] - 2026-05-05
+
+
 
 ### Added
 
 - **Runtime baking API** - Added `ResonanceRuntimeBaker`to support headless/runtime baking for procedural generation without relying on `EditorInterface` or `ResourceSaver` (bakes into RAM). Contributed by [garthand](https://github.com/garthand)
 
+
+
 ## [0.9.16] - 2026-05-04
+
+
 
 ### Changed
 
 - **ResonanceRuntimeConfig** - Removed `simulation_update_interval` (master pacing). Replaced `reflections_sim_update_interval` / `pathing_sim_update_interval` with `reflections_sim_interval` and `pathing_sim_interval` (default 0.1 s each, aligned with **Direct Sim Interval** naming). `ResonanceServer::init_audio_engine` / C++ `ResonanceServerConfig::apply` still read legacy keys `simulation_update_interval` and `*_sim_update_interval` for migration.
 - **ResonancePlayerConfig** - Per-source HRTF overrides aligned with `ResonanceRuntimeConfig` naming: `apply_hrtf_to_reflections` → `reverb_binaural_override`, `apply_hrtf_to_pathing` → `pathing_binaural_override`; inspector groups `direct_binaural_override`, `reverb_binaural_override`, `pathing_binaural_override` with `spatial_blend` and `use_ambisonics_encode` under **Spatialization** (bus routing stays under Output). `ResonancePlayer` still reads legacy keys `apply_hrtf_to_reflections` / `apply_hrtf_to_pathing` from older `.tres` until resources are re-saved.
 
+
+
 ### Fixed
 
 - **ResonancePlayer stream tail (EOS / partial last frame)** - End-of-stream handling no longer stretches a long multi-frame “hold last sample” taper across callbacks (which could flatten the waveform into a DC plateau). Partial-frame EOS uses the same linear ramp as live playback; synthetic output-ring underrun fade is capped; optional short amplitude taper on the last real decoder samples keeps the tail sounding like a decaying wave instead of a slope-to-zero pad.
 
+
+
 ## [0.9.15] - 2026-05-01
+
+
 
 ### Added
 
 - **ResonanceAmbisonicPlayer (HOA bed orientation)** - Optional bed orientation via `use_bed_scene_orientation` and `ambisonic_orientation_node` (or first `Node3D` parent): decode orientation is built from combined row-major bed local-to-world and listener world-to-head matrices so the HOA field can follow a scene node while the camera supplies the listener pose. Inspector/class reference tooltips were expanded for the Ambisonic decode group (including `apply_output_gain` and related toggles).
 - **Adaptive realtime reflection rays** - When `reflections_adaptive_budget_us` > 0, the worker lowers or restores `numRays` based on measured reflection time vs budget; tune floor/recovery via `reflections_adaptive_ray_min`, `reflections_adaptive_ray_recover_frac`, `reflections_adaptive_ray_recover_cap`, plus interval backoff (`reflections_adaptive_step_sec`, `reflections_adaptive_max_extra_interval`, `reflections_adaptive_decay_per_sec`) on over-budget ticks. Exposed on **ResonanceRuntimeConfig** / server config and covered by config tests.
+
+
 
 ### Changed
 
@@ -89,18 +132,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Lock-free audio-thread paths** - Reverb / reflection / pathing parameter caches use atomic double-buffer fronts and epochs; mixer snapshot swaps and reflection pending state avoid mutex work on the mix thread; cross-thread coordination relies on the worker + atomic flags where previously maps/sets were walked under lock (see migration from mutex-heavy fetch paths in prior iterations).
 - **Per-source mix gates Steam Audio simulation flags** - `ResonanceServer` receives `direct_mix_level`, `reflections_mix_level`, and `pathing_mix_level` with each source update. Pathing and reflections simulation are skipped when the corresponding mix is ≤ 0; **direct** simulation is omitted only when **all three** mixes are 0 (if reflections or pathing still need the direct path, e.g. wet occlusion, direct stays enabled). Reduces worker load when sources mute a path via mix alone (Inspector toggles unchanged).
 
+
+
 ### Fixed
 
 - `ResonancePlayer.finished` now emits reliably (playback no longer gets stuck in a silent "tail" state).
 - **“No reverb params” playback warning** - Only logged when `reflections_mix_level` > 0 (pathing-only / reflections-muted setups no longer trigger a misleading “probe baked?” hint). Message names the **ResonancePlayer** node and distinguishes convolution/TAN vs parametric/hybrid guidance.
 
+
+
 ## [0.9.14] - 2026-04-30
+
+
 
 ### Fixed
 
 - **Reverb drop/pop at the end of short audio clips** - Mixer return now avoids pulling the shared reflection mixer when no sources have fed it in the current audio quantum (Godot scheduling + mixer mutex ordering edge case vs Unity's deterministic DSP chain). This prevents an audible wet-level dip right as one-shot clips end.
 
+
+
 ## [0.9.13] - 2026-04-29
+
+
 
 ### Added
 
@@ -112,9 +165,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Audio-thread health monitors** - `Audio/output_underruns_total` (Core), `Audio/late_mix_total`, `Audio/max_block_time_us`, `Audio/active_voice_count` (Standard). Watch these to diagnose audio-thread starvation versus main-thread / GPU stalls.
 - **Server source / probe-batch counters** - `ResonanceServer.get_active_source_count()` / `get_active_probe_batch_count()` plus matching `Server/active_source_count` (Core) and `Server/active_probe_batch_count` (Full) monitors. Lock-free, safe to poll per frame.
 
+
+
 ### Deprecated
 
 - `**ResonanceProbeVolume.bake_probes()` and `bake_probes_with_floor_points()`** - Reflection-only bake paths. `ResonanceBakeRunner.run_bake([volume])` is a strict superset (pathing + static-source + static-listener passes, automatic re-export of stale `ResonanceStaticScene` assets, undo backup, full incremental-rebake bookkeeping). Calling the native API now emits a deprecation warning. Scheduled for removal in 1.0.
+
+
 
 ### Changed
 
@@ -123,6 +180,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Reflection / convolution mixer feed** - Convolution and TAN scale the input to `iplReflectionEffectApply` with `reflections_mix_level` only on the shared mixer feed (Unity parity; no per-player linear volume on that tap). When `reverb_max_distance > 0`, an additional linear 1→0 wet factor is applied to convolution / TAN feed, parametric / hybrid wet output, and pathing stereo.
 - **Performance monitor tiers re-balanced** - `Worker/sync_fetch_reflections_us` and `Main/last_dynamic_transform_enqueue_us` promoted to **Standard** (correlate with reflection / dynamic-geometry stutter); `Main/runtime_server_tick_us` and `Main/runtime_physics_tick_us` moved to **Full** (only receive values under those tiers anyway). `Worker/last_wake_heavy` renamed to `Worker/heavy_tick_flag` to clarify the 0/1 semantics.
 - **Convolution output block-size mismatch handling** - Reverb mixer decode now carries leftover stereo samples across callbacks when `frame_count < audio_frame_size` instead of dropping them, reducing choppy output during temporary frame-size mismatch windows before reinit.
+
+
 
 ### Fixed
 
@@ -150,12 +209,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Native** `ResonanceProbeVolume.bake_probes()` **produced inconsistent metadata** - Pathing / static-source / static-listener / static-scene hashes are populated by `ResonanceBakeRunner.run_bake()` only. The native API is now deprecated (see *Deprecated* above); calls emit a warning that points users at `run_bake()`. Probe data with a missing `bake_params_hash` is now treated as dirty (was: silently trusted as "valid legacy data") so a forced re-bake catches pre-hash leftovers.
 - `**Export Active Scene` returned a stale ResourceLoader cache on repeat exports** - `load(save_path)` after `ResourceSaver.save` could hand back the previously cached `ResonanceGeometryAsset` if the same path had been loaded earlier in the session. Switched to `ResourceLoader.load(..., CACHE_MODE_REPLACE)`.
 
+
+
 ### Documentation
 
 - `**wiki/ResonanceProbeVolume-and-BakeConfig.md`** - Documented native bake limitations, post-bake world-fixed probe positions, and the intentional `bake_num_threads` exclusion from the params hash.
 - `**wiki/ResonancePlayer-and-PlayerConfig.md`** - Documented the ~15-frame override propagation latency and how to force an immediate switch.
 
+
+
 ## [0.9.12] - 2026-04-13
+
+
 
 ### Added
 
@@ -163,6 +228,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Custom physics + many reflection rays** - If reflections use Godot's physics, you can choose how many rays are handled in one batch (default 16) for smoother CPU use; set to **1** for the old behavior. Does not affect the other scene types.
 - **More runtime knobs** - Reflections and pathing can use separate update rates if you need that. Realtime reflections can ignore sources beyond a set distance from the listener (off by default).
 - **Profiling** - Optional timing for the convolution audio path and matching entries under **Debugger → Monitors**.
+
+
 
 ### Changed
 
@@ -172,27 +239,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Baked-only reverb** - Less unnecessary work when only baked probe data drives the reverb.
 - **Performance monitors** - **Off** / **Core** / **Standard** (default, fewer graphs) / **Full** (everything as before).
 
+
+
 ### Fixed
 
 - **Reflections + convolution** - Fixed a slowdown that made hybrid/convolution setups much heavier than intended.
 - **Closing the game** - Rare crash when quitting a built game should be gone.
 
+
+
 ## [0.9.11] - 2026-04-04
+
+
 
 ### Fixed
 
 - **Custom scene (Godot Physics)** - If 3D physics runs on its **own thread** (for example with Jolt), live occlusion and reflection rays no longer trigger endless *space not accessible* errors. Audio simulation now lines up with the physics step; debug ray lines follow the same timing. The performance overlay can show how long that physics-aligned tick takes.
+
+
 
 ### Changed
 
 - **Editor & addon scripts** - Baking, export/cleanup paths, and runtime wiring were split into smaller internal modules; **how you use the inspector and menus is unchanged**. Probe cleanup is a bit smarter about which baked files are still referenced.
 - **HRTF SOFA asset** - Normalization in the inspector uses clearer enum names (**None** / **RMS**).
 
+
+
 ## [0.9.10] - 2026-04-02
+
+
 
 ### Added
 
 - **Custom scene type (3)** in **ResonanceRuntimeConfig** - live occlusion and reflection rays follow **Godot physics** (your colliders), not the exported acoustic mesh. Optional `**resonance_physics_material_preset`** on colliders; **ResonancePlayer** can auto-ignore its own collision bodies. **Baking** still uses the usual Embree/Default path.
+
+
 
 ### Fixed
 
@@ -202,12 +283,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **ResonancePlayer / AudioStreamPlayer3D** - `**stream`** / `**get_stream`** keep the user’s resource while the engine uses an internal wrapper; runtime stream changes update the wrapper. `**max_db`** is honored with volume in native `**_mix`**. Docs: inspector matrix and** `**godot_`* keys in `**get_audio_instrumentation`**.
 - **Occlusion** - If the engine briefly has no fresh occlusion data, direct sound defaults to **not** treated as fully blocked (avoids accidental silence).
 
+
+
 ## [0.9.9] - 2026-03-28
+
+
 
 ### Added
 
 - **Richer reflection bakes** - Choose **ambisonics order** (1-3) on each probe volume’s **ResonanceBakeConfig**; change it and you’ll be prompted to re-bake when hashes no longer match.
 - **Surround speakers for direct sound** - Pick a **speaker layout** (mono through 7.1) in **ResonanceRuntimeConfig**. Without HRTF, surround can use ambisonics-based panning; with HRTF, binaural output is folded to stereo for the main player path. Changing layout needs **reinit audio engine** like other native audio settings.
+
+
 
 ### Fixed
 
@@ -218,7 +305,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Short sounds** - Parametric/hybrid reverb and pathing tails decay naturally after the dry signal ends, so one-shots can sound like they’re in the room instead of cutting off abruptly.
 - **ResonanceRuntime** (**breaking**) - The runtime node is a plain **Node** again (fixes a regression). Update scenes if you depended on the previous setup.
 
+
+
 ## [0.9.8] - 2026-03-26
+
+
 
 ### Added
 
@@ -228,12 +319,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Debug & monitors** - Custom **Nexus Resonance** performance monitors in **Debugger → Monitors**  
 `ResonanceServer.get_simulation_worker_timing()` and reverb-bus expert counters expose the same worker breakdown.
 
+
+
 ### Changed
 
 - **ResonanceRuntimeConfig** - Removed redundant `hrtf_sofa_asset`; use `hrtf_sofa_assets` only (e.g. one element for a single SOFA file).
 - **Pathing wet level** - Aligns with Steam Audio Unity/FMOD spatialize: no extra multiply by `reverb_pathing_attenuation` (distance is already in baked path SH). `pathing_mix_level` ramps the **mono input** before `iplPathEffectApply`, not the stereo output.
 - **Reflections & pathing level** - Mix ramps within each audio block; overall level and fade-in behavior may differ slightly from 0.9.7.
 - **Defaults** - Simulation CPU budget default **15%** (was 5%). Runtime **path validation** defaults **on** and **find alternate paths** **off** on `ResonanceRuntimeConfig`; per-source **Use Global | Disabled | Enabled** via `path_validation_override` / `find_alternate_paths_override` on `ResonancePlayerConfig` (replaces bool player fields and removes `pathing_validation_ab_mode`). `pathing_binaural_override` defaults to **Use Global** (formerly `apply_hrtf_to_pathing`). `max_transmission_surfaces` default **16**. Distance attenuation: "**Disabled" added**.
+
+
 
 ### Fixed
 
@@ -242,23 +337,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Geometry vs. export** - Runtime static/dynamic acoustic meshes use the same world rules as export (`geometry_override` vs parent `MeshInstance3D`), fixing wrong placement or scale (with assets imported with Nexus Importer).
 - **ResonancePlayer** - Volume db is now functional. Multiplies signals from Steam Audio.
 
+
+
 ## [0.9.7] - 2026-03-24
+
+
 
 ### Fixed
 
 - **Crash when loading another scene or reloading audio settings while sound is playing** - especially reported on Linux after changing ray-tracer options (e.g. Embree) and switching levels: the game could quit with a native crash. You can change scenes and let the engine restart audio without losing stability; spatialized playback and convolution reverb recover cleanly instead of taking the process down.
 
+
+
 ## [0.9.6] - 2026-03-23
+
+
 
 ### Added
 
 - **Editor export plugin** - Resonance now registers for **Linux**, **macOS**, and **Android** (in addition to Windows) and calls `add_shared_object` for the same native libraries as `[dependencies]` in `nexus_resonance.gdextension` (`libphonon.so` / `libphonon.dylib` per platform; per enabled Android ABI under `bin/android/<abi>/`). Warns when Android **armeabi-v7a** or **x86** is enabled but no matching `libphonon.so` is shipped in the addon.
 - **ResonanceRuntime** - **enable_debug**: when `false`, debug/performance/player overlay toggle keys are ignored; turning it off at runtime closes overlays and player ray viz.
 
+
+
 ### Fixed
 
 - **Sound at level start (ResonancePlayer)** - With Autoplay or other audio that starts as soon as the scene runs, you no longer get a brief flash of „unblocked“ direct sound before the world feels ready. Playback stays quiet until spatial audio can respect your geometry and occlusion, so the first thing you hear matches what you see (walls and materials in the way).
 - **ResonanceDynamicGeometry on phones and tablets** - Moving or animated acoustic geometry (doors, platforms, props) is now taken into account on Android builds the same way as on desktop, so sound can be blocked or reflected by those objects instead of behaving as if they were not there.
+
+
 
 ### Changed
 
@@ -268,32 +375,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Project Settings (Nexus → Resonance)** - **Bus** / **Reverb Bus Name** removed (configure buses on **ResonanceRuntimeConfig**). 
 - **Debug overlay** - Overhauled.
 
+
+
 ### Removed
 
 - **ResonanceRuntime** - `performance_overlay_enabled` (performance overlay only via **performance_overlay_toggle_key**).
 - **ResonanceRuntime** - `debug_sources` (use **player_overlay_toggle_key** instead).
 
+
+
 ## [0.9.5] - 2026-03-21
+
+
 
 ### Changed
 
 - **Project Settings layout** - Resonance options moved from **Audio → Nexus Resonance** (`audio/nexus_resonance/`*) to **Nexus → Resonance** (*`nexus/resonance/`). Opening the project with the addon enabled migrates legacy keys and removes the old paths.
+
+
 
 ### Fixed
 
 - **ResonanceDynamicGeometry + scene change** - Phonon teardown order for dynamic objects (global `InstancedMesh` off first, `iplSceneCommit`, sub-scene static meshes abandoned then `iplSceneRelease(sub_scene)`; no per-mesh Remove/Release on that Embree sub-scene after detach). Fixes native crash/hang on `change_scene` with moving geometry (e.g. door; MovementTestbed).
 - **Geometry notify deadlock** - `notify_geometry_changed_assume_locked` when `simulation_mutex` is already held (`_clear_meshes_impl`, `discard_meshes_before_scene_release`); avoids hang for meshes with `triangle_count > 0`.
 
+
+
 ### Removed
 
 - Misleading startup warning that implied Convolution/Hybrid/TAN with Realtime Rays = Baked Only (0) required baked probes.
 
+
+
 ## [0.9.4] - 2026-03-20
+
+
 
 ### Changed
 
 - **ResonanceServer build layout** - Implementation split from monolithic `resonance_server.cpp` into focused translation units (`resonance_server_lifecycle.cpp`, `resonance_server_callbacks.cpp`, `resonance_server_listener.cpp`, `resonance_server_sources.cpp`, `resonance_server_fetch.cpp`, `resonance_server_scene_io.cpp`, `resonance_server_baking.cpp`, `resonance_server_debug_bind.cpp`). `SourceManager` / `ProbeBatchManager` moved to `handle_manager.cpp`. Public API and `resonance_server.h` unchanged.
 - **Android: realtime rays** - `ResonanceRuntimeConfig.get_effective_realtime_rays` no longer forces `0` on Android. Realtime simulation uses the configured `scene_type`; Embree/Radeon Rays fall back to Steam Audio’s built-in (Default) tracer on device.
+
+
 
 ### Fixed
 
@@ -303,12 +426,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Reverb after reinit** - Convolution reverb bus (`ResonanceAudioEffect`) resets its `MixerProcessor` when the server’s Steam Audio generation changes, avoiding stale Phonon handles after `reinit_audio_engine`.
 - **Empty mesh / bake asset guards** - Dynamic geometry path rejects empty serialized mesh data; bake static-scene path requires non-zero asset size before passing buffers to Phonon.
 
+
+
 ## [0.9.3] - 2026-03-17
+
+
 
 ### Added
 
 - **Steam Audio verbose logging** - Project Setting `nexus/resonance/logger/steam_audio_verbose` forwards IPL_LOGLEVEL_INFO and IPL_LOGLEVEL_DEBUG to Godot output when enabled (for debugging).
 - **Unit test for pathing_params_hash** - `test_pathing_hash_bake_runner_matches_cpp_format` ensures GDScript and C++ use identical dict format for hash consistency.
+
+
 
 ### Changed
 
@@ -325,6 +454,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **resonance_runtime** - Comment clarifying `load_static_scene_from_asset` as legacy single-scene API.
 - **resonance_scene_utils** - `export_type` parameter as `StringName` for consistency.
 
+
+
 ## [0.9.2] - 2026-03-16
 
 **Stability improvements**
@@ -337,10 +468,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Empty probe data** - ResonanceProbeBatchRegistry rejects empty `PackedByteArray` before `iplSerializedObjectCreate`.
 - **MixerProcessor init** - ResonanceAudioEffect now checks `processor.is_ready()` after init; reverb stays silent until init succeeds instead of running with invalid state.
 
+
+
 ### Changed
 
 - **OpenCL / TAN / RadeonRays** - Error status codes logged on init failure for easier debugging (ResonanceSteamAudioContext).
 - **Bake pipeline** - Defensive `Engine.has_singleton("ResonanceServer")` and `srv` null check at start of `_run_bake_pipeline_main_thread`; aborts cleanly if GDExtension is unloaded during bake (e.g. editor close).
+
+
 
 ## [0.9.1] - 2026-03-15
 
@@ -350,17 +485,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Memory leak on runtime reinit** - `discard_meshes_before_scene_release` now correctly calls `iplStaticMeshRemove`/`iplStaticMeshRelease` and `iplInstancedMeshRemove`/`iplInstancedMeshRelease` before clearing handles. Previously, IPL resources were leaked when changing reflection type or pathing (triggering `reinit_audio_engine`). Phonon uses refcounting; meshes must be explicitly released per Steam Audio API.
 
+
+
 ### Changed
 
 - **Defensive null checks** - `ResonanceProbeBatchRegistry`: guards for `sim_mutex` before `std::lock_guard` to avoid crash when null. `parse_mesh_to_ipl`: early return when `mesh.is_null()`. `Engine::get_singleton()`: null checks in `ResonanceGeometry` and `ResonanceProbeVolume` before `is_editor_hint()`.
 - ** region_size validation** - `ResonanceProbeVolume.set_region_size` clamps each component to minimum `kProbeRegionSizeMin` (0.1) to prevent degenerate volumes.
 - **Empty asset guard** - `add_static_scene_from_asset` rejects assets with `get_size() == 0` before passing to Phonon.
 
+
+
 ## [0.9.0] - 2026-03-14
+
+
 
 ### Added
 
 - **Performance Overlay** - Optional overlay (FPS, frame time, physics time). Enable via `performance_overlay_enabled` on ResonanceRuntime; toggle with F4. Independent from debug overlay.
+
+
 
 ### Removed
 
@@ -368,6 +511,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **debug_reflections** (ResonanceRuntimeConfig) - Merged into `debug_sources` on ResonanceRuntime; one switch controls both occlusion and reflection ray viz.
 - **debug_pathing** (ResonanceRuntimeConfig) - Removed.
 - **context_validation** (ResonanceRuntimeConfig) - Removed.
+
+
 
 ## [0.8.8] - 2026-03-10
 
@@ -385,11 +530,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Debug overlay toggle** - `debug_overlay_toggle_key` (default F3) toggles the debug overlay at runtime. When overlay is on: cursor visible, camera ignores mouse input. Restores previous mouse mode when overlay is closed.
 - **Reverb Bus Crackling Debug** - Debug overlay section shows `fetch_reverb` lock_ok, cache_hit, cache_miss to diagnose audio dropouts and crackling.
 
+
+
 ### Fixed
 
 - **Crackling with Ambisonic Order 2/3 and Convolution/Hybrid** - Audio thread no longer blocks on `simulation_mutex`. Non-blocking `try_lock` plus last-known-good cache (like Parametric) for Convolution/Hybrid/TAN. When the worker holds the lock, the audio thread uses cached reflection params instead of blocking → avoids Xruns and crackling.
 - **Pathing crackling** - `fetch_pathing_params` now uses `try_lock` plus per-source pathing cache (`CachedPathingParams` with eqCoeffs and SH coefficient copy). When the worker holds `simulation_mutex` during RunPathing, the audio thread uses cached pathing params instead of blocking. Cache invalidated on source/batch removal and shutdown.
 - **Reflections despite occlusion** - Transmission is no longer applied to reverb. Reflections are indirect paths that go around obstacles; only the direct path uses transmission. Fixes missing reflections when the listener has no line of sight to the source.
+
+
 
 ### Changed
 
@@ -400,10 +549,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **GDExtension unload safety** - `clear_probe_batches` in plugin `_disable_plugin` only runs when `Engine.has_singleton("ResonanceServer")` is true. Avoids crash when editor closes and GDExtension unloads before the plugin.
 - **Probe Volume deletion robustness** - ResonancePlayer auto-clears `pathing_probe_volume` when target node is gone; ResonanceProbeVolume `_clear_player_refs_to_this` falls back to tree root when edited scene root is null (e.g. editor teardown).
 
+
+
 ### Documentation
 
 - **simulation_update_interval** - ResonanceRuntimeConfig: Order 2/3 + Convolution/Hybrid: recommend ≥ 0.2 s if crackling persists.
 - **Audio-Buffer-and-Latency** - Added `simulation_update_interval` tip for crackling workaround.
+
+
 
 ## [0.8.7] - 2026-03-07
 
@@ -415,6 +568,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Unit test for invalid probe data** - Edge case test for malformed data field in ResonanceProbeDataLoader.
 - **ResonanceUtils::safe_unit_vector** - Defensive vector normalization with minimum length guard (1e-3) and fallback to avoid NaN/division-by-zero from degenerate transforms.
 
+
+
 ### Fixed
 
 - **IPL error handling** - All `ipl*Create` calls (iplSceneCreate, iplSimulatorCreate, iplReflectionMixerCreate, iplSerializedObjectCreate, iplProbeBatchCreate) now check `IPL_STATUS_SUCCESS`, log via ResonanceLog, and perform cleanup on failure. Prevents crashes when Steam Audio init or bake fails.
@@ -423,6 +578,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Defensive vector normalization** - `update_listener` and `_update_source_internal` use `safe_unit_vector` for dir/up/right orthonormalization; prevents degenerated coordinate spaces when inputs have near-zero length.
 - **Shutdown atomic flags reset** - `_shutdown_steam_audio` resets pending_listener_valid, simulation_requested, reflection/pathing heavy request flags, scene_dirty, pathing_ran_this_tick at start to avoid late accesses during/after shutdown.
 
+
+
 ### Changed
 
 - **ResonanceServer init** - `_init_scene_and_simulator` returns bool; on IPL failure cleans up and resets context so is_initialized() stays false.
@@ -430,12 +587,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Config clamping** - `ambisonic_order` clamped to 1-3, `max_reverb_duration` to 0.1-10.0 s in ResonanceServerConfig; `max_reverb_duration` export_range in ResonanceRuntimeConfig.
 - **Processor InitFlags** - ResonanceMixerProcessor, ResonanceReflectionProcessor, ResonancePathProcessor use bitwise InitFlags; process() guards ensure only fully initialized combinations run (avoids partial init crashes).
 
+
+
 ## [0.8.6] - 2026-03-04
+
+
 
 ### Added
 
 - **Ray tracer selection** - `ResonanceRuntimeConfig.scene_type`: Default (0) = built-in Phonon; Embree (1) = Intel, faster CPU; Radeon Rays (2) = GPU. Developers can explicitly choose Default for maximum compatibility or Embree for better CPU performance.
 - **Listener notification API** - `ResonanceServer.notify_listener_changed()` and `notify_listener_changed_to(node)` for Splitscreen/VR or manual listener switching. `notify_listener_changed_to` extracts position/direction from a `Node3D` and updates the audio listener.
+
+
 
 ### Changed
 
@@ -443,6 +606,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Editor menu naming** - "Export Static Scene" → "Export Active Scene"; "Export Dynamic Meshes" → "Export Dynamic Objects In Active Scene"; "Bake All Probe Volumes" → "Bake All Probe Volumes In Active Scene".  
 Exports static `ResonanceGeometry` to OBJ+MTL via `iplSceneSaveOBJ` for visualization in external tools. `ResonanceServer.export_static_scene_to_obj(scene_root, file_base_name)` available at runtime and in editor.  
 New: "Export Dynamic Objects In All Scenes In Build".
+
+
 
 ## [0.8.5] - 2026-03-02
 
@@ -458,10 +623,14 @@ New: "Export Dynamic Objects In All Scenes In Build".
 - **Pro-source HRTF** - Reflection and pathing HRTF toggles per source (Use Global / Disabled / Enabled; now `reverb_binaural_override` / `pathing_binaural_override`).
 - **Pro-source reflections/pathing toggles** - `reflections_enabled` and `pathing_enabled_override` to enable/disable reflections or pathing per source.
 
+
+
 ### Changed
 
 - Reflection simulation and baked data variation are now per-source; server `update_source` supports `baked_data_variation` -1 (Realtime), 0 (Reverb), 1 (Static Source), 2 (Static Listener).
 - Per-source `reflections_enabled_override` and `pathing_enabled_override` passed to server; sources can exclude reflections or pathing independently.
+
+
 
 ## [0.8.2] - 2025-02-28
 
@@ -473,11 +642,15 @@ New: "Export Dynamic Objects In All Scenes In Build".
 - **Per-source reverb bus override** - `ResonancePlayerConfig.reverb_bus_override` (Use Global / Custom) and `reverb_bus_name` for selecting the reverb bus per source. Use Global = RuntimeConfig; Custom = pick from existing buses.
 - **Project Settings** - `nexus/resonance/reverb_bus_name` for editor/default bus setup.
 
+
+
 ### Changed
 
 - **Removed reverb_bus_send** - Reverb output now always goes to `bus` (same as Direct+Pathing). Simpler, consistent with player_config which has no separate send.
 - Reverb bus name is no longer hardcoded; default remains "ResonanceReverb" and sends to `bus`.
 - Direct and pathing sound routing via `ResonancePlayer.bus` explicitly documented (was already supported).
+
+
 
 ## [0.8.1] - 2025-02-27
 
@@ -490,17 +663,23 @@ New: "Export Dynamic Objects In All Scenes In Build".
 - **DEVELOPERS.md** - Project overview, architecture, build, test, and release workflow for developers.
 - **Unit tests** - ResonanceBakeConfig, ResonanceSceneUtils, ResonancePlayerConfig, sample_rate_override.
 
+
+
 ### Fixed
 
 - **IPL error handling** - All `ipl*Create` calls now check `IPL_STATUS_SUCCESS`, log via ResonanceLog, and perform proper cleanup on failure (ResonanceGeometry, ResonanceMixerProcessor, ResonanceReflectionProcessor).
 - **SOFA asset null checks** - HRTF init validates `hrtf_sofa_asset` and `get_data_ptr()`/`get_size()` before use; falls back to default HRTF on invalid data.
 - **ResonancePlayer reverb buffer** - Stack buffer size increased to support frame size 2048 (was fixed at 512).
 
+
+
 ### Changed
 
 - **ResonanceLogger integration** - C++ `ResonanceLog::error` and `ResonanceLog::warn` now forward to ResonanceLogger when available.
 - **GDScript typing** - Added type hints to plugin callbacks, ResonanceSceneUtils, ResonanceRuntime.
 - **ResonanceServerConfig** - Accepts frame size 2048; sample rate from config (supports override).
+
+
 
 ## [0.8.0] - 2025-02-24
 
@@ -552,10 +731,14 @@ New: "Export Dynamic Objects In All Scenes In Build".
 - Release workflow: addon ZIP, source ZIP, GitHub Releases with binaries
 - Multi-platform CI (Linux, Windows, macOS), GUT and C++ tests, CodeQL
 
+
+
 ### Fixed
 
 - Bake Pathing: skip geometry refresh before pathing bake to avoid Godot crash (IPL scene state conflict)
 - Reflections bake: reload volumes using probe data (fixes multi-volume probe_data sync)
+
+
 
 ### Changed
 

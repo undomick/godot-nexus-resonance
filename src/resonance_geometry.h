@@ -48,7 +48,8 @@ class ResonanceGeometry : public Node3D {
     void _clear_meshes();
     void _propagate_material_and_geometry_to_descendants();
     /// Internal: cleanup without locking. Caller must hold simulation lock when touching scene.
-    void _clear_meshes_impl();
+    /// When notify_server is false, triangle accounting is left to the caller (rebuild net-notify).
+    void _clear_meshes_impl(bool notify_server = true);
     void _update_dynamic_transform();
     /// Invalidate caches. When include_static_scene_query is false, preserve root static-scene lookup (still valid after IPL teardown only).
     void _invalidate_topology_caches(bool include_static_scene_query = true);

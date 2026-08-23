@@ -13,6 +13,7 @@
 #include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/node_path.hpp>
 #include <godot_cpp/variant/transform3d.hpp>
+#include <godot_cpp/variant/vector2.hpp>
 
 #include "resonance_constants.h"
 
@@ -288,6 +289,17 @@ class ResonanceStreamPlayback : public AudioStreamPlayback {
     void _write_output_rings_folded();                                      // sa_final_mix_buffer (N ch) -> stereo rings via temp_process_buffer_*
     void _zero_sa_final_mix();                                              // memset all direct_out_channels_
     void internal_orphan_owner_player() { owner_player_ = nullptr; }
+
+    /// Zero-input path: flush rings, produce wet/direct tails, copy to buffer.
+    int32_t _mix_drain_zero_input_tails(AudioFrame* buffer, int32_t frames, ResonanceServer* srv_guard);
+    /// Pre-Steam fallback when IPL is not ready (source volume on dry decoder frames).
+    int32_t _mix_passthrough_pre_steam(AudioFrame* buffer, int32_t frames, const Vector2* src, int32_t samples_read,
+                                       bool base_playing);
+    /// Decoder samples -> input rings (crossfade, EOS taper, hold/zero pad).
+    void _mix_ingest_decoder_samples(const Vector2* src_ptr, int32_t samples_read, int32_t frames, bool base_playing);
+    void _mix_pump_available_steam_blocks();
+    /// Output rings -> buffer; underrun uses cosine hold fade. Always fills `frames`.
+    void _mix_emit_output_frames(AudioFrame* buffer, int32_t frames, bool count_underrun);
 
   public:
     ResonanceStreamPlayback();

@@ -10,7 +10,7 @@ namespace resonance {
 
 /// Version string (centralized; override via NEXUS_RESONANCE_VERSION when building)
 #ifndef NEXUS_RESONANCE_VERSION
-#define NEXUS_RESONANCE_VERSION "1.0.0"
+#define NEXUS_RESONANCE_VERSION "1.0.1"
 #endif
 constexpr const char* kVersion = NEXUS_RESONANCE_VERSION;
 
@@ -57,8 +57,17 @@ inline bool spatial_audio_geometry_gate_allows_output(int warmup_passes_remainin
     return true;
 }
 
+/// True when triangle count crosses into a non-empty Phonon scene (cold / first geometry).
+inline bool spatial_audio_geometry_notify_should_arm_gate(int triangle_count_before, int triangle_count_after) {
+    return triangle_count_before <= 0 && triangle_count_after > 0;
+}
+
 /// Default reverb/IR duration in seconds (used for irSize = sample_rate * duration)
 constexpr float kDefaultReverbDurationSec = 2.0f;
+/// Hard max IR sample count (config clamp + worker sanity for convolution/TAN params).
+constexpr int kConvolutionIrSamplesHardMax = 480000;
+/// Hard max IR channel count accepted from simulation outputs into the reflection cache.
+constexpr int kReflectionIrChannelsHardMax = 64;
 
 /// Baker defaults for probe reflections bake
 constexpr float kBakerSimulatedDuration = 2.0f;

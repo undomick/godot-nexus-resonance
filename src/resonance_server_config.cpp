@@ -362,8 +362,8 @@ void ResonanceServerConfig::apply(const Dictionary& config,
     convolution_ir_max_samples = config_int(config, "convolution_ir_max_samples", convolution_ir_max_samples);
     if (convolution_ir_max_samples < 0)
         convolution_ir_max_samples = 0;
-    if (convolution_ir_max_samples > 480000)
-        convolution_ir_max_samples = 480000;
+    if (convolution_ir_max_samples > resonance::kConvolutionIrSamplesHardMax)
+        convolution_ir_max_samples = resonance::kConvolutionIrSamplesHardMax;
     direct_sim_interval = config_float(config, "direct_sim_interval", direct_sim_interval);
     if (direct_sim_interval < 0.0f)
         direct_sim_interval = 0.0f;
