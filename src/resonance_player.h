@@ -312,6 +312,8 @@ class ResonanceStreamPlayback : public AudioStreamPlayback {
     ResonanceStreamPlayback(ResonanceStreamPlayback&&) = delete;
 
     void set_base_playback(const Ref<AudioStreamPlayback>& p_playback);
+    Ref<AudioStreamPlayback> get_base_playback() const { return base_playback; }
+    Ref<AudioStreamPlayback> get_inner_stream_playback() const { return base_playback; }
     void set_owner_player(ResonancePlayer* p_player) { owner_player_ = p_player; }
     void update_parameters(const PlaybackParameters& p_params);
 
@@ -366,7 +368,7 @@ class ResonanceStreamPlayback : public AudioStreamPlayback {
     bool is_tail_drain_complete() const { return tail_drain_complete_.load(std::memory_order_acquire); }
 
   protected:
-    static void _bind_methods() {}
+    static void _bind_methods();
 };
 
 class ResonanceStream : public AudioStream {
@@ -377,6 +379,8 @@ class ResonanceStream : public AudioStream {
 
   public:
     void set_base_stream(const Ref<AudioStream>& p_stream);
+    Ref<AudioStream> get_base_stream() const { return base_stream; }
+    Ref<AudioStream> get_inner_stream() const { return base_stream; }
     void set_stream_owner(ResonancePlayer* p_player) { stream_owner_ = p_player; }
     virtual Ref<AudioStreamPlayback> _instantiate_playback() const override;
     virtual String _get_stream_name() const override { return "Resonance"; }
@@ -384,7 +388,7 @@ class ResonanceStream : public AudioStream {
     virtual bool _is_monophonic() const override { return false; }
 
   protected:
-    static void _bind_methods() {}
+    static void _bind_methods();
 };
 
 class ResonanceReverbPlayback : public AudioStreamPlayback {
@@ -644,6 +648,8 @@ class ResonancePlayer : public AudioStreamPlayer3D {
     /// Wraps AudioStreamPlayer3D::play: ensures internal stream, retries source handle, reverb split child, deferred sim push.
     void set_stream(const Ref<AudioStream>& p_stream);
     Ref<AudioStream> get_stream() const;
+    Ref<AudioStream> get_inner_stream() const;
+    Ref<AudioStreamPlayback> get_inner_stream_playback();
 
     void play(float from_position = 0.0f);
     void play_stream(double from_position = 0.0);

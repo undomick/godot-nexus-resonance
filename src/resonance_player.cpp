@@ -886,6 +886,48 @@ Ref<AudioStream> ResonancePlayer::get_stream() const {
     return AudioStreamPlayer3D::get_stream();
 }
 
+Ref<AudioStream> ResonancePlayer::get_inner_stream() const {
+    return get_stream();
+}
+
+Ref<AudioStreamPlayback> ResonancePlayer::get_inner_stream_playback() {
+    if (!player_config.is_valid()) {
+        return get_stream_playback();
+    }
+
+    Ref<AudioStreamPlayback> pb = get_stream_playback();
+    if (pb.is_valid()) {
+        if (ResonanceStreamPlayback* res_pb = Object::cast_to<ResonanceStreamPlayback>(pb.ptr())) {
+            return res_pb->get_base_playback();
+        }
+        return pb;
+    }
+
+    PlaybackVoiceSnapshot snap;
+    internal_get_playback_snapshot_for_audio(snap);
+    for (int i = 0; i < snap.count; ++i) {
+        ResonanceStreamPlayback* voice = snap.voices[static_cast<size_t>(i)];
+        if (voice) {
+            Ref<AudioStreamPlayback> base = voice->get_base_playback();
+            if (base.is_valid()) {
+                return base;
+            }
+        }
+    }
+
+    std::lock_guard<std::mutex> lock(internal_playbacks_mutex_);
+    for (ResonanceStreamPlayback* res_pb : internal_playbacks_) {
+        if (res_pb) {
+            Ref<AudioStreamPlayback> base = res_pb->get_base_playback();
+            if (base.is_valid()) {
+                return base;
+            }
+        }
+    }
+
+    return Ref<AudioStreamPlayback>();
+}
+
 void ResonancePlayer::play(float from_position) {
     Engine* eng = Engine::get_singleton();
     if (eng && eng->is_editor_hint()) {

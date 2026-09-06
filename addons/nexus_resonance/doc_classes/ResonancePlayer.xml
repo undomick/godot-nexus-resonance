@@ -18,6 +18,18 @@
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="get_inner_stream">
+			<return type="AudioStream" />
+			<description>
+				Returns the underlying logical [AudioStream] assigned to this player (e.g. an [AudioStreamGenerator] or [AudioStreamWav]), unwrapped from the internal Steam Audio processing stream. Equivalent to [method get_stream].
+			</description>
+		</method>
+		<method name="get_inner_stream_playback">
+			<return type="AudioStreamPlayback" />
+			<description>
+				Returns the active underlying [AudioStreamPlayback] of the inner stream (for example, an [AudioStreamGeneratorPlayback] when using procedural audio or VOIP), unwrapped from the internal [code]ResonanceStreamPlayback[/code]. Returns null if the player is not actively playing.
+			</description>
+		</method>
 		<method name="play">
 			<return type="void" />
 			<param index="0" name="from_position" type="float" default="0.0" />
