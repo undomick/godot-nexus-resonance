@@ -6,6 +6,17 @@
 
 using namespace godot;
 
+void ResonanceStreamPlayback::_bind_methods() {
+    ClassDB::bind_method(D_METHOD("get_base_playback"), &ResonanceStreamPlayback::get_base_playback);
+    ClassDB::bind_method(D_METHOD("get_inner_stream_playback"), &ResonanceStreamPlayback::get_inner_stream_playback);
+}
+
+void ResonanceStream::_bind_methods() {
+    ClassDB::bind_method(D_METHOD("set_base_stream", "stream"), &ResonanceStream::set_base_stream);
+    ClassDB::bind_method(D_METHOD("get_base_stream"), &ResonanceStream::get_base_stream);
+    ClassDB::bind_method(D_METHOD("get_inner_stream"), &ResonanceStream::get_inner_stream);
+}
+
 void ResonanceReverbPlayback::_bind_methods() {
 }
 
@@ -15,6 +26,8 @@ void ResonanceReverbStream::_bind_methods() {
 void ResonancePlayer::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_stream", "stream"), &ResonancePlayer::set_stream);
     ClassDB::bind_method(D_METHOD("get_stream"), &ResonancePlayer::get_stream);
+    ClassDB::bind_method(D_METHOD("get_inner_stream"), &ResonancePlayer::get_inner_stream);
+    ClassDB::bind_method(D_METHOD("get_inner_stream_playback"), &ResonancePlayer::get_inner_stream_playback);
     ClassDB::bind_method(D_METHOD("play", "from_position"), &ResonancePlayer::play, DEFVAL(0.0f));
     ClassDB::bind_method(D_METHOD("stop"), &ResonancePlayer::stop);
     ClassDB::bind_method(D_METHOD("play_stream", "from_position"), &ResonancePlayer::play_stream, DEFVAL(0.0));
