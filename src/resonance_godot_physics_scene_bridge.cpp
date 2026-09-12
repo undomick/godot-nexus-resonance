@@ -210,7 +210,13 @@ void ResonanceGodotPhysicsSceneBridge::trace_closest(const IPLRay& ray, float mi
     Ref<PhysicsRayQueryParameters3D> params = PhysicsRayQueryParameters3D::create(from, to, collision_mask_, exclude_rids_);
     if (params.is_null())
         return;
-    params->set_hit_from_inside(true);
+    // hit_from_inside must stay OFF for closest-hit tracing: Steam Audio's
+    // transmission rays march through solid surfaces in small offsets and rely on
+    // each segment reaching the NEXT surface. Reporting an inside-start as a hit
+    // at distance ~0 makes the loop re-hit the same collider until the
+    // accumulated transmission collapses to ~0 (walls become fully opaque).
+    // See resonance::custom_scene_closest_hit_from_inside().
+    params->set_hit_from_inside(resonance::custom_scene_closest_hit_from_inside());
 
     const Dictionary d = space->intersect_ray(params);
     if (d.is_empty())
@@ -274,7 +280,7 @@ bool ResonanceGodotPhysicsSceneBridge::trace_any(const IPLRay& ray, float min_di
     Ref<PhysicsRayQueryParameters3D> params = PhysicsRayQueryParameters3D::create(from, to, collision_mask_, exclude_rids_);
     if (params.is_null())
         return false;
-    params->set_hit_from_inside(false);
+    params->set_hit_from_inside(resonance::custom_scene_any_hit_from_inside());
 
     const Dictionary d = space->intersect_ray(params);
     if (d.is_empty())

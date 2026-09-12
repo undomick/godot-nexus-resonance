@@ -31,6 +31,22 @@ TEST_CASE("custom_scene_occlusion_ray_start_t nudges open segment", "[custom_sce
     REQUIRE(custom_scene_occlusion_ray_start_t(2.0f, 1.0f) == Approx(2.0f).margin(1e-7f));
 }
 
+TEST_CASE("custom_scene closest-hit hit_from_inside stays false (transmission march)", "[custom_scene][ray]") {
+    // If this fails, do not flip it back to true without reading
+    // resonance_physics_ray_math.h: Steam Audio's DirectSimulator::transmission
+    // advances min_distance past each hit (~1 cm), so closest-hit segments
+    // start inside the surface just crossed; inside-start hits at ~0 distance
+    // make the march re-accumulate the same collider until transmission
+    // collapses to ~0 (all occluders fully opaque; the original bug 1).
+    REQUIRE_FALSE(resonance::custom_scene_closest_hit_from_inside());
+}
+
+TEST_CASE("custom_scene any-hit hit_from_inside stays false (occlusion)", "[custom_scene][ray]") {
+    // Any-hit occlusion rays start at the listener (or volumetric source
+    // samples); a listener inside a collider must not occlude every ray.
+    REQUIRE_FALSE(resonance::custom_scene_any_hit_from_inside());
+}
+
 TEST_CASE("Steam direct gain: full occlusion with low transmission damps strongly", "[custom_scene][steam_ref]") {
     const float g = steam_direct_occlusion_transmission_gain(0.0f, 0.1f, 0.05f, 0.03f);
     REQUIRE(g == Approx((0.1f + 0.05f + 0.03f) / 3.0f).margin(1e-6f));

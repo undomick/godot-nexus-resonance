@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Custom-scene simulated transmission always silent** - Closest-hit raycasts for `scene_type` Custom (Godot Physics) no longer enable `hit_from_inside`: Steam Audio's transmission march starts each segment inside the surface just crossed, so inside-start hits at ~0 distance re-accumulated the same occluder until transmission collapsed to ~0. Simulated transmission now works for all material presets, not just user-defined values.
+- **Baked reverb silent between probes (Custom scene)** - `bake_manual_grid` derives each probe's influence radius from its nearest-neighbor distance (Steam Audio's own generators use radius = spacing) instead of a fixed 1.0 m. Listeners between probes stay inside at least one influence sphere, so baked reverb fetches are valid everywhere in the grid. Existing probe data must be re-baked.
+
 ## [1.0.1] - 2026-08-23
 
 ### Fixed

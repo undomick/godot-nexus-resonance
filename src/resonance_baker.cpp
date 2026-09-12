@@ -2,7 +2,9 @@
 #include "resonance_constants.h"
 #include "resonance_ipl_guard.h"
 #include "resonance_log.h"
+#include "resonance_probe_influence.h"
 #include "resonance_reflection_ir_fingerprint.h"
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <godot_cpp/classes/dir_access.hpp>
@@ -434,10 +436,21 @@ bool ResonanceBaker::bake_manual_grid(IPLContext context, IPLScene scene, IPLSce
         return false;
     }
 
+    // Influence spheres must overlap the grid spacing so runtime probe lookups
+    // (ProbeTree::getInfluencingProbes contains() checks) find a probe for any
+    // listener position between probes. Steam Audio's own generators use
+    // radius == spacing; derive it from the nearest-neighbor distance here
+    // (floored at kBakerStaticEndpointSphereRadius). See resonance_probe_influence.h.
+    std::vector<std::array<float, 3>> centers(static_cast<std::size_t>(probe_positions.size()));
+    for (int i = 0; i < probe_positions.size(); i++) {
+        const Vector3 p = probe_positions[i];
+        centers[static_cast<std::size_t>(i)] = {static_cast<float>(p.x), static_cast<float>(p.y), static_cast<float>(p.z)};
+    }
+    const std::vector<float> influence_radii = resonance::probe_influence_radii(centers);
     for (int i = 0; i < probe_positions.size(); i++) {
         IPLSphere sphere{};
         sphere.center = ResonanceUtils::to_ipl_vector3(probe_positions[i]);
-        sphere.radius = resonance::kBakerStaticEndpointSphereRadius;
+        sphere.radius = influence_radii[static_cast<std::size_t>(i)];
         iplProbeBatchAddProbe(probeBatch, sphere);
     }
     iplProbeBatchCommit(probeBatch);

@@ -164,6 +164,7 @@ if build_tests:
         build_dir + "test/test_ray_trace_debug_intersect.cpp",
         build_dir + "test/test_physics_ray_batch.cpp",
         build_dir + "test/test_baked_reflection_occlusion.cpp",
+        build_dir + "test/test_probe_influence_radius.cpp",
         build_dir + "test/test_air_absorption_wet_gating.cpp",
         build_dir + "test/test_baked_reverb_listener_probe.cpp",
         build_dir + "test/test_reflection_last_good_ir.cpp",
