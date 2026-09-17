@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="ResonanceRuntimeBaker" inherits="RefCounted" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../class.xsd">
+	<brief_description>
+		Runtime helper to bake probe volumes into RAM (proc-gen, exported games, no editor UI).
+	</brief_description>
+	<description>
+		GDScript [code]class_name[/code] over headless [code]ResonanceBakeRunner[/code]. Bakes acoustic probe data into memory only ([code]save_results[/code] false; no ResourceSaver / EditorInterface). Use for procedural levels or play-mode rebakes without disk write. When merged static geometry also changes at runtime, prefer [url=#ResonanceRuntimeExporter]ResonanceRuntimeExporter[/url] (optional [code]bake_probes[/code] uses this baker).
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="bake_volumes_to_ram">
+			<return type="void" />
+			<param index="0" name="volumes" type="Array" />
+			<param index="1" name="scene_root" type="Node" />
+			<description>
+				Bakes [param volumes] ([ResonanceProbeVolume]) under [param scene_root] into RAM. Emits [signal bake_progress_updated] then [signal bake_finished]. Errors and returns early (still emits finished) when volumes or scene_root are missing.
+			</description>
+		</method>
+		<method name="flush_volumes">
+			<return type="void" />
+			<param index="0" name="volumes" type="Array" />
+			<description>
+				Calls [method ResonanceProbeVolume.release_probe_batch] on each volume. Leaves [member ResonanceProbeVolume.probe_data] unchanged; skips volumes without the method.
+			</description>
+		</method>
+		<method name="flush_all_runtime_bakes">
+			<return type="void" />
+			<param index="0" name="scene_root" type="Node" />
+			<description>
+				Flushes every [ResonanceProbeVolume] under [param scene_root] (teardown / before re-bake).
+			</description>
+		</method>
+		<method name="reload_volumes">
+			<return type="void" />
+			<param index="0" name="volumes" type="Array" />
+			<description>
+				Calls [method ResonanceProbeVolume.reload_probe_batch] where present (after flush or RAM probe updates).
+			</description>
+		</method>
+		<method name="reload_all_runtime_bakes">
+			<return type="void" />
+			<param index="0" name="scene_root" type="Node" />
+			<description>
+				Reloads every [ResonanceProbeVolume] under [param scene_root].
+			</description>
+		</method>
+		<method name="shutdown">
+			<return type="void" />
+			<description>
+				Shuts down the internal bake runner and clears it. Call when finished with this baker instance.
+			</description>
+		</method>
+	</methods>
+	<signals>
+		<signal name="bake_progress_updated">
+			<param index="0" name="status_message" type="String" />
+			<description>
+				Progress text from the bake runner (e.g. loading screens).
+			</description>
+		</signal>
+		<signal name="bake_finished">
+			<description>
+				Emitted when a bake run completes or when [method bake_volumes_to_ram] aborts early.
+			</description>
+		</signal>
+	</signals>
+</class>

@@ -1,5 +1,4 @@
 extends RefCounted
-class_name ResonanceRuntimeBus
 
 ## Reverb bus wiring for [ResonanceRuntime]: create/configure the wet bus and sync [ResonancePlayer] routing.
 

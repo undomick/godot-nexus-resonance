@@ -120,11 +120,6 @@ void ResonanceServerConfig::apply(const Dictionary& config,
         ambisonic_order = 1;
     if (ambisonic_order > 3)
         ambisonic_order = 3;
-    max_reverb_duration = config_float(config, "max_reverb_duration", max_reverb_duration);
-    if (max_reverb_duration < 0.1f)
-        max_reverb_duration = 0.1f;
-    if (max_reverb_duration > 10.0f)
-        max_reverb_duration = 10.0f;
     simulation_cpu_cores_percent = config_float(config, "simulation_cpu_cores_percent", simulation_cpu_cores_percent);
     if (simulation_cpu_cores_percent <= 0.0f || simulation_cpu_cores_percent > 1.0f)
         simulation_cpu_cores_percent = resonance::kDefaultSimulationCpuCoresPercent;
@@ -142,18 +137,6 @@ void ResonanceServerConfig::apply(const Dictionary& config,
         max_bounces = 1;
     if (max_bounces > 64)
         max_bounces = 64;
-    reverb_influence_radius = config_float(config, "reverb_influence_radius", reverb_influence_radius);
-    if (reverb_influence_radius < 1.0f)
-        reverb_influence_radius = 1.0f;
-    reverb_transmission_amount = config_float(config, "reverb_transmission_amount", reverb_transmission_amount);
-    if (reverb_transmission_amount < 0.0f)
-        reverb_transmission_amount = 0.0f;
-    if (reverb_transmission_amount > 1.0f)
-        reverb_transmission_amount = 1.0f;
-    apply_occlusion_to_baked_reflections = config_bool(config, "apply_occlusion_to_baked_reflections",
-                                                       apply_occlusion_to_baked_reflections);
-    baked_reverb_use_listener_probe = config_bool(config, "baked_reverb_use_listener_probe",
-                                                  baked_reverb_use_listener_probe);
     reflection_type = config_int(config, "reflection_type", reflection_type);
     if (reflection_type < resonance::kReflectionConvolution)
         reflection_type = resonance::kReflectionConvolution;
@@ -241,17 +224,17 @@ void ResonanceServerConfig::apply(const Dictionary& config,
         pathing_vis_range = config_float(config, "pathing_vis_range", pathing_vis_range);
     else if (get_bake_pathing_param)
         pathing_vis_range = get_bake_pathing_param("bake_pathing_vis_range", resonance::kBakePathingDefaultVisRange);
-    if (pathing_vis_range < 1.0f)
-        pathing_vis_range = 1.0f;
+    if (pathing_vis_range < 0.0f)
+        pathing_vis_range = 0.0f;
     if (pathing_vis_range > 1000.0f)
         pathing_vis_range = 1000.0f;
 
     pathing_normalize_eq = config_bool(config, "pathing_normalize_eq", pathing_normalize_eq);
-    pathing_num_vis_samples = config_int(config, "pathing_num_vis_samples", pathing_num_vis_samples);
-    if (pathing_num_vis_samples < 1)
-        pathing_num_vis_samples = resonance::kRuntimePathingDefaultNumVisSamples;
-    if (pathing_num_vis_samples > 16)
-        pathing_num_vis_samples = 16;
+    pathing_num_samples = config_int(config, "pathing_num_samples", pathing_num_samples);
+    if (pathing_num_samples < 1)
+        pathing_num_samples = resonance::kRuntimePathingDefaultNumVisSamples;
+    if (pathing_num_samples > 16)
+        pathing_num_samples = 16;
     path_validation_enabled = config_bool(config, "path_validation_enabled", path_validation_enabled);
     find_alternate_paths = config_bool(config, "find_alternate_paths", find_alternate_paths);
     // Legacy: pathing_validation_ab_mode when new keys absent (old get_config() / hand-built dicts).

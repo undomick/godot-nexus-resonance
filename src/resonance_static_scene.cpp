@@ -11,6 +11,38 @@ ResonanceStaticScene::ResonanceStaticScene() {}
 
 ResonanceStaticScene::~ResonanceStaticScene() {}
 
+void ResonanceStaticScene::_schedule_retry_register_when_server_ready() {
+    Engine* eng = Engine::get_singleton();
+    if (eng && eng->is_editor_hint())
+        return;
+    if (!is_inside_tree())
+        return;
+    if (server_init_retry_pending_)
+        return;
+    server_init_retry_pending_ = true;
+    call_deferred("_deferred_retry_register_static_pack");
+}
+
+void ResonanceStaticScene::_deferred_retry_register_static_pack() {
+    server_init_retry_pending_ = false;
+    Engine* eng = Engine::get_singleton();
+    if (eng && eng->is_editor_hint())
+        return;
+    if (!is_inside_tree())
+        return;
+    ResonanceServer* srv = ResonanceServer::get_singleton();
+    if (srv == nullptr || !srv->is_initialized()) {
+        if (server_init_retry_count_ < kMaxServerInitRetries) {
+            server_init_retry_count_++;
+            server_init_retry_pending_ = true;
+            call_deferred("_deferred_retry_register_static_pack");
+        }
+        return;
+    }
+    server_init_retry_count_ = 0;
+    _register_static_pack();
+}
+
 void ResonanceStaticScene::_register_static_pack() {
     Engine* eng = Engine::get_singleton();
     if (eng && eng->is_editor_hint()) {
@@ -21,8 +53,10 @@ void ResonanceStaticScene::_register_static_pack() {
     }
     ResonanceServer* srv = ResonanceServer::get_singleton();
     if (srv == nullptr || !srv->is_initialized()) {
+        _schedule_retry_register_when_server_ready();
         return;
     }
+    server_init_retry_count_ = 0;
     const uint64_t id = get_instance_id();
     if (!has_valid_asset()) {
         srv->remove_static_pack(id);
@@ -32,6 +66,8 @@ void ResonanceStaticScene::_register_static_pack() {
 }
 
 void ResonanceStaticScene::_unregister_static_pack() {
+    server_init_retry_pending_ = false;
+    server_init_retry_count_ = 0;
     Engine* eng = Engine::get_singleton();
     if (eng && eng->is_editor_hint()) {
         return;
@@ -102,6 +138,8 @@ void ResonanceStaticScene::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_export_hash"), &ResonanceStaticScene::get_export_hash);
 
     ClassDB::bind_method(D_METHOD("_register_static_pack"), &ResonanceStaticScene::_register_static_pack);
+    ClassDB::bind_method(D_METHOD("_deferred_retry_register_static_pack"),
+                         &ResonanceStaticScene::_deferred_retry_register_static_pack);
 
     ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "static_scene_asset", PROPERTY_HINT_RESOURCE_TYPE, "ResonanceGeometryAsset"),
                  "set_static_scene_asset", "get_static_scene_asset");

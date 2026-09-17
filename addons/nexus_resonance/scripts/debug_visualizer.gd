@@ -1,7 +1,8 @@
 extends Node3D
 
-## Physics-ray occlusion preview (Godot collision only - not Steam Audio / Embree geometry).
-## For real audio occlusion debug, use ResonanceRuntime "Debug Occlusion" (native ray data).
+## DEMO / PHYSICS ONLY: Godot PhysicsRayQuery line (collision shapes), not Steam Audio occlusion or F3 player overlay.
+## For Steam Audio debug use ResonanceRuntime enable_debug + player_overlay_toggle_key (default F3).
+## Do not attach this node expecting Embree/IPL occlusion; it never reads ResonanceServer.
 
 @export var listener_camera: Camera3D
 @export var audio_source_node: Node3D

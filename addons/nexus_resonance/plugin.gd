@@ -11,6 +11,7 @@ const GIZMO_SCRIPT = "res://addons/nexus_resonance/editor/resonance_probe_gizmo.
 const EXCLUSION_GIZMO_SCRIPT = "res://addons/nexus_resonance/editor/resonance_probe_exclusion_gizmo.gd"
 const PLAYER_GIZMO_SCRIPT = "res://addons/nexus_resonance/editor/resonance_player_gizmo.gd"
 const PLAYER_GIZMO_CLASS_NAME = "ResonancePlayer"
+const REVERB_DATA_POINT_GIZMO_SCRIPT = "res://addons/nexus_resonance/editor/resonance_reverb_data_point_gizmo.gd"
 
 const EFFECT_CLASS = "ResonanceAudioEffect"
 ## After plugin re-enable, GDExtension can register native classes a frame later; retry bus effect + gizmo refresh.
@@ -19,12 +20,14 @@ const SOFA_IMPORTER_SCRIPT = "res://addons/nexus_resonance/editor/sofa_importer.
 const RESONANCE_GEOMETRY_INSPECTOR_SCRIPT = "res://addons/nexus_resonance/editor/resonance_geometry_inspector.gd"
 const RESONANCE_BAKE_RUNNER_SCRIPT = "res://addons/nexus_resonance/editor/resonance_bake_runner.gd"
 const RESONANCE_PROBE_VOLUME_INSPECTOR_SCRIPT = "res://addons/nexus_resonance/editor/resonance_probe_volume_inspector.gd"
+const RESONANCE_REVERB_DATA_POINT_INSPECTOR_SCRIPT = "res://addons/nexus_resonance/editor/resonance_reverb_data_point_inspector.gd"
 const RESONANCE_EXPORT_HANDLER_SCRIPT = "res://addons/nexus_resonance/editor/resonance_export_handler.gd"
 const RESONANCE_EXPORT_PLUGIN_SCRIPT = "res://addons/nexus_resonance/editor/nexus_resonance_export_plugin.gd"
 const RESONANCE_FMOD_EVENT_EMITTER_INSPECTOR_SCRIPT = "res://addons/nexus_resonance/editor/resonance_fmod_event_emitter_inspector.gd"
 const ResonanceSceneUtils = preload("res://addons/nexus_resonance/scripts/resonance_scene_utils.gd")
 const UIStrings = preload("res://addons/nexus_resonance/scripts/resonance_ui_strings.gd")
 const ResonanceLoggerScript = preload("res://addons/nexus_resonance/scripts/resonance_logger.gd")
+const ResonanceRuntimeBus = preload("res://addons/nexus_resonance/scripts/resonance_runtime_bus.gd")
 const ResonanceEditorDialogs = preload(
 	"res://addons/nexus_resonance/editor/resonance_editor_dialogs.gd"
 )
@@ -37,7 +40,7 @@ const ResonanceEditorSceneIndex = preload(
 
 enum ToolMenuId {
 	EXPORT_ACTIVE_SCENE,
-	EXPORT_ALL_OPEN_SCENES,
+	EXPORT_STATIC_SCENES_IN_BUILD,
 	EXPORT_ACTIVE_SCENE_OBJ,
 	EXPORT_DYNAMIC_OBJECTS_ACTIVE,
 	EXPORT_DYNAMIC_OBJECTS_IN_BUILD,
@@ -53,11 +56,13 @@ enum ToolMenuId {
 var gizmo_instance: EditorNode3DGizmoPlugin = null
 var exclusion_gizmo_instance: EditorNode3DGizmoPlugin = null
 var player_gizmo_instance: EditorNode3DGizmoPlugin = null
+var reverb_data_point_gizmo_instance: EditorNode3DGizmoPlugin = null
 ## False during/after _exit_tree so gizmo registration does not run after the plugin is off.
 var _editor_plugin_ui_active: bool = false
 var resonance_geometry_inspector: EditorInspectorPlugin = null
 var resonance_fmod_event_emitter_inspector: EditorInspectorPlugin = null
 var resonance_probe_volume_inspector: EditorInspectorPlugin = null
+var resonance_reverb_data_point_inspector: EditorInspectorPlugin = null
 var bake_runner = null  # ResonanceBakeRunner
 var sofa_importer: EditorImportPlugin = null
 var export_handler = null  # ResonanceExportHandler
@@ -86,6 +91,7 @@ func _enter_tree() -> void:
 	_register_logger_project_settings()
 	_register_editor_project_settings()
 	_register_bake_project_settings()
+	_register_physics_project_settings()
 	_register_export_project_settings()
 	_init_editor_plugin_ui()
 	_warn_if_gdextension_missing()
@@ -206,9 +212,17 @@ func _init_editor_plugin_ui() -> void:
 		resonance_probe_volume_inspector.editor_interface = get_editor_interface()
 		add_inspector_plugin(resonance_probe_volume_inspector)
 
+	var rdp_inspector_script: Script = load(RESONANCE_REVERB_DATA_POINT_INSPECTOR_SCRIPT) as Script
+	if rdp_inspector_script:
+		resonance_reverb_data_point_inspector = rdp_inspector_script.new()
+		resonance_reverb_data_point_inspector.bake_runner = bake_runner
+		resonance_reverb_data_point_inspector.editor_interface = get_editor_interface()
+		add_inspector_plugin(resonance_reverb_data_point_inspector)
+
 	_register_probe_volume_gizmo()
 	_register_probe_exclusion_gizmo()
 	_register_player_gizmo()
+	_register_reverb_data_point_gizmo()
 
 	_tool_submenu = PopupMenu.new()
 	var base: Control = get_editor_interface().get_base_control()
@@ -221,7 +235,9 @@ func _init_editor_plugin_ui() -> void:
 		icon_export, tr(UIStrings.MENU_EXPORT_ACTIVE_SCENE), ToolMenuId.EXPORT_ACTIVE_SCENE
 	)
 	_tool_submenu.add_icon_item(
-		icon_export, tr(UIStrings.MENU_EXPORT_ALL_OPEN_SCENES), ToolMenuId.EXPORT_ALL_OPEN_SCENES
+		icon_export,
+		tr(UIStrings.MENU_EXPORT_STATIC_SCENES_IN_BUILD),
+		ToolMenuId.EXPORT_STATIC_SCENES_IN_BUILD
 	)
 	_tool_submenu.add_icon_item(
 		icon_export, tr(UIStrings.MENU_EXPORT_ACTIVE_SCENE_OBJ), ToolMenuId.EXPORT_ACTIVE_SCENE_OBJ
@@ -388,6 +404,29 @@ func _register_player_gizmo() -> void:
 	_refresh_resonance_player_gizmos_in_edited_scene()
 
 
+func _register_reverb_data_point_gizmo() -> void:
+	if not _editor_plugin_ui_active:
+		return
+	if reverb_data_point_gizmo_instance != null:
+		return
+	if not FileAccess.file_exists(REVERB_DATA_POINT_GIZMO_SCRIPT):
+		return
+	var script: Script = load(REVERB_DATA_POINT_GIZMO_SCRIPT) as Script
+	if script == null:
+		return
+	var inst: EditorNode3DGizmoPlugin = script.new()
+	if inst == null:
+		return
+	reverb_data_point_gizmo_instance = inst
+	var base: Control = get_editor_interface().get_base_control()
+	if base and "fallback_icon" in reverb_data_point_gizmo_instance:
+		reverb_data_point_gizmo_instance.fallback_icon = ResonanceEditorDialogs.get_icon(
+			base, UIStrings.ICON_PROBE_VOLUME_GIZMO, "ReflectionProbe"
+		)
+	add_node_3d_gizmo_plugin(reverb_data_point_gizmo_instance)
+	_refresh_class_gizmos_in_edited_scene(UIStrings.GIZMO_REVERB_DATA_POINT_CLASS)
+
+
 func _refresh_resonance_player_gizmos_in_edited_scene() -> void:
 	_refresh_class_gizmos_in_edited_scene(PLAYER_GIZMO_CLASS_NAME)
 
@@ -418,6 +457,8 @@ func _exit_tree() -> void:
 	# Break RefCounted reference cycles in bake system (prevents exit leak warnings).
 	if resonance_probe_volume_inspector and "bake_runner" in resonance_probe_volume_inspector:
 		resonance_probe_volume_inspector.bake_runner = null
+	if resonance_reverb_data_point_inspector and "bake_runner" in resonance_reverb_data_point_inspector:
+		resonance_reverb_data_point_inspector.bake_runner = null
 	if bake_runner and bake_runner.has_method("shutdown"):
 		bake_runner.shutdown()
 	if export_handler and export_handler.has_method("shutdown"):
@@ -431,6 +472,9 @@ func _exit_tree() -> void:
 	if resonance_probe_volume_inspector:
 		remove_inspector_plugin(resonance_probe_volume_inspector)
 		resonance_probe_volume_inspector = null
+	if resonance_reverb_data_point_inspector:
+		remove_inspector_plugin(resonance_reverb_data_point_inspector)
+		resonance_reverb_data_point_inspector = null
 	bake_runner = null
 	export_handler = null
 	if _tool_submenu:
@@ -454,6 +498,9 @@ func _exit_tree() -> void:
 	if player_gizmo_instance:
 		remove_node_3d_gizmo_plugin(player_gizmo_instance)
 		player_gizmo_instance = null
+	if reverb_data_point_gizmo_instance:
+		remove_node_3d_gizmo_plugin(reverb_data_point_gizmo_instance)
+		reverb_data_point_gizmo_instance = null
 
 
 func _enable_plugin() -> void:
@@ -501,6 +548,10 @@ func _finish_editor_probe_gizmo_integration() -> void:
 		_register_player_gizmo()
 	else:
 		_refresh_resonance_player_gizmos_in_edited_scene()
+	if reverb_data_point_gizmo_instance == null:
+		_register_reverb_data_point_gizmo()
+	else:
+		_refresh_class_gizmos_in_edited_scene(UIStrings.GIZMO_REVERB_DATA_POINT_CLASS)
 
 
 func _disable_plugin() -> void:
@@ -669,15 +720,33 @@ func _register_bake_project_settings() -> void:
 	)
 
 
+func _register_physics_project_settings() -> void:
+	var key := ResonancePaths.SETTING_PHYSICS_MATERIAL_SEARCH_PATHS
+	var default_paths := PackedStringArray([ResonancePaths.PATH_DEFAULT_MATERIALS])
+	if not ProjectSettings.has_setting(key):
+		ProjectSettings.set_setting(key, default_paths)
+	ProjectSettings.set_initial_value(key, default_paths)
+	(
+		ProjectSettings
+		. add_property_info(
+			{
+				"name": key,
+				"type": TYPE_PACKED_STRING_ARRAY,
+			}
+		)
+	)
+
+
 ## Ensures export asset format keys exist with defaults (no save). Returns whether [method ProjectSettings.save] is recommended.
+## Default is Binary (.res) = 1. Existing valid 0/1 values are kept (no overwrite).
 func _ensure_export_format_project_settings() -> bool:
 	var save_needed := false
 	save_needed = (
-		_ensure_int_enum_project_setting(ResonancePaths.SETTING_RESONANCE_ASSET_FORMAT, 0)
+		_ensure_int_enum_project_setting(ResonancePaths.SETTING_RESONANCE_ASSET_FORMAT, 1)
 		or save_needed
 	)
 	save_needed = (
-		_ensure_int_enum_project_setting(ResonancePaths.SETTING_PROBE_DATA_FORMAT, 0) or save_needed
+		_ensure_int_enum_project_setting(ResonancePaths.SETTING_PROBE_DATA_FORMAT, 1) or save_needed
 	)
 	return save_needed
 
@@ -703,8 +772,8 @@ func _ensure_int_enum_project_setting(key: String, default_value: int) -> bool:
 			if iv != 0 and iv != 1:
 				ProjectSettings.set_setting(key, default_value)
 				needs_save = true
-	var effective := clampi(int(ProjectSettings.get_setting(key)), 0, 1)
-	ProjectSettings.set_initial_value(key, effective)
+	# Factory default for Revert in Project Settings (does not overwrite stored value).
+	ProjectSettings.set_initial_value(key, default_value)
 	return needs_save
 
 
@@ -770,9 +839,9 @@ func _on_tool_submenu_id_pressed(id: int) -> void:
 		ToolMenuId.EXPORT_ACTIVE_SCENE:
 			if export_handler:
 				export_handler.export_active_scene(null)
-		ToolMenuId.EXPORT_ALL_OPEN_SCENES:
+		ToolMenuId.EXPORT_STATIC_SCENES_IN_BUILD:
 			if export_handler:
-				export_handler.export_all_open_scenes(null)
+				export_handler.export_static_scenes_in_build(null)
 		ToolMenuId.EXPORT_ACTIVE_SCENE_OBJ:
 			if export_handler:
 				export_handler.export_scene_obj(null)
@@ -907,6 +976,9 @@ func _on_tool_bake_all_probe_volumes(_unused: Variant = null) -> void:
 			tr(UIStrings.DIALOG_BAKE_FAILED_TITLE)
 		)
 		return
+	if bake_runner.has_method("ensure_resonance_server_for_volumes"):
+		if not bake_runner.ensure_resonance_server_for_volumes(volumes):
+			return
 	bake_runner.run_bake(volumes)
 
 

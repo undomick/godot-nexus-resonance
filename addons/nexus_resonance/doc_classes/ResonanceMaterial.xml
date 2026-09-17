@@ -19,7 +19,7 @@
 			Mid frequency absorption (800 Hz to 8 kHz). 0 = none, 1 = full absorption.
 		</member>
 		<member name="scattering" type="float" setter="set_scattering" getter="get_scattering" default="0.05">
-			Surface roughness for reflections. 0 = mirror-like, 1 = diffuse.
+			Surface roughness for reflections. 0 = mirror-like, 1 = diffuse. Applies live for realtime reflections ([member ResonancePlayerConfig.reflections_type] Realtime / Use Global with realtime default), for any effect type (Convolution, Parametric, Hybrid). Baked reflections bake scattering into the IR; edit materials then rebake. Custom scene type uses collider meta [code]resonance_physics_material[/code] or [code]resonance_physics_material_preset[/code] (see [method ResonanceServer.refresh_physics_materials]).
 		</member>
 		<member name="transmission_low" type="float" setter="set_transmission_low" getter="get_transmission_low" default="0.01">
 			Low frequency transmission (up to 800 Hz). How much sound passes through. 0 = blocked, 1 = full.

@@ -23,7 +23,9 @@ Thank you for your interest in contributing. This document provides guidelines f
    python scripts/install_steam_audio.py
    ```
 3. Build the GDExtension: `scons`
-4. Open `project/` in Godot 4.6 (sync `addons/nexus_resonance/` into `project/addons/nexus_resonance/` first).
+4. Link or sync the addon into `project/`, then open `project/` in Godot 4.6:
+   - Preferred (Windows): `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/link_addon_into_project.ps1`
+   - Fallback: copy `addons/nexus_resonance/` into `project/addons/nexus_resonance/` (only if no junction).
 5. Enable the Nexus Resonance plugin in Project Settings → Plugins.
 
 ### Platform-Specific Builds

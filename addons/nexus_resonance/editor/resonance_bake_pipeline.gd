@@ -1,5 +1,4 @@
 extends RefCounted
-class_name ResonanceBakePipeline
 
 ## Main-thread and threaded bake steps for [ResonanceProbeVolume]. Owned by [ResonanceBakeRunner].
 
@@ -34,6 +33,7 @@ func cancel_active_bake_thread_and_join(max_wait_ms: int = BAKE_THREAD_JOIN_TIME
 	if _active_bake_thread == null:
 		return
 	if not _active_bake_thread.is_alive():
+		_active_bake_thread.wait_to_finish()
 		_active_bake_thread = null
 		return
 	var deadline_ms: int = Time.get_ticks_msec() + max_wait_ms
@@ -42,12 +42,13 @@ func cancel_active_bake_thread_and_join(max_wait_ms: int = BAKE_THREAD_JOIN_TIME
 	if _active_bake_thread.is_alive():
 		push_warning(
 			(
-				"Nexus Resonance: Bake thread did not finish within %d ms during shutdown."
+				"Nexus Resonance: Bake thread did not finish within %d ms; waiting for join."
 				% max_wait_ms
 			)
 		)
-	else:
-		_active_bake_thread.wait_to_finish()
+		while _active_bake_thread.is_alive():
+			OS.delay_msec(10)
+	_active_bake_thread.wait_to_finish()
 	_active_bake_thread = null
 
 
@@ -91,8 +92,6 @@ func run_bake_pipeline_main_thread(volumes: Array[Node]) -> void:
 		)
 		_finish_pipeline_safe(false, null, volumes)
 		return
-	var static_scene_node = _BakeDiscovery.find_resonance_static_scene_for_bake(volumes, root)
-	var static_asset = static_scene_node.get("static_scene_asset") if static_scene_node else null
 	var baked_probe_datas: Array = []
 
 	var vol_index := 0
@@ -109,17 +108,17 @@ func run_bake_pipeline_main_thread(volumes: Array[Node]) -> void:
 			root,
 			vol_index,
 			volumes.size(),
-			static_asset,
 			Callable(_runner, "_get_bake_config_for_volume"),
 			DEFAULT_BAKE_INFLUENCE_RADIUS,
 			is_headless
 		)
 		var bc = _runner._get_bake_config_for_volume(vol)
 		if progress_ui:
+			var want_path: bool = _BakeDiscovery.resolve_bake_pathing_enabled(ctx.root, bc)
 			progress_ui.set_stage(
 				vol_index,
 				volumes.size(),
-				_BakeEstimates.estimate_bake_time(vol, bc) if vol_index == 1 else ""
+				_BakeEstimates.estimate_bake_time(vol, bc, want_path) if vol_index == 1 else ""
 			)
 
 		_update_status(tr(UIStrings.PROGRESS_PROCESSING) + ctx.vol_info)
@@ -129,7 +128,7 @@ func run_bake_pipeline_main_thread(volumes: Array[Node]) -> void:
 			await tree.create_timer(BAKE_VOLUME_DELAY_SEC).timeout
 		if _runner_unavailable():
 			return
-		srv.set_bake_params(ctx.bc.get_bake_params())
+		srv.set_bake_params(_BakeDiscovery.bake_params_from_runtime(ctx.root, ctx.bc, ctx.vol))
 		var ok = await _run_bake_for_volume(ctx)
 		if _runner_unavailable():
 			return
@@ -193,9 +192,9 @@ func _run_in_thread_with_cancel_poll(bake_callable: Callable) -> Variant:
 	return result
 
 
-func _prepare_probe_data_for_bake(vol: Node, probe_data: Resource, root: Node) -> void:
+func _prepare_probe_data_for_bake(vol: Node, probe_data: Resource, root: Node) -> bool:
 	if not probe_data or not vol or not root:
-		return
+		return true
 	var scene_name := "unsaved"
 	var scene_path = root.get_scene_file_path()
 	if not scene_path.is_empty():
@@ -222,16 +221,25 @@ func _prepare_probe_data_for_bake(vol: Node, probe_data: Resource, root: Node) -
 	if not DirAccess.dir_exists_absolute(fs_batches):
 		var mkdir_err: int = DirAccess.make_dir_recursive_absolute(fs_batches)
 		if mkdir_err != OK or not DirAccess.dir_exists_absolute(fs_batches):
+			var msg := "Failed to create batches output directory: %s (error %s)" % [batches_dir, mkdir_err]
 			if Engine.has_singleton("ResonanceLogger"):
 				Engine.get_singleton("ResonanceLogger").log(
 					&"bake",
-					"Failed to create batches output directory: %s" % mkdir_err,
-					{"step": "prepare", "error": mkdir_err}
+					msg,
+					{"step": "prepare", "error": mkdir_err, "path": batches_dir}
 				)
-			return
+			_runner._log_and_show_error(
+				"Probe data path not writable",
+				"Fix project output permissions or choose a writable bake output folder in Project Settings.",
+				msg,
+				vol.name,
+				"prepare"
+			)
+			return false
 	if probe_data.has_method("take_over_path"):
 		probe_data.take_over_path(path)
 	probe_data.emit_changed()
+	return true
 
 
 func _skip_if_up_to_date(ctx: Variant) -> bool:
@@ -246,7 +254,8 @@ func _skip_if_up_to_date(ctx: Variant) -> bool:
 func _bake_reflections(ctx: Variant) -> bool:
 	var srv = ResonanceServerAccess.get_server()
 	_update_status(tr(UIStrings.PROGRESS_BAKING_REVERB) + ctx.vol_info)
-	_prepare_probe_data_for_bake(ctx.vol, ctx.probe_data, ctx.root)
+	if not _prepare_probe_data_for_bake(ctx.vol, ctx.probe_data, ctx.root):
+		return false
 	var volume_transform = ctx.vol.global_transform
 	var extents = ctx.vol.get("region_size") * 0.5
 	var spacing = ctx.vol.get("spacing")
@@ -293,7 +302,7 @@ func _bake_reflections(ctx: Variant) -> bool:
 		ctx.probe_data.set_static_source_params_hash(0)
 	if ctx.probe_data.has_method("set_static_listener_params_hash"):
 		ctx.probe_data.set_static_listener_params_hash(0)
-	if ctx.bc.pathing_enabled:
+	if _BakeDiscovery.resolve_bake_pathing_enabled(ctx.root, ctx.bc):
 		ctx.need_pathing = true
 	_rebake_sets_static_pass_needed(ctx)
 	if ctx.probe_data.has_method("set_static_scene_params_hash"):
@@ -324,7 +333,7 @@ func _bake_pathing(ctx: Variant) -> bool:
 		tr(UIStrings.PROGRESS_BAKING_PATHING),
 		do_pathing,
 		"set_pathing_params_hash",
-		_BakeHashes.compute_pathing_hash(ctx.bc)
+		_BakeHashes.compute_pathing_hash(ctx.root, ctx.bc, ctx.vol)
 	)
 	if not ok and Engine.has_singleton("ResonanceLogger"):
 		Engine.get_singleton("ResonanceLogger").log(
@@ -433,14 +442,14 @@ func _bake_static_listener(ctx: Variant) -> bool:
 
 func _run_bake_for_volume(ctx: Variant) -> bool:
 	var srv = ResonanceServerAccess.get_server()
-	srv.set_bake_params(ctx.bc.get_bake_params())
+	srv.set_bake_params(_BakeDiscovery.bake_params_from_runtime(ctx.root, ctx.bc, ctx.vol))
 	srv.set_bake_pipeline_pathing(ctx.need_pathing)
 	if _skip_if_up_to_date(ctx):
 		_update_status(tr(UIStrings.PROGRESS_SKIPPING) + ctx.vol_info)
 		return true
 	if not await _bake_reflections(ctx):
 		return false
-	if ctx.need_pathing and ctx.bc.pathing_enabled:
+	if ctx.need_pathing and _BakeDiscovery.resolve_bake_pathing_enabled(ctx.root, ctx.bc):
 		if not await _bake_pathing(ctx):
 			return false
 	if ctx.need_static_source and ctx.add_flags.static_source:

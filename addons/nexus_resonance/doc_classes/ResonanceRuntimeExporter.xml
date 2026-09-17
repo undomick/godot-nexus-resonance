@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="ResonanceRuntimeExporter" inherits="RefCounted" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../class.xsd">
+	<brief_description>
+		Runtime helper to rebuild merged static geometry in play mode (destroyable walls, streaming).
+	</brief_description>
+	<description>
+		GDScript [code]class_name[/code] over [ResonanceServer] static export, [ResonanceStaticScene] assign, and Phonon reload. Use when a merged static pack is loaded: live [ResonanceStaticGeometry] nodes are not in Phonon, so hiding or freeing meshes does nothing until you re-export and reload. Hidden ([code]visible = false[/code]) and freed nodes are omitted from the merge. Prefer [method export_static_async] when gameplay must wait for reload and optional probe RAM bake. Not for moving meshes - use [ResonanceDynamicGeometry]. Custom [code]scene_type[/code] (Godot Physics) cannot replace static packs.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="export_asset" qualifiers="static">
+			<return type="ResonanceGeometryAsset" />
+			<param index="0" name="scene_root" type="Node" />
+			<description>
+				Merges visible static [ResonanceGeometry] under [param scene_root] into an in-memory [ResonanceGeometryAsset]. Does not assign a [ResonanceStaticScene] or reload Phonon. Returns [code]null[/code] when the server method is missing or there is no mesh data.
+			</description>
+		</method>
+		<method name="replace_static" qualifiers="static">
+			<return type="void" />
+			<param index="0" name="assets" type="Array" />
+			<param index="1" name="transforms" type="Array" default="[]" />
+			<description>
+				Clears all runtime static packs, then loads [param assets] ([ResonanceGeometryAsset]) at matching [param transforms] (identity when shorter). Use when there is no [ResonanceStaticScene] node. No-op with a warning when [code]scene_type[/code] is Custom. Calls [method ResonanceServer.replace_static_scenes_from_assets].
+			</description>
+		</method>
+		<method name="reload" qualifiers="static">
+			<return type="void" />
+			<param index="0" name="scene_root" type="Node" default="null" />
+			<description>
+				Debounced reload of every [ResonanceStaticScene] pack via [method ResonanceRuntime.request_static_scene_reload]. With [param scene_root], uses the runtime under that tree; otherwise the primary [code]resonance_runtime[/code] group member.
+			</description>
+		</method>
+		<method name="export_static" qualifiers="static">
+			<return type="int" />
+			<param index="0" name="scene_root" type="Node" />
+			<param index="1" name="opts" type="Dictionary" default="{}" />
+			<description>
+				Exports live static geometry, assigns the owned [ResonanceStaticScene], and reloads Phonon. Returns immediately ([enum Error]). [param opts] keys: [code]static_scene_node[/code], [code]reload[/code] (default true), [code]bake_probes[/code], [code]probe_volumes[/code], [code]baker[/code] ([url=#ResonanceRuntimeBaker]ResonanceRuntimeBaker[/url]), [code]optional_save_path[/code]. With [code]bake_probes[/code] and a deferred RSS reload, RAM bake starts on the next frame. Use [method export_static_async] to await reload and bake.
+			</description>
+		</method>
+		<method name="export_static_async" qualifiers="static">
+			<return type="int" />
+			<param index="0" name="scene_root" type="Node" />
+			<param index="1" name="opts" type="Dictionary" default="{}" />
+			<description>
+				Same as [method export_static], but this is a coroutine: [code]await[/code] one frame after a deferred RSS reload, then optional probe RAM bake until [url=#ResonanceRuntimeBaker]ResonanceRuntimeBaker[/url] [code]bake_finished[/code]. Returns [enum Error]. Prefer this when gameplay must not continue on stale static packs.
+			</description>
+		</method>
+	</methods>
+</class>

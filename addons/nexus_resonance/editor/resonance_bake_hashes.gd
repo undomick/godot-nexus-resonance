@@ -1,23 +1,26 @@
 extends Object
-class_name ResonanceBakeHashes
 
 ## Hashes for bake params and static source/listener positions (shared by bake context + UI).
 
 const ResonanceSceneUtils = preload("res://addons/nexus_resonance/scripts/resonance_scene_utils.gd")
+const ResonanceBakeDiscovery = preload(
+	"res://addons/nexus_resonance/editor/resonance_bake_discovery.gd"
+)
 
 
 static func hash_dict(d: Dictionary) -> int:
 	return hash(var_to_str(d))
 
 
-static func compute_pathing_hash(bc: Resource) -> int:
-	var params = bc.get_bake_params()
+## Pathing hash from RuntimeConfig overlays. Pass scene root so samples/ranges resolve.
+static func compute_pathing_hash(root: Node, bc: Resource, vol: Node = null) -> int:
+	var params: Dictionary = ResonanceBakeDiscovery.bake_params_from_runtime(root, bc, vol)
 	return hash_dict(
 		{
-			"vis_range": params.get("bake_pathing_vis_range", 500),
-			"path_range": params.get("bake_pathing_path_range", 100),
-			"num_samples": params.get("bake_pathing_num_samples", 16),
-			"radius": params.get("bake_pathing_radius", 0.5),
+			"vis_range": params.get("bake_pathing_vis_range", 1000),
+			"path_range": params.get("bake_pathing_path_range", 1000),
+			"num_samples": params.get("bake_pathing_num_samples", 4),
+			"radius": params.get("bake_pathing_radius", 1.0),
 			"threshold": params.get("bake_pathing_threshold", 0.1)
 		}
 	)

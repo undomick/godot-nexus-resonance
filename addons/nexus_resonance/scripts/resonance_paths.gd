@@ -5,6 +5,7 @@ class_name ResonancePaths
 
 const PATH_RESONANCE_DATA := "res://resonance_data/"
 const PATH_RESONANCE_DATA_LEGACY := "res://audio_data/"
+const PATH_DEFAULT_MATERIALS := "res://addons/nexus_resonance/materials"
 const SUBDIR_STATICS := "statics/"
 const SUBDIR_DYNAMICS := "dynamics/"
 const SUBDIR_BATCHES := "batches/"
@@ -17,6 +18,7 @@ const SETTING_BAKE_OUTPUT_DIR_LEGACY := SETTINGS_PREFIX + "bake/output_dir"
 const SETTING_RESONANCE_ASSET_FORMAT := SETTINGS_PREFIX + "export/resonance_asset_format"
 const SETTING_RESONANCE_ASSET_FORMAT_LEGACY := SETTINGS_PREFIX + "export/static_scene_asset_format"
 const SETTING_PROBE_DATA_FORMAT := SETTINGS_PREFIX + "export/probe_data_format"
+const SETTING_PHYSICS_MATERIAL_SEARCH_PATHS := SETTINGS_PREFIX + "physics/material_search_paths"
 const SETTING_LOGGER_PREFIX := SETTINGS_PREFIX + "logger/"
 const SETTING_EDITOR_AUTO_CONVERT_ANIMATION := (
 	SETTINGS_PREFIX + "editor/auto_convert_animation_audio_on_save"
@@ -28,16 +30,17 @@ const DEFAULT_REVERB_BUS_NAME := &"ResonanceReverb"
 const DEFAULT_OUTPUT_BUS_NAME := &"Master"
 
 
+## Enum: 0 = Text (.tres), 1 = Binary (.res). Missing setting defaults to Binary.
 static func _export_setting_use_res(setting_key: String) -> bool:
-	var v: Variant = ProjectSettings.get_setting(setting_key, 0)
+	var v: Variant = ProjectSettings.get_setting(setting_key, 1)
 	if v == null:
-		return false
+		return true
 	var t := typeof(v)
 	if t == TYPE_INT:
 		return int(v) == 1
 	if t == TYPE_FLOAT:
 		return clampi(int(round(v)), 0, 1) == 1
-	return false
+	return true
 
 
 static func _normalize_dir(dir: String) -> String:

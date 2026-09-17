@@ -5,14 +5,23 @@ class_name ResonancePlayerConfig
 
 ## Per-source preset for ResonancePlayer (Resource). **Use Global** = follow runtime unless noted.
 
+const ResonanceConfigConstants = preload(
+	"res://addons/nexus_resonance/scripts/resonance_config_constants.gd"
+)
+
 # --- Distance / Attenuation ---
 @export_group("Distance")
-## Distance (meters) at which sound is at full volume. Closer than this: no attenuation.
-@export_range(0.1, 100.0, 0.1) var min_distance: float = 1.0
-## Max distance (meters) for attenuation. Sound reaches minimum volume at this range.
-@export_range(1.0, 2000.0, 1.0) var max_distance: float = 500.0
+var _distance_attenuation: bool = true
+## Master distance-attenuation switch. Off = full Direct gain and no Phonon distance model; mode/min/max stay stored.
+@export var distance_attenuation: bool = true:
+	get:
+		return _distance_attenuation
+	set(v):
+		if _distance_attenuation != v:
+			_distance_attenuation = v
+			notify_property_list_changed()
 var _attenuation_mode: int = 0
-## Inverse / Linear / Curve / Disabled. Disabled turns off sim distance attenuation on the direct path (not mute). Legacy tres may map old flags into this enum.
+## Inverse = physics 1/d (uses min_distance, ignores max). Linear / Curve = min/max rolloff. Disabled = no Direct rolloff.
 @export_enum("Inverse:0", "Linear:1", "Curve:2", "Disabled:3") var attenuation_mode: int:
 	get:
 		return _attenuation_mode
@@ -20,12 +29,25 @@ var _attenuation_mode: int = 0
 		if _attenuation_mode != v:
 			_attenuation_mode = v
 			notify_property_list_changed()
+## Distance (meters) at which sound is at full volume. Closer than this: no attenuation. Used by Inverse (1/d knee) and Linear/Curve.
+@export_range(0.1, 100.0, 0.1) var min_distance: float = 1.0
+## Max distance (meters) for Linear/Curve rolloff. Grayed out for Inverse and Disabled.
+@export_range(1.0, 2000.0, 1.0) var max_distance: float = 500.0
 ## Custom attenuation curve. X = normalized distance (0..1), Y = volume. Used when attenuation_mode is Curve.
 @export var attenuation_curve: Curve = null
+var _use_distance_curve_for_reflections: bool = false
+## When Linear/Curve: feed the same Phonon callback model into Reflections IR correction. Default off. Pathing always uses the model for Linear/Curve on path length.
+@export var use_distance_curve_for_reflections: bool = false:
+	get:
+		return _use_distance_curve_for_reflections
+	set(v):
+		if _use_distance_curve_for_reflections != v:
+			_use_distance_curve_for_reflections = v
+			notify_property_list_changed()
 
 # --- Direct Sound ---
 @export_group("Direct Sound")
-## Radius of the sound source in meters (Steam Audio occlusion radius). Affects volumetric occlusion sampling and diffraction; slightly larger radius can reduce edge flicker when [member ResonanceRuntimeConfig.occlusion_type] is Volumetric.
+## Serialized occlusion radius. Prefer [member occlusion_radius] in the Occlusion group; this stays for .tres compatibility.
 @export_range(0.1, 10.0, 0.1) var source_radius: float = 1.0
 var _air_absorption_enabled: bool = true
 ## Enable distance-based air absorption. Distant sounds appear muffled.
@@ -93,7 +115,7 @@ var _bus_override: int = -1
 ## Bus for Direct + Pathing when bus_override is Custom. Pick from existing buses in Audio Bus Layout.
 @export var bus_name: StringName = &"Master"
 var _reverb_bus_override: int = -1
-## Reverb bus: Use Global or Custom ([member reverb_bus_name]). Parametric/Hybrid wet routing vs convolution mixer behavior follows runtime docs. Setter refreshes [member reverb_bus_name] in the inspector.
+## Reverb bus: Use Global or Custom ([member reverb_bus_name]). Custom only changes the Parametric/Hybrid split wet bus; Convolution/TAN wet always uses the runtime reverb bus. Setter refreshes [member reverb_bus_name] in the inspector.
 @export_enum("Use Global:-1", "Custom:0") var reverb_bus_override: int = -1:
 	get:
 		return _reverb_bus_override
@@ -116,6 +138,12 @@ var _reverb_bus_override: int = -1
 
 # --- Occlusion ---
 @export_group("Occlusion")
+## Occlusion / volumetric sampling radius in meters. Same storage as [member source_radius].
+@export_range(0.1, 10.0, 0.1) var occlusion_radius: float:
+	get:
+		return source_radius
+	set(v):
+		source_radius = v
 ## When off, occlusion is not simulated for this source; use User Defined [member occlusion_input] for manual occlusion.
 @export var simulation_occlusion_enabled: bool = true
 var _occlusion_input: int = 0
@@ -166,8 +194,15 @@ var _transmission_input: int = 0
 ## High-band transmission (0-1). Only when transmission_input is User Defined.
 @export_range(0.0, 1.0, 0.01) var transmission_high: float = 1.0
 ## Overrides runtime transmission mode for the direct effect only. Frequency independent = single coefficient; frequency dependent = three bands (see simulator transmission type).
+var _transmission_type_override: int = -1
 @export_enum("Use Global:-1", "Frequency Independent:0", "Frequency Dependent:1")
-var transmission_type_override: int = -1
+var transmission_type_override: int = -1:
+	get:
+		return _transmission_type_override
+	set(v):
+		if _transmission_type_override != v:
+			_transmission_type_override = v
+			notify_property_list_changed()
 var _max_transmission_surfaces_override: int = 0
 ## Use Global vs cap [member max_transmission_surfaces]. Legacy [code]-1[/code] → Use Global.
 @export_enum("Use Global:0", "User Defined:1") var max_transmission_surfaces_override: int = 0:
@@ -182,55 +217,29 @@ var _max_transmission_surfaces_override: int = 0
 		if _max_transmission_surfaces_override != nv:
 			_max_transmission_surfaces_override = nv
 			notify_property_list_changed()
-## Max surfaces along the transmission path from listener (1–256; Steam Audio [code]numTransmissionRays[/code]). Only when [member max_transmission_surfaces_override] is User Defined. Increase for deep stacks of walls along one ray; it does not blend two materials at a lateral edge.
-@export_range(1, 256, 1) var max_transmission_surfaces: int = 16
+## Max surfaces along the transmission path from the listener (1–256; Steam Audio [code]numTransmissionRays[/code]).
+## [code]1[/code] = nearest surface only. Higher values multiply each hit and can silence transmission quickly.
+## Only when [member max_transmission_surfaces_override] is User Defined. Does not blend materials at a lateral edge.
+@export_range(1, 256, 1) var max_transmission_surfaces: int = 1
 
 # --- Reflections (per-source) ---
 @export_group("Reflections")
-var _reflections_type: int = -1
-## Reflections simulation: [b]Use Global[/b] = runtime [member ResonanceRuntimeConfig.default_reflections_mode] (Baked or Realtime). [b]Realtime[/b] here = per-source ray tracing (requires runtime [member ResonanceRuntimeConfig.realtime_rays] &gt; 0). Baked Reverb / Static Source / Listener = probe data modes.
+## Enable reflections simulation for this source. Default on. Still gated by runtime reverb output. Unlike pathing, there is no runtime reflections_enabled flag.
+@export var reflections_enabled: bool = true
+## Reflections simulation: [b]Use Global[/b] = runtime [member ResonanceRuntimeConfig.default_reflections_mode] (Baked or Realtime). [b]Realtime[/b] here = per-source ray tracing (requires runtime [member ResonanceRuntimeConfig.realtime_rays] &gt; 0). Baked Reverb / Static Source / Listener = probe data modes. Static Source uses this player's pose; Static Listener uses the active listener (bake lists on [ResonanceProbeVolume]).
 @export_enum(
 	"Use Global:-1",
 	"Realtime:0",
 	"Baked Reverb:1",
-	"Baked Static Source:2",
-	"Baked Static Listener:3"
+	"Static Source:2",
+	"Static Listener:3"
 )
-var reflections_type: int = -1:
-	get:
-		return _reflections_type
-	set(v):
-		if _reflections_type != v:
-			_reflections_type = v
-			notify_property_list_changed()
-## When reflections_type is Baked Static Source: reference to the node whose position was baked as static source. Leave empty to use this player's position.
-@export var current_baked_source: NodePath = NodePath()
-## When reflections_type is Baked Static Listener: reference to the node (e.g. listener/camera) whose position was baked. Leave empty to use active listener.
-@export var current_baked_listener: NodePath = NodePath()
-## Enable reflections for this source. Use Global = follow runtime.
-@export_enum("Use Global:-1", "Disabled:0", "Enabled:1") var reflections_enabled: int = -1
-## Enable pathing for this source. Use Global = follow runtime pathing_enabled.
-@export_enum("Use Global:-1", "Disabled:0", "Enabled:1") var pathing_enabled_override: int = -1
-## Wet occlusion on baked REVERB: Use Global / Off / On (outdoor leak vs indoor beds). See docs/baked-reflections-and-outdoor-sources.md.
-@export_enum("Use Global:-1", "Disabled:0", "Enabled:1")
-var apply_occlusion_to_baked_reflections_override: int = -1
-## Baked REVERB probe choice: listener- vs source-centric (Use Global / override). Realtime ray origin unchanged.
-@export_enum("Use Global:-1", "Listener-centric:0", "Source-centric:1")
-var reflections_sampling_mode_override: int = -1
-var _reverb_transmission_amount_input: int = 0
-## Reverb transmission amount: Use Global or User Defined ([member reverb_transmission_amount]). Needs wet occlusion damping active.
-@export_enum("Use Global:0", "User Defined:1") var reverb_transmission_amount_input: int = 0:
-	get:
-		return _reverb_transmission_amount_input
-	set(v):
-		if _reverb_transmission_amount_input != v:
-			_reverb_transmission_amount_input = v
-			notify_property_list_changed()
-## 0–1 damping on reverb wet when User Defined and wet occlusion applies.
-@export_range(0.0, 1.0, 0.01) var reverb_transmission_amount: float = 1.0
+var reflections_type: int = -1
 
 # --- Pathing ---
 @export_group("Pathing")
+## Enable pathing for this source. Use Global = follow runtime pathing_enabled.
+@export_enum("Use Global:-1", "Disabled:0", "Enabled:1") var pathing_enabled_override: int = -1
 ## Path validation: Use Global = [member ResonanceRuntimeConfig.path_validation_enabled]. Disabled / Enabled = force off or on for this source.
 @export_enum("Use Global:-1", "Disabled:0", "Enabled:1") var path_validation_override: int = -1
 ## Find alternate paths when a baked path is occluded. Use Global = [member ResonanceRuntimeConfig.find_alternate_paths]. Only applies when path validation is effectively on. Very CPU-heavy.
@@ -263,7 +272,7 @@ var _reverb_transmission_amount_input: int = 0
 @export_group("Spatialization")
 ## Per-source override for [member ResonanceRuntimeConfig.direct_binaural]. Use Global = runtime default; Disabled = panning on dry path; Enabled = force HRTF.
 @export_enum("Use Global:-1", "Disabled:0", "Enabled:1") var direct_binaural_override: int = -1
-## Per-source override for [member ResonanceRuntimeConfig.reverb_binaural] (HRTF on convolution / mixer Ambisonics decode - reflections wet path).
+## Per-source HRTF for local HOA decode of this player's reflection wet (parametric/hybrid direct path). Conv/TAN bus send uses global [member ResonanceRuntimeConfig.reverb_binaural] only. Pure parametric wet is mono (no HRTF). Use Global follows global reverb_binaural for local HOA decode.
 @export_enum("Use Global:-1", "Disabled:0", "Enabled:1") var reverb_binaural_override: int = -1
 ## Per-source override for [member ResonanceRuntimeConfig.pathing_binaural]. Disabled saves CPU when pathing runs but stereo speaker panning is enough.
 @export_enum("Use Global:-1", "Disabled:0", "Enabled:1") var pathing_binaural_override: int = -1
@@ -295,28 +304,36 @@ func _validate_property(property: Dictionary) -> void:
 		if reverb_bus_override == -1:  # Use Global
 			property["usage"] = property["usage"] | PROPERTY_USAGE_READ_ONLY
 	elif property.name == "perspective_factor":
-		if perspective_correction_override == 0:  # Disabled
+		if perspective_correction_override != 1:  # Only editable when Enabled
 			property["usage"] = property["usage"] | PROPERTY_USAGE_READ_ONLY
 	elif property.name in ["air_absorption_low", "air_absorption_mid", "air_absorption_high"]:
 		if not air_absorption_enabled or air_absorption_input != 1:  # User Defined
 			property["usage"] = property["usage"] | PROPERTY_USAGE_READ_ONLY
+	elif property.name == "source_radius":
+		# Storage + script alias; inspector shows occlusion_radius.
+		property["usage"] = PROPERTY_USAGE_STORAGE | PROPERTY_USAGE_SCRIPT_VARIABLE
+	elif property.name == "attenuation_mode":
+		if not distance_attenuation:
+			property["usage"] = property["usage"] | PROPERTY_USAGE_READ_ONLY
+	elif property.name == "min_distance":
+		if not distance_attenuation or attenuation_mode == 3:  # Disabled
+			property["usage"] = property["usage"] | PROPERTY_USAGE_READ_ONLY
+	elif property.name == "max_distance":
+		# Inverse and Disabled ignore max; gray out so it is self-explanatory.
+		if not distance_attenuation or attenuation_mode == 0 or attenuation_mode == 3:
+			property["usage"] = property["usage"] | PROPERTY_USAGE_READ_ONLY
 	elif property.name == "attenuation_curve":
-		if attenuation_mode != 2:  # Curve
+		if not distance_attenuation or attenuation_mode != 2:  # Curve
 			property["usage"] = property["usage"] | PROPERTY_USAGE_READ_ONLY
-	elif property.name == "current_baked_source":
-		if reflections_type != 2:  # Baked Static Source
-			property["usage"] = property["usage"] | PROPERTY_USAGE_READ_ONLY
-	elif property.name == "current_baked_listener":
-		if reflections_type != 3:  # Baked Static Listener
+	elif property.name == "use_distance_curve_for_reflections":
+		# Editable only with distance attenuation and Linear/Curve.
+		if not distance_attenuation or (attenuation_mode != 1 and attenuation_mode != 2):
 			property["usage"] = property["usage"] | PROPERTY_USAGE_READ_ONLY
 	elif property.name == "occlusion_value":
 		if occlusion_input != 1:
 			property["usage"] = property["usage"] | PROPERTY_USAGE_READ_ONLY
 	elif property.name in ["transmission_low", "transmission_mid", "transmission_high"]:
 		if transmission_input != 1:
-			property["usage"] = property["usage"] | PROPERTY_USAGE_READ_ONLY
-	elif property.name == "reverb_transmission_amount":
-		if reverb_transmission_amount_input != 1:  # not User Defined
 			property["usage"] = property["usage"] | PROPERTY_USAGE_READ_ONLY
 	elif property.name == "occlusion_samples":
 		if occlusion_type_override != 1:
@@ -346,6 +363,53 @@ func get_reverb_bus_name_effective(global_fallback: StringName) -> StringName:
 		return global_fallback
 	var custom := reverb_bus_name
 	return custom if not str(custom).is_empty() else global_fallback
+
+
+## Editor: warn when Custom reverb bus has no effect under Convolution/TAN reflection types.
+func get_editor_reverb_bus_override_warning(owner: Node) -> String:
+	if reverb_bus_override == -1:
+		return ""
+	var refl := _guess_reflection_type_for_owner(owner)
+	if (
+		refl == ResonanceConfigConstants.REFLECTION_TYPE_CONVOLUTION
+		or refl == ResonanceConfigConstants.REFLECTION_TYPE_TAN
+	):
+		return (
+			"Custom reverb_bus_override only affects Parametric/Hybrid split routing. "
+			+ "Convolution/TAN wet stays on the runtime reverb bus."
+		)
+	return ""
+
+
+func _guess_reflection_type_for_owner(owner: Node) -> int:
+	var srv: Variant = ResonanceServerAccess.get_server_if_initialized()
+	if srv != null and srv.has_method("get_reflection_type"):
+		return int(srv.get_reflection_type())
+	if owner != null and owner.is_inside_tree():
+		var tree: SceneTree = owner.get_tree()
+		var root: Node = tree.edited_scene_root if tree else null
+		if root == null and tree:
+			root = tree.current_scene
+		if root == null:
+			root = owner
+		var rt := _find_resonance_runtime(root)
+		if rt != null:
+			var cfg: Variant = rt.get("runtime")
+			if cfg != null:
+				return int(cfg.get("reflection_type"))
+	return ResonanceConfigConstants.REFLECTION_TYPE_CONVOLUTION
+
+
+static func _find_resonance_runtime(node: Node) -> Node:
+	if not node:
+		return null
+	if node.is_class("ResonanceRuntime"):
+		return node
+	for c in node.get_children():
+		var found := _find_resonance_runtime(c)
+		if found:
+			return found
+	return null
 
 
 ## Creates default player config for sources without one assigned.

@@ -45,7 +45,7 @@ class ResonanceDirectProcessor {
     IPLAudioBuffer internal_ambi_buffer{};
     /// Binaural effects write stereo here first; copied to FL/FR when output layout has >2 channels.
     IPLAudioBuffer internal_binaural_stereo_out{};
-    /// HOA encode+binaural stereo before blending with standard `iplBinauralEffectApply` (spatial_blend parity).
+    /// HOA encode+binaural stereo before blending with standard `iplBinauralEffectApply` (spatial_blend).
     IPLAudioBuffer internal_hoa_stereo_scratch{};
 
     // Stored for tail processing when source stops
@@ -57,9 +57,11 @@ class ResonanceDirectProcessor {
 
     DirectInitFlags init_flags = DirectInitFlags::NONE;
     int frame_size = resonance::kGodotDefaultFrameSize;
+    int sample_rate = 48000;
     int ambisonic_order = 1;
     bool use_ambisonics_encode = false;
     int speaker_channels = 2;
+    IPLHRTF bound_hrtf_ = nullptr;
 
   public:
     ResonanceDirectProcessor() = default;
@@ -94,6 +96,9 @@ class ResonanceDirectProcessor {
         const IPLCoordinateSpace3& listener_coords,
         const IPLVector3& source_pos);
 
+    /// Remaining EOS tail samples across direct/binaural/HOA spatial stages (0 when inactive).
+    int get_tail_size_samples() const;
+
     /// Get tail samples when input has stopped. Returns true if tail was output, false if no tail remaining.
     /// Output is stereo (spatialized with last direction). Call repeatedly until returns false.
     bool process_tail(IPLAudioBuffer& out_buffer);
@@ -101,9 +106,17 @@ class ResonanceDirectProcessor {
     /// Reset internal state (e.g. when starting new playback). Clears any pending tail.
     void reset_for_new_playback();
 
+    /// Main thread: create or recreate HRTF-bound effects when HRTF arrives or identity changes.
+    void ensure_hrtf_effects_on_main(IPLHRTF runtime_hrtf);
+    bool hrtf_effects_need_main_sync(IPLHRTF runtime_hrtf) const;
+
   private:
+    void release_hrtf_bound_effects();
+    bool create_hrtf_bound_effects(IPLHRTF hrtf);
     void apply_spatialization(const IPLVector3& dir, const IPLAudioBuffer& direct_out, IPLAudioBuffer& out,
                               bool use_ambi_path, bool use_binaural, bool hrtf_bilinear, float spatial_blend);
+    /// EOS only: drain binaural/HOA internal tails via GetTail (never Apply).
+    bool apply_spatialization_tail(IPLAudioBuffer& out);
     void copy_binaural_stereo_to_output(IPLAudioBuffer& out);
     /// When stereo binaural effects write into a surround output buffer (no stereo scratch), clear channels 2+.
     void clear_surround_tail_after_direct_stereo_effect(IPLAudioBuffer& out, const IPLAudioBuffer* stereo_effect_destination);

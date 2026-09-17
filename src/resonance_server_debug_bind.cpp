@@ -1,5 +1,6 @@
 #include "resonance_constants.h"
 #include "resonance_pathing_inputs_policy.h"
+#include "resonance_reflection_mixer_policy.h"
 #include "resonance_server.h"
 #include "resonance_utils.h"
 #include <algorithm>
@@ -21,10 +22,11 @@ void ResonanceServer::set_pathing_enabled(bool p_enabled) {
     if (resonance::pathing_enable_requires_simulator_recreate(p_enabled, simulator_created_with_pathing_)) {
         UtilityFunctions::push_warning(
             "Nexus Resonance: pathing_enabled cannot turn on until the simulator is recreated with "
-            "IPL_SIMULATIONFLAGS_PATHING (toggle ResonanceRuntimeConfig.pathing_enabled so the runtime reinits).");
+            "IPL_SIMULATIONFLAGS_PATHING (enable pathing in ResonanceRuntimeConfig so the runtime reinits).");
         return;
     }
     pathing_enabled = p_enabled;
+    config_.pathing_enabled = p_enabled;
 }
 
 Array ResonanceServer::get_pathing_visualization_segments() {
@@ -162,6 +164,8 @@ Dictionary ResonanceServer::get_simulation_worker_timing() const {
     d["dynamic_transform_enqueue_events"] = (int64_t)instrumentation_dynamic_transform_enqueue_events_.load(std::memory_order_relaxed);
     d["active_source_count"] = (int64_t)source_manager.size_approx();
     d["active_probe_batch_count"] = (int64_t)probe_batch_registry_.get_manager().size_approx();
+    d["reflections_sim_interval_us"] =
+        (int64_t)(reflections_sim_interval > 0.0f ? reflections_sim_interval * 1.0e6f : 0.0f);
     return d;
 }
 
@@ -259,6 +263,25 @@ Dictionary ResonanceServer::get_reverb_bus_instrumentation() const {
     d["mixer_return_hold_last_count"] = (int64_t)reverb_mixer_return_hold_last_count.load(std::memory_order_relaxed);
     d["mixer_feed_count"] = (int64_t)reverb_mixer_feed_count.load(std::memory_order_relaxed);
     d["mixer_exists"] = (reflection_mixer_.load(std::memory_order_acquire) != nullptr);
+    d["mixer_readers"] = (int64_t)reflection_mixer_readers_.load(std::memory_order_relaxed);
+    d["mixer_release_deferred_count"] = (int64_t)reflection_mixer_release_deferred_.load(std::memory_order_relaxed);
+    d["source_flush_try_lock_fail"] = (int64_t)instrumentation_source_flush_try_lock_fail_.load(std::memory_order_relaxed);
+    d["source_update_skip_unchanged"] = (int64_t)instrumentation_source_update_skip_unchanged_.load(std::memory_order_relaxed);
+    d["attenuation_callback_skip_unchanged"] =
+        (int64_t)instrumentation_attenuation_callback_skip_unchanged_.load(std::memory_order_relaxed);
+    d["convolution_bus_skip_empty_mixer_apply"] =
+        (int64_t)instrumentation_convolution_bus_skip_empty_mixer_apply_.load(std::memory_order_relaxed);
+    d["mixer_deferred_enqueued"] = (int64_t)reflection_mixer_deferred_enqueued_.load(std::memory_order_relaxed);
+    d["mixer_deferred_retired"] = (int64_t)reflection_mixer_deferred_retired_.load(std::memory_order_relaxed);
+    d["mixer_deferred_overflow"] = (int64_t)reflection_mixer_deferred_overflow_.load(std::memory_order_relaxed);
+    d["mixer_deferred_soft_cap_exceeded"] =
+        (int64_t)reflection_mixer_deferred_soft_cap_exceeded_.load(std::memory_order_relaxed);
+    {
+        std::lock_guard<std::mutex> lock(deferred_reflection_mixer_releases_mutex_);
+        d["mixer_deferred_pending"] = (int64_t)deferred_reflection_mixer_releases_.size();
+        d["mixer_deferred_at_capacity"] =
+            resonance::reflection_mixer_deferred_at_capacity(deferred_reflection_mixer_releases_.size());
+    }
     d["reflection_type"] = reflection_type;
     d["convolution_valid_fetches"] = (int64_t)reverb_convolution_valid_fetches.load(std::memory_order_relaxed);
     d["convolution_feed_ir_null"] = (int64_t)reverb_convolution_feed_ir_null.load(std::memory_order_relaxed);
@@ -311,6 +334,10 @@ void ResonanceServer::record_mixer_return_hold_last() {
     reverb_mixer_return_hold_last_count.fetch_add(1, std::memory_order_relaxed);
 }
 
+void ResonanceServer::record_convolution_bus_skip_empty_mixer_apply() {
+    instrumentation_convolution_bus_skip_empty_mixer_apply_.fetch_add(1, std::memory_order_relaxed);
+}
+
 void ResonanceServer::set_reverb_bus_click_guard_enabled(bool p_enabled) {
     reverb_bus_click_guard_enabled_.store(p_enabled, std::memory_order_release);
 }
@@ -335,14 +362,6 @@ void ResonanceServer::set_output_direct_enabled(bool p_enabled) { output_direct_
 bool ResonanceServer::is_output_direct_enabled() const { return output_direct_enabled.load(std::memory_order_acquire); }
 void ResonanceServer::set_output_reverb_enabled(bool p_enabled) { output_reverb_enabled.store(p_enabled, std::memory_order_release); }
 bool ResonanceServer::is_output_reverb_enabled() const { return output_reverb_enabled.load(std::memory_order_acquire); }
-void ResonanceServer::set_reverb_influence_radius(float p_radius) { reverb_influence_radius = std::max(1.0f, p_radius); }
-float ResonanceServer::get_reverb_influence_radius() const { return reverb_influence_radius; }
-void ResonanceServer::set_reverb_transmission_amount(float p_amount) { reverb_transmission_amount = std::max(0.0f, std::min(1.0f, p_amount)); }
-float ResonanceServer::get_reverb_transmission_amount() const { return reverb_transmission_amount; }
-void ResonanceServer::set_apply_occlusion_to_baked_reflections(bool p_enabled) { apply_occlusion_to_baked_reflections = p_enabled; }
-bool ResonanceServer::get_apply_occlusion_to_baked_reflections() const { return apply_occlusion_to_baked_reflections; }
-void ResonanceServer::set_baked_reverb_use_listener_probe(bool p_enabled) { baked_reverb_use_listener_probe = p_enabled; }
-bool ResonanceServer::get_baked_reverb_use_listener_probe() const { return baked_reverb_use_listener_probe; }
 void ResonanceServer::set_perspective_correction_enabled(bool p_enabled) { perspective_correction_enabled.store(p_enabled, std::memory_order_release); }
 bool ResonanceServer::is_perspective_correction_enabled() const { return perspective_correction_enabled.load(std::memory_order_acquire); }
 void ResonanceServer::set_perspective_correction_factor(float p_factor) {
@@ -366,7 +385,21 @@ void ResonanceServer::_bind_methods() {
     ADD_SIGNAL(MethodInfo("bake_progress", PropertyInfo(Variant::FLOAT, "progress")));
     ClassDB::bind_method(D_METHOD("init_audio_engine", "config"), &ResonanceServer::init_audio_engine);
     ClassDB::bind_method(D_METHOD("reinit_audio_engine", "config"), &ResonanceServer::reinit_audio_engine);
+    ClassDB::bind_method(D_METHOD("patch_live_runtime_config", "config"), &ResonanceServer::patch_live_runtime_config);
     ClassDB::bind_method(D_METHOD("shutdown"), &ResonanceServer::shutdown);
+
+    ClassDB::bind_static_method(
+        "ResonanceServer",
+        D_METHOD("runtime_config_property_requires_engine_reinit", "property"),
+        &ResonanceServer::runtime_config_property_requires_engine_reinit);
+    ClassDB::bind_static_method(
+        "ResonanceServer",
+        D_METHOD("runtime_config_property_is_live_patchable", "property"),
+        &ResonanceServer::runtime_config_property_is_live_patchable);
+    ClassDB::bind_static_method(
+        "ResonanceServer",
+        D_METHOD("runtime_config_property_requires_routing_refresh", "property"),
+        &ResonanceServer::runtime_config_property_requires_routing_refresh);
 
     ClassDB::bind_method(D_METHOD("get_version"), &ResonanceServer::get_version);
     ClassDB::bind_method(D_METHOD("is_initialized"), &ResonanceServer::is_initialized);
@@ -385,23 +418,27 @@ void ResonanceServer::_bind_methods() {
     ClassDB::bind_method(D_METHOD("notify_listener_changed_to", "listener_node"), &ResonanceServer::notify_listener_changed_to);
     ClassDB::bind_method(D_METHOD("tick", "delta"), &ResonanceServer::tick);
     ClassDB::bind_method(D_METHOD("set_physics_world", "world"), &ResonanceServer::set_physics_world);
+    ClassDB::bind_method(D_METHOD("refresh_physics_materials"), &ResonanceServer::refresh_physics_materials);
     ClassDB::bind_method(D_METHOD("set_physics_ray_exclude_rids", "exclude"), &ResonanceServer::set_physics_ray_exclude_rids);
     ClassDB::bind_method(D_METHOD("set_listener_physics_ray_exclude_rids", "rids"), &ResonanceServer::set_listener_physics_ray_exclude_rids);
     ClassDB::bind_method(D_METHOD("flush_pending_source_updates"), &ResonanceServer::flush_pending_source_updates);
-    ClassDB::bind_method(D_METHOD("create_source_handle", "position", "radius"), &ResonanceServer::create_source_handle);
+    ClassDB::bind_method(D_METHOD("create_source_handle", "position", "radius", "pathing_owner_path", "pathing_enabled_override"),
+                         &ResonanceServer::create_source_handle, DEFVAL(String()), DEFVAL(-1));
+    ClassDB::bind_method(D_METHOD("set_source_pathing_owner_path", "handle", "owner_path"),
+                         &ResonanceServer::set_source_pathing_owner_path);
     ClassDB::bind_method(D_METHOD("destroy_source_handle", "handle"), &ResonanceServer::destroy_source_handle);
     ClassDB::bind_method(D_METHOD("update_source", "handle", "position", "radius", "use_sim_distance_attenuation", "min_distance"),
                          &ResonanceServer::update_source_position, DEFVAL(false), DEFVAL(1.0f));
     ClassDB::bind_method(D_METHOD("get_source_occlusion_data", "handle"), &ResonanceServer::get_source_occlusion_data_dict);
     ClassDB::bind_method(D_METHOD("get_source_occlusion_linear_gain", "handle"), &ResonanceServer::get_source_occlusion_linear_gain);
-    // TODO: enqueue_source_update batching parity with ResonancePlayer defer path.
+    // TODO: enqueue_source_update batching should match ResonancePlayer defer path.
 
     // Probes
     ClassDB::bind_method(D_METHOD("generate_manual_grid", "tr", "ext", "sp", "generation_type", "height_above_floor"),
                          &ResonanceServer::generate_manual_grid, DEFVAL(2), DEFVAL(1.5));
     ClassDB::bind_method(D_METHOD("generate_probes_scene_aware", "volume_transform", "extents", "spacing", "generation_type", "height_above_floor"),
                          &ResonanceServer::generate_probes_scene_aware, DEFVAL(1), DEFVAL(1.5));
-    ClassDB::bind_method(D_METHOD("bake_manual_grid", "pts", "dat"), &ResonanceServer::bake_manual_grid);
+    ClassDB::bind_method(D_METHOD("bake_manual_grid", "pts", "dat", "spacing"), &ResonanceServer::bake_manual_grid, DEFVAL(2.0));
     ClassDB::bind_method(D_METHOD("set_bake_params", "params"), &ResonanceServer::set_bake_params);
     ClassDB::bind_method(D_METHOD("set_bake_static_scene_asset", "p_asset"), &ResonanceServer::set_bake_static_scene_asset);
     ClassDB::bind_method(D_METHOD("set_bake_static_scenes_from_assets", "assets", "transforms"),
@@ -412,7 +449,11 @@ void ResonanceServer::_bind_methods() {
                          &ResonanceServer::add_or_replace_static_pack);
     ClassDB::bind_method(D_METHOD("remove_static_pack", "object_id"), &ResonanceServer::remove_static_pack);
     ClassDB::bind_method(D_METHOD("clear_static_scenes"), &ResonanceServer::clear_static_scenes);
+    ClassDB::bind_method(D_METHOD("replace_static_scenes_from_assets", "assets", "transforms"),
+                         &ResonanceServer::replace_static_scenes_from_assets);
     ClassDB::bind_method(D_METHOD("set_bake_pipeline_pathing", "pathing"), &ResonanceServer::set_bake_pipeline_pathing);
+    ClassDB::bind_method(D_METHOD("set_bake_pipeline_active", "active"), &ResonanceServer::set_bake_pipeline_active);
+    ClassDB::bind_method(D_METHOD("is_bake_pipeline_active"), &ResonanceServer::is_bake_pipeline_active);
     ClassDB::bind_method(D_METHOD("bake_probes_for_volume", "volume_transform", "extents", "spacing", "generation_type", "height_above_floor", "probe_data", "exclusion_boxes"),
                          &ResonanceServer::bake_probes_for_volume, DEFVAL(Array()));
     ClassDB::bind_method(D_METHOD("bake_pathing", "dat"), &ResonanceServer::bake_pathing);
@@ -423,6 +464,8 @@ void ResonanceServer::_bind_methods() {
     ClassDB::bind_method(D_METHOD("load_scene_data", "filename"), &ResonanceServer::load_scene_data);
     ClassDB::bind_method(D_METHOD("refresh_all_geometry_from_scene_tree"), &ResonanceServer::refresh_all_geometry_from_scene_tree);
     ClassDB::bind_method(D_METHOD("_deferred_refresh_all_geometry_after_scene_load"), &ResonanceServer::_deferred_refresh_all_geometry_after_scene_load);
+    ClassDB::bind_method(D_METHOD("export_static_scene_to_geometry_asset", "scene_root"),
+                         &ResonanceServer::export_static_scene_to_geometry_asset);
     ClassDB::bind_method(D_METHOD("export_static_scene_to_asset", "scene_root", "path"), &ResonanceServer::export_static_scene_to_asset);
     ClassDB::bind_method(D_METHOD("export_static_scene_to_obj", "scene_root", "file_base_name"), &ResonanceServer::export_static_scene_to_obj);
     ClassDB::bind_method(D_METHOD("get_static_scene_hash", "scene_root"), &ResonanceServer::get_static_scene_hash);
@@ -440,6 +483,16 @@ void ResonanceServer::_bind_methods() {
                          &ResonanceServer::editor_probe_data_remove_baked_layer, DEFVAL(Vector3()), DEFVAL(0.0f));
     ClassDB::bind_method(D_METHOD("probe_data_static_source_energy_at", "dat", "endpoint", "listener", "influence_radius", "neighbor_radius"),
                          &ResonanceServer::probe_data_static_source_energy_at, DEFVAL(0.0f));
+    ClassDB::bind_method(D_METHOD("probe_data_query_baked_at_point", "dat", "world_position", "baked_variation", "endpoint", "influence_radius",
+                                  "neighbor_radius", "reconstruct_ir"),
+                         &ResonanceServer::probe_data_query_baked_at_point, DEFVAL(0), DEFVAL(Vector3()), DEFVAL(0.0f), DEFVAL(0.0f), DEFVAL(false));
+    ClassDB::bind_method(D_METHOD("probe_data_query_baked_at_probe", "dat", "probe_index", "baked_variation", "endpoint", "influence_radius",
+                                  "reconstruct_ir"),
+                         &ResonanceServer::probe_data_query_baked_at_probe, DEFVAL(0), DEFVAL(Vector3()), DEFVAL(0.0f), DEFVAL(false));
+    ClassDB::bind_method(D_METHOD("set_pathing_deviation_callable", "callable", "samples_per_band"), &ResonanceServer::set_pathing_deviation_callable,
+                         DEFVAL(resonance::kPathingDeviationDefaultLutSamples));
+    ClassDB::bind_method(D_METHOD("clear_pathing_deviation_callback"), &ResonanceServer::clear_pathing_deviation_callback);
+    ClassDB::bind_method(D_METHOD("is_pathing_deviation_custom_enabled"), &ResonanceServer::is_pathing_deviation_custom_enabled);
 
     // Bind Setter/Getters
     ClassDB::bind_method(D_METHOD("set_debug_occlusion", "p_enabled"), &ResonanceServer::set_debug_occlusion);
@@ -469,14 +522,6 @@ void ResonanceServer::_bind_methods() {
     ClassDB::bind_method(D_METHOD("is_reverb_bus_wet_ring_underrun_zero_fill"),
                          &ResonanceServer::is_reverb_bus_wet_ring_underrun_zero_fill);
 
-    ClassDB::bind_method(D_METHOD("set_reverb_influence_radius", "p_radius"), &ResonanceServer::set_reverb_influence_radius);
-    ClassDB::bind_method(D_METHOD("get_reverb_influence_radius"), &ResonanceServer::get_reverb_influence_radius);
-    ClassDB::bind_method(D_METHOD("set_reverb_transmission_amount", "p_amount"), &ResonanceServer::set_reverb_transmission_amount);
-    ClassDB::bind_method(D_METHOD("get_reverb_transmission_amount"), &ResonanceServer::get_reverb_transmission_amount);
-    ClassDB::bind_method(D_METHOD("set_apply_occlusion_to_baked_reflections", "p_enabled"), &ResonanceServer::set_apply_occlusion_to_baked_reflections);
-    ClassDB::bind_method(D_METHOD("get_apply_occlusion_to_baked_reflections"), &ResonanceServer::get_apply_occlusion_to_baked_reflections);
-    ClassDB::bind_method(D_METHOD("set_baked_reverb_use_listener_probe", "p_enabled"), &ResonanceServer::set_baked_reverb_use_listener_probe);
-    ClassDB::bind_method(D_METHOD("get_baked_reverb_use_listener_probe"), &ResonanceServer::get_baked_reverb_use_listener_probe);
     ClassDB::bind_method(D_METHOD("set_perspective_correction_enabled", "p_enabled"), &ResonanceServer::set_perspective_correction_enabled);
     ClassDB::bind_method(D_METHOD("is_perspective_correction_enabled"), &ResonanceServer::is_perspective_correction_enabled);
     ClassDB::bind_method(D_METHOD("set_perspective_correction_factor", "p_factor"), &ResonanceServer::set_perspective_correction_factor);
@@ -506,10 +551,6 @@ void ResonanceServer::_bind_methods() {
     ADD_PROPERTY(PropertyInfo(Variant::BOOL, "reverb_bus_click_guard_enabled"), "set_reverb_bus_click_guard_enabled", "is_reverb_bus_click_guard_enabled");
     ADD_PROPERTY(PropertyInfo(Variant::BOOL, "reverb_bus_wet_ring_underrun_zero_fill"), "set_reverb_bus_wet_ring_underrun_zero_fill",
                  "is_reverb_bus_wet_ring_underrun_zero_fill");
-    ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "reverb_influence_radius", PROPERTY_HINT_RANGE, "1,50000,1"), "set_reverb_influence_radius", "get_reverb_influence_radius");
-    ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "reverb_transmission_amount", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_reverb_transmission_amount", "get_reverb_transmission_amount");
-    ADD_PROPERTY(PropertyInfo(Variant::BOOL, "apply_occlusion_to_baked_reflections"), "set_apply_occlusion_to_baked_reflections", "get_apply_occlusion_to_baked_reflections");
-    ADD_PROPERTY(PropertyInfo(Variant::BOOL, "baked_reverb_use_listener_probe"), "set_baked_reverb_use_listener_probe", "get_baked_reverb_use_listener_probe");
     ADD_PROPERTY(PropertyInfo(Variant::BOOL, "perspective_correction_enabled"), "set_perspective_correction_enabled", "is_perspective_correction_enabled");
     ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "perspective_correction_factor", PROPERTY_HINT_RANGE, "0.1,3.0,0.1"), "set_perspective_correction_factor", "get_perspective_correction_factor");
 }

@@ -1,6 +1,7 @@
 #ifndef RESONANCE_LOG_H
 #define RESONANCE_LOG_H
 
+#include <cstdint>
 #include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/string.hpp>
 
@@ -15,6 +16,9 @@ void resonance_log_bind_main_thread();
 
 /// Drain lock-free log posts from audio/worker threads; call from main thread only.
 void resonance_log_drain_pending();
+
+/// Undrained posts overwritten when the 64-slot ring wraps (burst diagnostics from audio/worker threads).
+uint64_t resonance_log_get_drop_count();
 
 class ResonanceLog {
   public:

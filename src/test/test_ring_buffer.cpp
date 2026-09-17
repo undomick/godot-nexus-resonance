@@ -96,14 +96,39 @@ TEST_CASE("RingBuffer write clamps to available space", "[ring_buffer]") {
     RingBuffer<float> rb;
     rb.resize(4);
     float in[8] = {1, 2, 3, 4, 5, 6, 7, 8};
-    rb.write(in, 8); // Only 4 should be written
+    const size_t written = rb.write(in, 8); // Only 4 should be written
+    REQUIRE(written == 4);
     REQUIRE(rb.get_available_read() == 4);
     REQUIRE(rb.get_available_write() == 0);
+    REQUIRE(rb.get_overflow_drop_count() == 4);
 
     float out[4] = {};
     rb.read(out, 4);
     REQUIRE(out[0] == 1.0f);
     REQUIRE(out[3] == 4.0f);
+}
+
+TEST_CASE("RingBuffer overflow drop counter accumulates across writes", "[ring_buffer]") {
+    RingBuffer<int> rb;
+    rb.resize(2);
+    int in[3] = {1, 2, 3};
+    REQUIRE(rb.write(in, 3) == 2);
+    REQUIRE(rb.get_overflow_drop_count() == 1);
+
+    int out[2] = {};
+    rb.read(out, 2);
+    REQUIRE(rb.write(in, 3) == 2);
+    REQUIRE(rb.get_overflow_drop_count() == 2);
+}
+
+TEST_CASE("RingBuffer clear resets overflow drop counter", "[ring_buffer]") {
+    RingBuffer<float> rb;
+    rb.resize(2);
+    float in[4] = {1, 2, 3, 4};
+    rb.write(in, 4);
+    REQUIRE(rb.get_overflow_drop_count() == 2);
+    rb.clear();
+    REQUIRE(rb.get_overflow_drop_count() == 0);
 }
 
 TEST_CASE("RingBuffer zero capacity write and read are no-ops", "[ring_buffer]") {

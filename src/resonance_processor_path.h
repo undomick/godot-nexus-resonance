@@ -26,7 +26,9 @@ class ResonancePathProcessor {
 
     PathInitFlags init_flags = PathInitFlags::NONE;
     int frame_size = resonance::kGodotDefaultFrameSize;
+    int sample_rate = 48000;
     int ambisonic_order = 1;
+    IPLHRTF bound_hrtf_ = nullptr;
 
   public:
     ResonancePathProcessor() = default;
@@ -40,7 +42,7 @@ class ResonancePathProcessor {
     void initialize(IPLContext p_context, int p_sample_rate, int p_frame_size, int p_ambisonic_order);
     void cleanup();
 
-    /// Applies path_mix ramp on mono input after downmix (Steam Audio Unity/FMOD spatialize reference), then path effect.
+    /// Applies path_mix ramp on mono input after downmix, then path effect.
     void process(const IPLAudioBuffer& in_buffer, const IPLPathEffectParams& params, IPLAudioBuffer& out_buffer,
                  float path_mix_ramp_start, float path_mix_ramp_end);
 
@@ -48,6 +50,13 @@ class ResonancePathProcessor {
     bool process_tail(IPLAudioBuffer& out_stereo);
     int get_tail_size_samples() const;
     void reset_effect();
+
+    /// Main thread: recreate path effect when create-time HRTF identity no longer matches runtime.
+    void ensure_hrtf_on_main(IPLHRTF runtime_hrtf);
+    bool hrtf_needs_main_sync(IPLHRTF runtime_hrtf) const;
+
+  private:
+    bool create_path_effect(IPLHRTF hrtf);
 };
 
 } // namespace godot

@@ -28,7 +28,7 @@
 			If [code]true[/code], Ambisonic channel samples are treated as [url=https://en.wikipedia.org/wiki/Ambisonic_data_exchange_formats]SN3D[/url]-normalized (common for third-party Ambisonic assets); internally converted to N3D before rotation/decode. Set to [code]false[/code] only if your [member stream] channels are already N3D (or you know your toolchain outputs N3D directly).
 		</member>
 		<member name="apply_output_gain" type="bool" setter="set_apply_output_gain" getter="get_apply_output_gain" default="true">
-			If [code]true[/code], applies the usual Ambisonic decoder nominal scaling ([code]1/sqrt(4*pi)[/code]) after decode so a constant omnidirectional (W-only) input has comparable peak level to an unspatialized mono clip. Disable if you normalize or gain-stage elsewhere.
+			If [code]true[/code], applies the usual Ambisonic decoder nominal scaling ([code]1/sqrt(4*pi)[/code]) after decode so a constant omnidirectional (W-only) input has comparable peak level to an unspatialized mono clip. Disable if you normalize or gain-stage elsewhere. Convolution / [ResonanceAudioEffect] wet Ambisonics decode does not use this toggle (Steam Audio mixer levels are left as-is to avoid changing established reverb loudness).
 		</member>
 	</members>
 </class>

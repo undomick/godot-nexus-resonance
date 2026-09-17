@@ -27,8 +27,18 @@ TEST_CASE("convolution and TAN mapping unchanged", "[reflection]") {
     REQUIRE(reflection_effect_type_for_mode(kReflectionTan, false) == IPL_REFLECTIONEFFECTTYPE_TAN);
 }
 
-TEST_CASE("hybrid simulator vs effect divergence is intentional", "[reflection][hybrid]") {
-    // Simulator always HYBRID; effect may be PARAMETRIC when IR or bands missing on fetch.
-    REQUIRE(reflection_type_for_simulator(kReflectionHybrid) != reflection_effect_type_for_mode(kReflectionHybrid, false));
-    REQUIRE(reflection_type_for_simulator(kReflectionHybrid) == reflection_effect_type_for_mode(kReflectionHybrid, true));
+TEST_CASE("bake_reflection_type_from_runtime maps TAN to Convolution", "[reflection][bake]") {
+    REQUIRE(bake_reflection_type_from_runtime(kReflectionConvolution) == kBakedReflectionConvolution);
+    REQUIRE(bake_reflection_type_from_runtime(kReflectionParametric) == kBakedReflectionParametric);
+    REQUIRE(bake_reflection_type_from_runtime(kReflectionHybrid) == kBakedReflectionHybrid);
+    REQUIRE(bake_reflection_type_from_runtime(kReflectionTan) == kBakedReflectionConvolution);
+}
+
+TEST_CASE("baked_reflection_type_matches_runtime is exact (Hybrid not universal)", "[reflection][bake]") {
+    REQUIRE(baked_reflection_type_matches_runtime(-1, kReflectionConvolution));
+    REQUIRE(baked_reflection_type_matches_runtime(kBakedReflectionConvolution, kReflectionConvolution));
+    REQUIRE(baked_reflection_type_matches_runtime(kBakedReflectionConvolution, kReflectionTan));
+    REQUIRE_FALSE(baked_reflection_type_matches_runtime(kBakedReflectionHybrid, kReflectionConvolution));
+    REQUIRE_FALSE(baked_reflection_type_matches_runtime(kBakedReflectionConvolution, kReflectionHybrid));
+    REQUIRE(baked_reflection_type_matches_runtime(kBakedReflectionHybrid, kReflectionHybrid));
 }

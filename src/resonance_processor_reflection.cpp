@@ -37,7 +37,7 @@ ResonanceReflectionProcessor::~ResonanceReflectionProcessor() {
 }
 
 void ResonanceReflectionProcessor::initialize(IPLContext p_context, int p_sample_rate, int p_frame_size, int p_ambisonic_order, int p_reflection_type,
-                                              float p_max_reverb_duration_sec, int p_convolution_ir_max_samples) {
+                                              float p_ir_duration_sec, int p_convolution_ir_max_samples) {
     if (init_flags != ReflectionInitFlags::NONE)
         return;
 
@@ -48,7 +48,7 @@ void ResonanceReflectionProcessor::initialize(IPLContext p_context, int p_sample
 
     convolution_ir_max_samples_ = std::max(0, p_convolution_ir_max_samples);
 
-    float dur = resonance::sanitize_audio_float(p_max_reverb_duration_sec);
+    float dur = resonance::sanitize_audio_float(p_ir_duration_sec);
     if (dur < 0.1f)
         dur = 0.1f;
     if (dur > 10.0f)
@@ -80,9 +80,11 @@ void ResonanceReflectionProcessor::initialize(IPLContext p_context, int p_sample
 
     IPLReflectionEffectSettings reflSettings{};
     reflSettings.type = effectType;
-    reflSettings.irSize = (reflection_type == resonance::kReflectionParametric)
+    IPLint32 ir_samples = (reflection_type == resonance::kReflectionParametric)
                               ? static_cast<IPLint32>(1)
-                              : static_cast<IPLint32>(resonance::reverb_ir_size_samples(sample_rate, effect_ir_duration_sec_));
+                              : static_cast<IPLint32>(resonance::reflection_effect_create_ir_size(
+                                    sample_rate, effect_ir_duration_sec_, convolution_ir_max_samples_));
+    reflSettings.irSize = ir_samples;
     reflSettings.numChannels = num_channels;
 
     if (iplReflectionEffectCreate(context, &audioSettings, &reflSettings, &reflection_effect) != IPL_STATUS_SUCCESS) {
@@ -266,6 +268,9 @@ void ResonanceReflectionProcessor::sanitize_reflection_params(IPLReflectionEffec
 void ResonanceReflectionProcessor::reset_effect() {
     if (reflection_effect)
         iplReflectionEffectReset(reflection_effect);
+    if (air_absorption_effect)
+        iplDirectEffectReset(air_absorption_effect);
+    air_absorption_iir_active_ = false;
 }
 
 int ResonanceReflectionProcessor::get_tail_size_samples() const {

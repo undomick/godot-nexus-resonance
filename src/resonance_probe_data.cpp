@@ -116,6 +116,14 @@ int ResonanceProbeData::get_baked_reflection_type() const {
     return baked_reflection_type;
 }
 
+void ResonanceProbeData::set_baked_ambisonics_order(int p_order) {
+    baked_ambisonics_order = (p_order < 0) ? -1 : resonance::clamp_bake_ambisonics_order(p_order);
+}
+
+int ResonanceProbeData::get_baked_ambisonics_order() const {
+    return baked_ambisonics_order;
+}
+
 int64_t ResonanceProbeData::get_bake_params_hash() const {
     return static_cast<int64_t>(bake_params_hash);
 }
@@ -138,6 +146,9 @@ Dictionary ResonanceProbeData::get_bake_layer_info() const {
     refl["baked"] = (baked_reflection_type >= 0);
     if (baked_reflection_type >= 0) {
         refl["reflection_type"] = baked_reflection_type;
+    }
+    if (baked_ambisonics_order >= 0) {
+        refl["ambisonics_order"] = baked_ambisonics_order;
     }
     layers.push_back(refl);
 
@@ -177,6 +188,8 @@ void ResonanceProbeData::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_static_listener_params_hash"), &ResonanceProbeData::get_static_listener_params_hash);
     ClassDB::bind_method(D_METHOD("set_baked_reflection_type", "p_type"), &ResonanceProbeData::set_baked_reflection_type);
     ClassDB::bind_method(D_METHOD("get_baked_reflection_type"), &ResonanceProbeData::get_baked_reflection_type);
+    ClassDB::bind_method(D_METHOD("set_baked_ambisonics_order", "p_order"), &ResonanceProbeData::set_baked_ambisonics_order);
+    ClassDB::bind_method(D_METHOD("get_baked_ambisonics_order"), &ResonanceProbeData::get_baked_ambisonics_order);
     ClassDB::bind_method(D_METHOD("get_bake_layer_info"), &ResonanceProbeData::get_bake_layer_info);
 
     // Using PROPERTY_USAGE_STORAGE | PROPERTY_USAGE_EDITOR ensures it's saved to disk
@@ -190,4 +203,5 @@ void ResonanceProbeData::_bind_methods() {
     ADD_PROPERTY(PropertyInfo(Variant::INT, "static_source_params_hash", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_STORAGE), "set_static_source_params_hash", "get_static_source_params_hash");
     ADD_PROPERTY(PropertyInfo(Variant::INT, "static_listener_params_hash", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_STORAGE), "set_static_listener_params_hash", "get_static_listener_params_hash");
     ADD_PROPERTY(PropertyInfo(Variant::INT, "baked_reflection_type", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_STORAGE), "set_baked_reflection_type", "get_baked_reflection_type");
+    ADD_PROPERTY(PropertyInfo(Variant::INT, "baked_ambisonics_order", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_STORAGE), "set_baked_ambisonics_order", "get_baked_ambisonics_order");
 }

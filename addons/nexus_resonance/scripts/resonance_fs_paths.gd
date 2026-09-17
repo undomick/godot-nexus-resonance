@@ -1,7 +1,20 @@
-extends Object
-class_name ResonanceFsPaths
+extends RefCounted
 
 ## Map [code]res://[/code] / [code]user://[/code] to OS paths for [DirAccess] / [FileAccess].
+
+
+## Resolves [code]uid://[/code] to a [code]res://[/code] path; leaves other paths unchanged.
+## Project Settings (e.g. main_scene) often store UIDs; ResourceSaver needs a filesystem path.
+static func resolve_resource_path(path: String) -> String:
+	if path.is_empty():
+		return path
+	var p := path.strip_edges()
+	if not p.begins_with("uid://"):
+		return p
+	var resolved: String = ResourceUID.uid_to_path(p)
+	if resolved.is_empty():
+		return p
+	return resolved
 
 
 ## Repo-root [code]logs/[/code] when the Godot project is [code]project/[/code]; else [code]logs/[/code] beside the project folder.

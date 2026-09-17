@@ -1,5 +1,4 @@
 extends RefCounted
-class_name ResonanceProbeReferenceIndex
 
 ## Live probe_data references held by editor scene trees (not only on-disk .tscn text).
 

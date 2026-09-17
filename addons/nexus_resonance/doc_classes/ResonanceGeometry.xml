@@ -12,7 +12,7 @@
 	</tutorials>
 	<members>
 		<member name="material" type="ResonanceMaterial" setter="set_material" getter="get_material">
-			Acoustic material for this surface. Controls absorption (low, mid, high), scattering, and transmission. Use presets under addons/nexus_resonance/materials/ (e.g. concrete, glass, wood).
+			Acoustic material for this surface. Controls absorption (low, mid, high), scattering, and transmission. Use presets under addons/nexus_resonance/materials/ (e.g. concrete, glass, wood). When meshes are already registered, swaps in-place via iplStaticMeshSetMaterial (no rebuild). Geometry covered by a loaded [ResonanceStaticScene] still needs a static re-export.
 		</member>
 		<member name="mesh_asset" type="ResonanceGeometryAsset" setter="set_mesh_asset" getter="get_mesh_asset">
 			Pre-exported mesh bytes for dynamic geometry. When set and [member dynamic] is true, loads via iplStaticMeshLoad for faster runtime and better stability. Assigned automatically by Export Dynamic Mesh on [ResonanceDynamicGeometry].
@@ -41,7 +41,7 @@
 			<return type="Error" />
 			<param index="0" name="p_path" type="String" />
 			<description>
-				Exports the mesh (parent [MeshInstance3D] or [member geometry_override] when set) to a [ResonanceGeometryAsset] at [param p_path] ([code].tres[/code] or [code].res[/code] under [code]{{bake_output}}/dynamics/[/code] per Project Settings) and assigns [member mesh_asset]. Works in the editor without running the scene. Requires a [Node3D] parent; [MeshInstance3D] is only required when [member geometry_override] is unset.
+				Exports the mesh (parent [MeshInstance3D] or [member geometry_override] when set) to a [ResonanceGeometryAsset] at [param p_path] ([code].res[/code] or [code].tres[/code] under [code]{{bake_output}}/dynamics/[/code] per Project Settings; default Binary [.res]) and assigns [member mesh_asset]. Works in the editor without running the scene. Requires a [Node3D] parent; [MeshInstance3D] is only required when [member geometry_override] is unset.
 			</description>
 		</method>
 		<method name="refresh_geometry">

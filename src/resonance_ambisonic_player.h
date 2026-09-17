@@ -56,6 +56,8 @@ class ResonanceAmbisonicInternalPlayback : public AudioStreamPlayback {
 
     bool is_initialized = false;
     std::atomic<bool> steam_context_stale_{false};
+    /// Audio sets when decode config drifts; main calls _reinit_ambisonic_processor_on_main().
+    std::atomic<bool> processor_config_stale_{false};
     std::atomic<bool> stop_requested = false;
     int current_sample_rate = 48000;
     IPLContext context = nullptr;
@@ -78,18 +80,25 @@ class ResonanceAmbisonicInternalPlayback : public AudioStreamPlayback {
     std::vector<float> temp_output_r;
     // Reused per _mix: one PackedVector2Array per Ambisonic channel (no per-frame heap alloc).
     std::vector<PackedVector2Array> channel_mix_bufs_;
+    float last_mix_out_l_ = 0.0f;
+    float last_mix_out_r_ = 0.0f;
+    bool last_mix_out_valid_ = false;
+    bool geometry_gate_was_holding_decode_ = false;
+    bool channel_length_mismatch_warned_ = false;
 
     bool _has_pending_output() const;
 
     void _lazy_init_steam_audio();
     void _cleanup_steam_audio();
-    void _ensure_ambisonic_processor(ResonanceServer* srv);
-    void _process_steam_audio_block();
+    bool _processor_matches_current_config(ResonanceServer* srv) const;
+    void _reinit_ambisonic_processor_on_main(ResonanceServer* srv);
+    /// Returns false when input was not consumed (caller must break pump loop).
+    bool _process_steam_audio_block();
     void _sync_params();
 
     int32_t pull_channel_samples(float rate_scale, int32_t frames, int num_channels);
     void push_interleaved_input(int32_t samples_read, int num_channels);
-    void pull_stereo_output(AudioFrame* buffer, int32_t samples_read);
+    void pull_stereo_output(AudioFrame* buffer, int32_t samples_read, bool holding_decode);
 
   public:
     ResonanceAmbisonicInternalPlayback();

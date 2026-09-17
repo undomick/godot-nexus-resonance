@@ -1,4 +1,5 @@
 #include "resonance_log.h"
+#include "resonance_log_ring_policy.h"
 #include <array>
 #include <atomic>
 #include <cstring>
@@ -33,6 +34,7 @@ struct LogSlot {
 std::array<LogSlot, kLogRingSlots> g_log_ring{};
 std::atomic<uint32_t> g_log_next_ticket{0};
 std::atomic<uint32_t> g_log_drained_ticket{0};
+std::atomic<uint64_t> g_log_ring_drops{0};
 std::atomic<bool> g_main_thread_bound{false};
 std::thread::id g_main_thread_id;
 
@@ -71,6 +73,11 @@ void emit_on_main(PostedLevel level, const char* category, const char* text) {
 void post_to_ring(PostedLevel level, const char* category, const char* utf8_text) {
     const uint32_t ticket = g_log_next_ticket.fetch_add(1, std::memory_order_relaxed) + 1u;
     LogSlot& slot = g_log_ring[static_cast<size_t>((ticket - 1u) % static_cast<uint32_t>(kLogRingSlots))];
+    const uint32_t drained_ticket = g_log_drained_ticket.load(std::memory_order_relaxed);
+    const uint32_t prev_slot_ticket = slot.ticket.load(std::memory_order_acquire);
+    if (resonance::log_ring_slot_overwrite_drops_message(prev_slot_ticket, drained_ticket)) {
+        g_log_ring_drops.fetch_add(1, std::memory_order_relaxed);
+    }
     slot.ticket.store(0, std::memory_order_relaxed);
     slot.level = level;
     copy_trunc(slot.category, kLogCategoryCap, category);
@@ -98,6 +105,10 @@ void log_utf8(PostedLevel level, const char* category, const char* utf8_text) {
 void resonance_log_bind_main_thread() {
     g_main_thread_id = std::this_thread::get_id();
     g_main_thread_bound.store(true, std::memory_order_release);
+}
+
+uint64_t resonance_log_get_drop_count() {
+    return g_log_ring_drops.load(std::memory_order_relaxed);
 }
 
 void resonance_log_drain_pending() {

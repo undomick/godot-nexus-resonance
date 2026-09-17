@@ -1,9 +1,7 @@
 extends RefCounted
-class_name ResonanceBakeServerSetup
 
 ## Initializes ResonanceServer for editor bakes and surfaces init / config errors.
 
-const ResonanceBakeConfig = preload("res://addons/nexus_resonance/scripts/resonance_bake_config.gd")
 const _BakeDiscovery = preload("res://addons/nexus_resonance/editor/resonance_bake_discovery.gd")
 const UIStrings = preload("res://addons/nexus_resonance/scripts/resonance_ui_strings.gd")
 
@@ -104,15 +102,14 @@ func ensure_resonance_server_initialized(volumes: Array[Node]) -> bool:
 			push_warning("Nexus Resonance: " + msg)
 
 		return false
-	var bake_params := ResonanceBakeConfig.create_default().get_bake_params()
+	var bake_params := _BakeDiscovery.bake_params_from_runtime(root, null)
 	if volumes.size() > 0:
 		var bc = (
 			_runner._get_bake_config_for_volume(volumes[0])
 			if _runner and _runner.has_method("_get_bake_config_for_volume")
 			else null
 		)
-		if bc:
-			bake_params = bc.get_bake_params()
+		bake_params = _BakeDiscovery.bake_params_from_runtime(root, bc)
 	srv.set_bake_params(bake_params)
 	srv.init_audio_engine(config)
 	if not srv.is_initialized():

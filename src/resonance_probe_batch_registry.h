@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "handle_manager.h"
+#include "resonance_pathing_batch_lookup_policy.h"
 #include "resonance_probe_data.h"
 
 namespace godot {
@@ -34,7 +35,19 @@ class ResonanceProbeBatchRegistry {
     int revalidate_with_config(IPLSimulator sim, std::mutex* sim_mutex,
                                int reflection_type, bool pathing_enabled);
 
-    /// Returns pathing batch for preferred_handle if valid, else first with pathing.
+    /// Handles that would be removed by revalidate_with_config (read-only snapshot).
+    std::vector<int32_t> list_incompatible_handles(int reflection_type, bool pathing_enabled) const;
+
+    struct PathingBatchResolve {
+        IPLProbeBatch batch = nullptr;
+        resonance::PathingBatchLookup lookup{};
+    };
+
+    /// Resolve pathing batch for preferred_handle using IPL layer state and lookup policy.
+    /// IMPORTANT: batch is retained. Caller MUST call iplProbeBatchRelease when done; failure to release causes leaks.
+    PathingBatchResolve resolve_pathing_batch(int32_t preferred_handle) const;
+
+    /// Returns pathing batch for preferred_handle if policy resolves one.
     /// IMPORTANT: Return value is retained. Caller MUST call iplProbeBatchRelease when done; failure to release causes leaks.
     IPLProbeBatch get_pathing_batch(int32_t preferred_handle) const;
 

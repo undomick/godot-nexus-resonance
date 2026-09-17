@@ -13,6 +13,7 @@
 #include "resonance_probe_data.h"
 #include "resonance_probe_exclusion.h"
 #include "resonance_probe_volume.h"
+#include "resonance_reverb_data_point.h"
 #include "resonance_runtime.h"
 #include "resonance_server.h"
 #include "resonance_sofa_asset.h"
@@ -64,6 +65,7 @@ void initialize_nexus_resonance_module(godot::ModuleInitializationLevel p_level)
         // Probes
         ClassDB::register_class<ResonanceProbeExclusion>();
         ClassDB::register_class<ResonanceProbeVolume>();
+        ClassDB::register_class<ResonanceReverbDataPoint>();
 
         // Runtime orchestrator (native port of the runtime node)
         ClassDB::register_class<ResonanceRuntime>();

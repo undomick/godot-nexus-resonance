@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="ResonanceReverbDataPoint" inherits="Node3D" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../class.xsd">
+	<brief_description>
+		Analysis marker to sample baked reverb at a world point (RT60 and energy). Does not affect audio.
+	</brief_description>
+	<description>
+		Place under or near a baked [ResonanceProbeVolume]. When [member probe_data] is empty, inherits [member ResonanceProbeVolume.probe_data] from an ancestor. Inspector button Sample Reverb Here initializes [ResonanceServer] like Bake and shows RT60 and energy; in Play it samples once when ready. Analysis only; not used for runtime convolution.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="query_baked_reverb">
+			<return type="Dictionary" />
+			<description>
+				Sample baked reflections at this node's global position. Success includes energy and RT60 fields; failure sets [code]ok[/code] false. Needs a live [ResonanceServer] IPL context (Sample button or Play).
+			</description>
+		</method>
+		<method name="query_baked_reverb_at">
+			<return type="Dictionary" />
+			<param index="0" name="world_position" type="Vector3" />
+			<description>
+				Same as [method query_baked_reverb] at an explicit world position.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="probe_data" type="ResonanceProbeData" setter="set_probe_data" getter="get_probe_data">
+			Baked probe batch to read. Auto-filled from an ancestor [ResonanceProbeVolume] when empty.
+		</member>
+		<member name="baked_variation" type="int" setter="set_baked_variation" getter="get_baked_variation" default="0">
+			Layer to read: Reverb (0), Static Source (1), Static Listener (2). Static layers show [member static_endpoint] and [member static_influence_radius].
+		</member>
+		<member name="static_endpoint" type="Vector3" setter="set_static_endpoint" getter="get_static_endpoint">
+			Endpoint position for Static Source or Static Listener layers (hidden for Reverb).
+		</member>
+		<member name="static_influence_radius" type="float" setter="set_static_influence_radius" getter="get_static_influence_radius" default="0.0">
+			Influence sphere radius for static endpoint layers. 0 uses the baker fallback (10 m). Hidden for Reverb.
+		</member>
+		<member name="neighbor_radius" type="float" setter="set_neighbor_radius" getter="get_neighbor_radius" default="4.0">
+			Only probes within this distance (meters) contribute to interpolation. Drawn as a wire sphere in the editor.
+		</member>
+		<member name="reconstruct_impulse_response" type="bool" setter="set_reconstruct_impulse_response" getter="get_reconstruct_impulse_response" default="false">
+			When true, [method query_baked_reverb] also builds IR preview stats (duration / peak). Analysis only.
+		</member>
+		<member name="last_query" type="Dictionary" setter="" getter="get_last_query">
+			Script-readable snapshot from the most recent sample. Hidden from the inspector.
+		</member>
+	</members>
+</class>

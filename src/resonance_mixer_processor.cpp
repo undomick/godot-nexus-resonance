@@ -1,5 +1,8 @@
 #include "resonance_mixer_processor.h"
+#include "resonance_ambisonics_decode_binaural_policy.h"
+#include "resonance_convolution_bus_policy.h"
 #include "resonance_log.h"
+#include "resonance_mixer_carry_policy.h"
 #include "resonance_server.h"
 #include <godot_cpp/variant/string.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
@@ -199,17 +202,32 @@ void ResonanceMixerProcessor::_write_stereo_to_audio_frames_with_carry(AudioFram
             pending_stereo_left[i] = pending_stereo_left[pending_read_index + i];
             pending_stereo_right[i] = pending_stereo_right[pending_read_index + i];
         }
-        pending_len_ = remain;
-        pending_read_index = 0;
+        resonance::mixer_carry_compact_pending(pending_read_index, pending_len_);
     }
 
     const size_t fs = static_cast<size_t>(frame_size);
-    if (pending_len_ + fs > cap) {
-        pending_len_ = 0;
+    const size_t drop = resonance::mixer_carry_drop_count_for_append(pending_len_, fs, cap);
+    if (drop == std::numeric_limits<size_t>::max()) {
+        if (!s_frame_count_large_warned) {
+            s_frame_count_large_warned = true;
+            ResonanceLog::warn_cstr(
+                "Reverb output frame_count > audio_frame_size. Zero-padding until frame sizes match.");
+        }
+        return;
+    }
+    if (drop > 0) {
+        if (drop >= pending_len_) {
+            pending_len_ = 0;
+        } else {
+            const size_t remain = pending_len_ - drop;
+            for (size_t i = 0; i < remain; i++) {
+                pending_stereo_left[i] = pending_stereo_left[drop + i];
+                pending_stereo_right[i] = pending_stereo_right[drop + i];
+            }
+            pending_len_ = remain;
+        }
         pending_read_index = 0;
     }
-    if (pending_len_ + fs > cap)
-        return;
 
     for (int i = 0; i < frame_size; i++) {
         pending_stereo_left[pending_len_ + static_cast<size_t>(i)] = sa_stereo_buffer.data[0][i];
@@ -241,14 +259,16 @@ void ResonanceMixerProcessor::_write_stereo_to_audio_frames_with_carry(AudioFram
     }
 }
 
-void ResonanceMixerProcessor::_decode_ambisonic_to_stereo_buffer(IPLAudioBuffer* ambi_in, const IPLCoordinateSpace3& listener_coords) {
+void ResonanceMixerProcessor::_decode_ambisonic_to_stereo_buffer(IPLAudioBuffer* ambi_in, const IPLCoordinateSpace3& listener_coords,
+                                                                 bool apply_binaural) {
     if (!ambi_in || !ambi_in->data)
         return;
     IPLAmbisonicsDecodeEffectParams decParams{};
     decParams.order = ambisonic_order;
     decParams.orientation = listener_coords;
     ResonanceServer* srv = ResonanceServer::get_singleton();
-    bool use_vs = srv && srv->use_virtual_surround_output() && decode_effect_7_1 && virtual_surround_effect;
+    const bool use_vs = srv && resonance::ambisonics_decode_use_virtual_surround_chain(srv->use_virtual_surround_output(), apply_binaural) &&
+                        decode_effect_7_1 && virtual_surround_effect;
 
     if (use_vs) {
         decParams.hrtf = nullptr;
@@ -258,8 +278,8 @@ void ResonanceMixerProcessor::_decode_ambisonic_to_stereo_buffer(IPLAudioBuffer*
         vsParams.hrtf = srv->get_hrtf_handle();
         iplVirtualSurroundEffectApply(virtual_surround_effect, &vsParams, &sa_7_1_buffer, &sa_stereo_buffer);
     } else {
-        decParams.hrtf = (srv && srv->use_reverb_binaural()) ? srv->get_hrtf_handle() : nullptr;
-        decParams.binaural = (srv && srv->use_reverb_binaural()) ? IPL_TRUE : IPL_FALSE;
+        IPLHRTF hrtf_handle = srv ? srv->get_hrtf_handle() : nullptr;
+        resonance::ambisonics_decode_effect_hrtf(apply_binaural, hrtf_handle, decParams.hrtf, decParams.binaural);
         iplAmbisonicsDecodeEffectApply(decode_effect, &decParams, ambi_in, &sa_stereo_buffer);
     }
     _cache_last_stereo_block();
@@ -281,6 +301,11 @@ bool ResonanceMixerProcessor::process_mixer_return(IPLReflectionMixer mixer_hand
     const bool can_hold_last = have_seen_mixer_feed_count_ &&
                                feed_count_now == last_seen_mixer_feed_count_ &&
                                feed_count_now != hold_last_suppression_feed_;
+    if (resonance::convolution_bus_skip_empty_mixer_apply(feed_count_now, last_stereo_valid)) {
+        if (ResonanceServer* srv_skip = ResonanceServer::get_singleton())
+            srv_skip->record_convolution_bus_skip_empty_mixer_apply();
+        return true;
+    }
     if (can_hold_last && _restore_last_stereo_block()) {
         hold_last_suppression_feed_ = feed_count_now;
         if (ResonanceServer* srv_h = ResonanceServer::get_singleton())
@@ -296,7 +321,8 @@ bool ResonanceMixerProcessor::process_mixer_return(IPLReflectionMixer mixer_hand
         params.numChannels = sa_ambisonic_buffer.numChannels;
 
     iplReflectionMixerApply(mixer_handle, &params, &sa_ambisonic_buffer);
-    _decode_ambisonic_to_stereo_buffer(&sa_ambisonic_buffer, listener_coords);
+    ResonanceServer* srv_bus = ResonanceServer::get_singleton();
+    _decode_ambisonic_to_stereo_buffer(&sa_ambisonic_buffer, listener_coords, srv_bus && srv_bus->use_reverb_binaural());
 
     // Sub-sized callbacks: carry queues the remainder for the next mix() until a full block is consumed.
     if (frame_count < frame_size && !s_frame_count_small_warned) {
@@ -313,11 +339,12 @@ bool ResonanceMixerProcessor::process_mixer_return(IPLReflectionMixer mixer_hand
 
 // Same decode path as process_mixer_return but input is already-filled HOA (e.g. convolution tap), no mixer pull.
 bool ResonanceMixerProcessor::decode_ambisonic_to_stereo(IPLAudioBuffer* ambi_buf,
-                                                         const IPLCoordinateSpace3& listener_coords, AudioFrame* out_frames, int frame_count) {
+                                                         const IPLCoordinateSpace3& listener_coords, AudioFrame* out_frames, int frame_count,
+                                                         bool apply_binaural) {
     if (!_can_decode() || !ambi_buf || !ambi_buf->data)
         return false;
 
-    _decode_ambisonic_to_stereo_buffer(ambi_buf, listener_coords);
+    _decode_ambisonic_to_stereo_buffer(ambi_buf, listener_coords, apply_binaural);
 
     _write_stereo_to_audio_frames_with_carry(out_frames, frame_count);
     return true;

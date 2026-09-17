@@ -1,5 +1,8 @@
 #include "resonance_processor_ambisonic.h"
+#include "resonance_ambisonic_tail_policy.h"
 #include "resonance_log.h"
+#include "resonance_server.h"
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstring>
@@ -16,6 +19,16 @@ IPLCoordinateSpace3 identity_orientation() {
     u.up = {0.0f, 1.0f, 0.0f};
     u.right = {1.0f, 0.0f, 0.0f};
     return u;
+}
+
+void apply_ambisonic_decoder_output_gain(bool apply_gain, int frame_size, IPLAudioBuffer& out_buffer) {
+    if (!apply_gain || !out_buffer.data || !out_buffer.data[0] || !out_buffer.data[1])
+        return;
+    const float s = resonance::kAmbisonicDecoderOutputScalar;
+    for (int i = 0; i < frame_size; i++) {
+        out_buffer.data[0][i] *= s;
+        out_buffer.data[1][i] *= s;
+    }
 }
 
 } // namespace
@@ -64,7 +77,10 @@ void ResonanceAmbisonicProcessor::initialize(IPLContext p_context, int p_sample_
         if (rot_status == IPL_STATUS_SUCCESS) {
             init_flags = init_flags | AmbisonicInitFlags::ROTATION;
         } else {
-            ResonanceLog::error("ResonanceAmbisonicProcessor: iplAmbisonicsRotationEffectCreate failed.");
+            ResonanceLog::warn_cstr(
+                "ResonanceAmbisonicProcessor: iplAmbisonicsRotationEffectCreate failed; "
+                "listener orientation is applied in the decode matrix instead (world HOA beds may sound mis-oriented).");
+            use_ip_ambisonics_rotation_effect = false;
         }
     }
 
@@ -189,6 +205,7 @@ void ResonanceAmbisonicProcessor::process(const float* input_data, size_t sample
     else
         decode_orientation = listener_orient;
 
+    last_used_rotation_effect_ = false;
     if (!combined_matrix_decode && rotation_effect && (init_flags & AmbisonicInitFlags::ROTATION)) {
         IPLAmbisonicsRotationEffectParams rotParams{};
         rotParams.orientation = listener_orient;
@@ -196,6 +213,7 @@ void ResonanceAmbisonicProcessor::process(const float* input_data, size_t sample
         iplAmbisonicsRotationEffectApply(rotation_effect, &rotParams, post_convert, &sa_rotated_buffer);
         decode_input = &sa_rotated_buffer;
         decode_orientation = identity_orientation();
+        last_used_rotation_effect_ = true;
     }
 
     IPLAmbisonicsDecodeEffectParams decParams{};
@@ -206,14 +224,56 @@ void ResonanceAmbisonicProcessor::process(const float* input_data, size_t sample
     decParams.orientation = decode_orientation;
 
     iplAmbisonicsDecodeEffectApply(ambisonics_dec_effect, &decParams, decode_input, &out_buffer);
+    apply_ambisonic_decoder_output_gain(apply_output_gain, frame_size, out_buffer);
+}
 
-    if (apply_output_gain && out_buffer.data && out_buffer.data[0] && out_buffer.data[1]) {
-        const float s = resonance::kAmbisonicDecoderOutputScalar;
-        for (int i = 0; i < frame_size; i++) {
-            out_buffer.data[0][i] *= s;
-            out_buffer.data[1][i] *= s;
+int ResonanceAmbisonicProcessor::get_tail_size_samples() const {
+    if (!(init_flags & AmbisonicInitFlags::DECODE) || !ambisonics_dec_effect)
+        return 0;
+    int rotation_tail = 0;
+    if (last_used_rotation_effect_ && rotation_effect && (init_flags & AmbisonicInitFlags::ROTATION))
+        rotation_tail = iplAmbisonicsRotationEffectGetTailSize(rotation_effect);
+    const int decode_tail = iplAmbisonicsDecodeEffectGetTailSize(ambisonics_dec_effect);
+    return std::max(rotation_tail, decode_tail);
+}
+
+bool ResonanceAmbisonicProcessor::process_tail(IPLAudioBuffer& out_buffer) {
+    if (!(init_flags & AmbisonicInitFlags::DECODE) || !ambisonics_dec_effect || !out_buffer.data || !out_buffer.data[0] ||
+        !out_buffer.data[1])
+        return false;
+
+    ResonanceServer* srv = ResonanceServer::get_singleton();
+    IPLHRTF runtime_hrtf = (srv && apply_hrtf) ? srv->get_hrtf_handle() : nullptr;
+
+    if (last_used_rotation_effect_ && rotation_effect && (init_flags & AmbisonicInitFlags::ROTATION) &&
+        iplAmbisonicsRotationEffectGetTailSize(rotation_effect) > 0) {
+        const IPLAudioEffectState rot_state = iplAmbisonicsRotationEffectGetTail(rotation_effect, &sa_rotated_buffer);
+        if (resonance::ambisonic_rotation_tail_needs_decode_apply(rot_state)) {
+            IPLAmbisonicsDecodeEffectParams decParams{};
+            decParams.order = ambisonic_order;
+            const bool use_bin = apply_hrtf && runtime_hrtf;
+            decParams.hrtf = use_bin ? runtime_hrtf : nullptr;
+            decParams.binaural = use_bin ? IPL_TRUE : IPL_FALSE;
+            decParams.orientation = identity_orientation();
+            iplAmbisonicsDecodeEffectApply(ambisonics_dec_effect, &decParams, &sa_rotated_buffer, &out_buffer);
+            apply_ambisonic_decoder_output_gain(apply_output_gain, frame_size, out_buffer);
+            return true;
         }
     }
+
+    if (iplAmbisonicsDecodeEffectGetTailSize(ambisonics_dec_effect) <= 0)
+        return false;
+    const IPLAudioEffectState dec_state = iplAmbisonicsDecodeEffectGetTail(ambisonics_dec_effect, &out_buffer);
+    apply_ambisonic_decoder_output_gain(apply_output_gain, frame_size, out_buffer);
+    return resonance::ambisonic_decode_tail_produced(dec_state);
+}
+
+void ResonanceAmbisonicProcessor::reset_for_new_playback() {
+    if (rotation_effect)
+        iplAmbisonicsRotationEffectReset(rotation_effect);
+    if (ambisonics_dec_effect)
+        iplAmbisonicsDecodeEffectReset(ambisonics_dec_effect);
+    last_used_rotation_effect_ = false;
 }
 
 } // namespace godot

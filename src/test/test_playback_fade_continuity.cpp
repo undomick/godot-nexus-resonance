@@ -24,6 +24,29 @@ float max_adjacent_jump(const std::vector<float>& samples) {
 
 } // namespace
 
+TEST_CASE("ambisonic geometry gate underrun uses cosine fade not hard zero", "[playback][geometry_gate][t-13]") {
+    struct Frame {
+        float left;
+        float right;
+    };
+    Frame buffer[8]{};
+    buffer[0].left = 0.5f;
+    buffer[0].right = -0.5f;
+    pad_output_with_cosine_underrun_fade(buffer, 8, 1, 0.0f, 0.0f, false);
+    REQUIRE(buffer[1].left > 0.0f);
+    REQUIRE(buffer[7].left == 0.0f);
+}
+
+TEST_CASE("geometry gate reopen: hold-last fades in instead of silence", "[playback][geometry_gate][t06]") {
+    StereoFrame buffer[8]{};
+    REQUIRE(geometry_gate_output_reopen_hold_active(true, false, 0));
+    REQUIRE_FALSE(geometry_gate_output_reopen_hold_active(false, false, 0));
+    fill_geometry_gate_reopen_hold(buffer, 8, 0, 0.5f, -0.5f);
+    REQUIRE(buffer[0].left == Approx(0.5f));
+    REQUIRE(buffer[0].right == Approx(-0.5f));
+    REQUIRE(buffer[7].left == Approx(0.5f));
+}
+
 TEST_CASE("underrun pad: cosine fade starts at full tail (no click)", "[playback][underrun][eos]") {
     StereoFrame buffer[8]{};
     buffer[0].left = 0.6f;
@@ -96,27 +119,26 @@ EosReflectionTailBranch eos_reflection_tail_branch(int reflection_type) {
     return EosReflectionTailBranch::None;
 }
 
-bool pathing_eos_tail_active(bool pathing_enabled, int tail_samples, bool have_cached_params) {
-    return pathing_enabled && tail_samples > 0 && have_cached_params;
+bool pathing_eos_tail_active(bool pathing_enabled, int tail_samples) {
+    return pathing_enabled && tail_samples > 0;
 }
 
 } // namespace
 
-TEST_CASE("EOS tail branch: convolution and TAN use silence mixer feed", "[playback][eos][conv]") {
+TEST_CASE("EOS tail branch: convolution and TAN use tail_apply_to_mixer GetTail", "[playback][eos][conv]") {
     REQUIRE(eos_reflection_tail_branch(kReflectionConvolution) == EosReflectionTailBranch::ConvOrTan);
     REQUIRE(eos_reflection_tail_branch(kReflectionTan) == EosReflectionTailBranch::ConvOrTan);
 }
 
-TEST_CASE("EOS tail branch: parametric and hybrid use tail_apply_direct", "[playback][eos][parametric]") {
+TEST_CASE("EOS tail branch: parametric and hybrid use tail_apply_direct GetTail", "[playback][eos][parametric]") {
     REQUIRE(eos_reflection_tail_branch(kReflectionParametric) == EosReflectionTailBranch::ParametricOrHybrid);
     REQUIRE(eos_reflection_tail_branch(kReflectionHybrid) == EosReflectionTailBranch::ParametricOrHybrid);
 }
 
-TEST_CASE("EOS tail branch: pathing runs with cached SH on silence input", "[playback][eos][pathing]") {
-    REQUIRE(pathing_eos_tail_active(true, 512, true));
-    REQUIRE_FALSE(pathing_eos_tail_active(false, 512, true));
-    REQUIRE_FALSE(pathing_eos_tail_active(true, 0, true));
-    REQUIRE_FALSE(pathing_eos_tail_active(true, 512, false));
+TEST_CASE("EOS tail branch: pathing drains via process_tail while tail size remains", "[playback][eos][pathing]") {
+    REQUIRE(pathing_eos_tail_active(true, 512));
+    REQUIRE_FALSE(pathing_eos_tail_active(false, 512));
+    REQUIRE_FALSE(pathing_eos_tail_active(true, 0));
 }
 
 TEST_CASE("hold-last pad applied to sine: no step at first padded sample", "[playback][underrun][eos]") {

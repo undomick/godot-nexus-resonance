@@ -21,6 +21,7 @@ class ResonanceProbeData : public Resource {
     uint32_t static_source_params_hash = 0;   // 0 = not baked
     uint32_t static_listener_params_hash = 0; // 0 = not baked
     int baked_reflection_type = -1;           // 0=Convolution, 1=Parametric, 2=Hybrid; -1=legacy (both baked)
+    int baked_ambisonics_order = -1;          // HOA order used for baked convolution IRs; -1=legacy (assume default)
 
   protected:
     static void _bind_methods();
@@ -53,6 +54,9 @@ class ResonanceProbeData : public Resource {
 
     void set_baked_reflection_type(int p_type);
     int get_baked_reflection_type() const;
+
+    void set_baked_ambisonics_order(int p_order);
+    int get_baked_ambisonics_order() const;
 
     // C++ Helpers for efficient access
     /// Returns pointer to internal probe data. Valid only during the current call; do not hold across

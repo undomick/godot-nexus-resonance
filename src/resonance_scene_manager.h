@@ -70,6 +70,8 @@ class ResonanceSceneManager {
 
     void clear_static_scenes(IPLScene scene, RayTraceDebugContext* debug_ctx, RuntimeSceneState& state);
 
+    /// Builds merged static geometry asset in memory (no ResourceSaver). Empty ref on failure.
+    Ref<ResonanceGeometryAsset> export_static_scene_to_geometry_asset(Node* scene_root);
     Error export_static_scene_to_asset(Node* scene_root, const String& path);
     /// Export static ResonanceGeometry from scene to OBJ+MTL (iplSceneSaveOBJ). Path without extension, e.g. "res://debug/scene".
     Error export_static_scene_to_obj(Node* scene_root, const String& file_base_name);

@@ -1,6 +1,7 @@
 #include "resonance_processor_path.h"
 #include "resonance_log.h"
 #include "resonance_math.h"
+#include "resonance_processor_hrtf_policy.h"
 #include "resonance_server.h"
 #include <algorithm>
 #include <cstring>
@@ -19,23 +20,13 @@ void ResonancePathProcessor::initialize(IPLContext p_context, int p_sample_rate,
 
     context = p_context;
     frame_size = p_frame_size;
+    sample_rate = p_sample_rate;
     ambisonic_order = p_ambisonic_order;
-
-    IPLAudioSettings audioSettings{};
-    audioSettings.samplingRate = p_sample_rate;
-    audioSettings.frameSize = frame_size;
 
     ResonanceServer* srv = ResonanceServer::get_singleton();
     IPLHRTF hrtf = (srv && srv->is_initialized()) ? srv->get_hrtf_handle() : nullptr;
 
-    IPLPathEffectSettings pathSettings{};
-    pathSettings.maxOrder = ambisonic_order;
-    pathSettings.spatialize = IPL_TRUE;
-    pathSettings.speakerLayout.type = IPL_SPEAKERLAYOUTTYPE_STEREO;
-    pathSettings.speakerLayout.numSpeakers = 2;
-    pathSettings.hrtf = hrtf;
-
-    if (iplPathEffectCreate(context, &audioSettings, &pathSettings, &path_effect) != IPL_STATUS_SUCCESS) {
+    if (!create_path_effect(hrtf)) {
         ResonanceLog::error("PathProcessor: Failed to create IPLPathEffect");
         return;
     }
@@ -60,15 +51,65 @@ void ResonancePathProcessor::cleanup() {
         iplAudioBufferFree(context, &internal_mono_buffer);
     }
     memset(&internal_mono_buffer, 0, sizeof(internal_mono_buffer));
+    bound_hrtf_ = nullptr;
     context = nullptr;
     init_flags = PathInitFlags::NONE;
+}
+
+bool ResonancePathProcessor::create_path_effect(IPLHRTF hrtf) {
+    if (!context)
+        return false;
+
+    IPLPathEffect new_effect = nullptr;
+    IPLAudioSettings audioSettings{};
+    audioSettings.samplingRate = sample_rate;
+    audioSettings.frameSize = frame_size;
+
+    IPLPathEffectSettings pathSettings{};
+    pathSettings.maxOrder = ambisonic_order;
+    pathSettings.spatialize = IPL_TRUE;
+    pathSettings.speakerLayout.type = IPL_SPEAKERLAYOUTTYPE_STEREO;
+    pathSettings.speakerLayout.numSpeakers = 2;
+    pathSettings.hrtf = hrtf;
+
+    if (iplPathEffectCreate(context, &audioSettings, &pathSettings, &new_effect) != IPL_STATUS_SUCCESS)
+        return false;
+
+    if (path_effect)
+        iplPathEffectRelease(&path_effect);
+    path_effect = new_effect;
+    bound_hrtf_ = hrtf;
+    return true;
+}
+
+bool ResonancePathProcessor::hrtf_needs_main_sync(IPLHRTF runtime_hrtf) const {
+    const bool has_effect = (init_flags & PathInitFlags::PATHEFFECT) && path_effect != nullptr;
+    return resonance::path_needs_hrtf_effect_recreate(has_effect, bound_hrtf_, runtime_hrtf);
+}
+
+void ResonancePathProcessor::ensure_hrtf_on_main(IPLHRTF runtime_hrtf) {
+    if (!(init_flags & PathInitFlags::PATHEFFECT) || !context)
+        return;
+    if (!runtime_hrtf)
+        return;
+    if (!hrtf_needs_main_sync(runtime_hrtf))
+        return;
+    if (!create_path_effect(runtime_hrtf)) {
+        ResonanceLog::error("PathProcessor: Failed to recreate IPLPathEffect for new HRTF");
+        if (path_effect) {
+            iplPathEffectRelease(&path_effect);
+            path_effect = nullptr;
+        }
+        bound_hrtf_ = nullptr;
+        init_flags = static_cast<PathInitFlags>(static_cast<int>(init_flags) & ~static_cast<int>(PathInitFlags::PATHEFFECT));
+    }
 }
 
 void ResonancePathProcessor::process(const IPLAudioBuffer& in_buffer, const IPLPathEffectParams& params, IPLAudioBuffer& out_buffer,
                                      float path_mix_ramp_start, float path_mix_ramp_end) {
     if (!(init_flags & PathInitFlags::PATHEFFECT) || !(init_flags & PathInitFlags::BUFFERS) || !path_effect || !params.shCoeffs)
         return;
-    if (!in_buffer.data || !out_buffer.data || out_buffer.numSamples < frame_size)
+    if (!in_buffer.data || !resonance::path_spatialize_stereo_out_ready(out_buffer, frame_size))
         return;
 
     // IPL API has non-const param; input is read-only
@@ -101,10 +142,10 @@ bool ResonancePathProcessor::process_tail(IPLAudioBuffer& out_stereo) {
         return false;
     if (iplPathEffectGetTailSize(path_effect) <= 0)
         return false;
-    if (!out_stereo.data || out_stereo.numSamples < frame_size)
+    if (!resonance::path_spatialize_stereo_out_ready(out_stereo, frame_size))
         return false;
-    iplPathEffectGetTail(path_effect, &out_stereo);
-    return true;
+    const IPLAudioEffectState state = iplPathEffectGetTail(path_effect, &out_stereo);
+    return state != IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
 }
 
 } // namespace godot

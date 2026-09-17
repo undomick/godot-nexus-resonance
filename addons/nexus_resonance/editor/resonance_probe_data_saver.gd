@@ -45,6 +45,9 @@ func _save(resource: Resource, path: String, _flags: int) -> Error:
 	)
 	var bake_params_hash: int = resource.get("bake_params_hash")
 	var baked_reflection_type: int = resource.get("baked_reflection_type")
+	var baked_ambisonics_order: int = (
+		resource.get("baked_ambisonics_order") if "baked_ambisonics_order" in resource else -1
+	)
 	var pathing_params_hash: int = (
 		resource.get("pathing_params_hash") if "pathing_params_hash" in resource else 0
 	)
@@ -66,12 +69,13 @@ func _save(resource: Resource, path: String, _flags: int) -> Error:
 	var data_str := var_to_str(data)
 	var probe_pos_str := var_to_str(probe_positions)
 	var content := (
-		'[gd_resource type="ResonanceProbeData" format=3]\n\n[resource]\ndata = %s\nprobe_positions = %s\nbake_params_hash = %d\nbaked_reflection_type = %d\npathing_params_hash = %d\nstatic_source_params_hash = %d\nstatic_listener_params_hash = %d\nstatic_scene_params_hash = %d\n'
+		'[gd_resource type="ResonanceProbeData" format=3]\n\n[resource]\ndata = %s\nprobe_positions = %s\nbake_params_hash = %d\nbaked_reflection_type = %d\nbaked_ambisonics_order = %d\npathing_params_hash = %d\nstatic_source_params_hash = %d\nstatic_listener_params_hash = %d\nstatic_scene_params_hash = %d\n'
 		% [
 			data_str,
 			probe_pos_str,
 			bake_params_hash,
 			baked_reflection_type,
+			baked_ambisonics_order,
 			pathing_params_hash,
 			static_source_params_hash,
 			static_listener_params_hash,

@@ -1,6 +1,5 @@
 @tool
 extends RefCounted
-class_name ResonanceBakeProgressUI
 
 ## Bake progress dialog, stage label, and details log. Used by the bake pipeline.
 

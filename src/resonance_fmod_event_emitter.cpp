@@ -1,4 +1,5 @@
 #include "resonance_fmod_event_emitter.h"
+#include "resonance_fmod_source_sync_policy.h"
 #include "resonance_server.h"
 #include "resonance_source_handle_policy.h"
 #include <godot_cpp/classes/engine.hpp>
@@ -12,17 +13,20 @@ namespace godot {
 
 namespace {
 constexpr float kSyncPosEpsSq = 1e-4f * 1e-4f;
+constexpr float kSyncOrientEpsSq = 1e-4f * 1e-4f;
 
 bool editor_hint() {
     Engine* eng = Engine::get_singleton();
     return eng && eng->is_editor_hint();
 }
 
-void invalidate_sync_pos(Vector3& out) {
-    out = Vector3(
+void invalidate_sync_pose(Vector3& out_pos, Vector3& out_forward, Vector3& out_up) {
+    out_pos = Vector3(
         std::numeric_limits<float>::infinity(),
         std::numeric_limits<float>::infinity(),
         std::numeric_limits<float>::infinity());
+    out_forward = out_pos;
+    out_up = out_pos;
 }
 } // namespace
 
@@ -63,7 +67,7 @@ Object* ResonanceFmodEventEmitter::find_runtime_fmod_bridge() {
     return nullptr;
 }
 
-void ResonanceFmodEventEmitter::sync_fmod_source_position(const Vector3& world_pos) {
+void ResonanceFmodEventEmitter::sync_fmod_source_pose(const Transform3D& world_xform) {
     if (resonance_handle < 0) {
         return;
     }
@@ -76,7 +80,15 @@ void ResonanceFmodEventEmitter::sync_fmod_source_position(const Vector3& world_p
         invalidate_handles_after_engine_reinit();
         return;
     }
-    srv->update_source_position(resonance_handle, world_pos, 1.0f);
+    ResonanceServer::SourceUpdateParams params;
+    params.position = world_xform.origin;
+    params.radius = 1.0f;
+    params.source_forward = -world_xform.basis.get_column(2);
+    params.source_up = world_xform.basis.get_column(1);
+    params.num_transmission_rays = srv->get_max_transmission_surfaces();
+    if (resonance::fmod_source_sync_should_enqueue_on_try_update_failure(
+            srv->try_update_source(resonance_handle, params)))
+        srv->enqueue_source_update(resonance_handle, params);
 }
 
 void ResonanceFmodEventEmitter::_enter_tree() {
@@ -109,12 +121,19 @@ void ResonanceFmodEventEmitter::_process(double /*delta*/) {
     if (editor_hint() || resonance_handle < 0 || bridge == nullptr) {
         return;
     }
-    const Vector3 pos = get_global_position();
-    if (last_sync_pos.distance_squared_to(pos) < kSyncPosEpsSq) {
+    const Transform3D xf = get_global_transform();
+    const Vector3 forward = -xf.basis.get_column(2);
+    const Vector3 up = xf.basis.get_column(1);
+    const bool pos_same = last_sync_pos.distance_squared_to(xf.origin) < kSyncPosEpsSq;
+    const bool fwd_same = last_sync_forward.distance_squared_to(forward) < kSyncOrientEpsSq;
+    const bool up_same = last_sync_up.distance_squared_to(up) < kSyncOrientEpsSq;
+    if (pos_same && fwd_same && up_same) {
         return;
     }
-    last_sync_pos = pos;
-    sync_fmod_source_position(pos);
+    last_sync_pos = xf.origin;
+    last_sync_forward = forward;
+    last_sync_up = up;
+    sync_fmod_source_pose(xf);
 }
 
 void ResonanceFmodEventEmitter::deferred_resolve_bridge() {
@@ -145,12 +164,15 @@ void ResonanceFmodEventEmitter::register_fmod_source() {
     if (!srv || !srv->is_initialized()) {
         return;
     }
-    resonance_handle = srv->create_source_handle(get_global_position(), 1.0f);
+    resonance_handle = srv->create_source_handle(get_global_position(), 1.0f, get_path());
     if (resonance_handle < 0) {
         return;
     }
     source_lifecycle_epoch_ = srv->get_source_lifecycle_epoch();
-    last_sync_pos = get_global_position();
+    const Transform3D xf = get_global_transform();
+    last_sync_pos = xf.origin;
+    last_sync_forward = -xf.basis.get_column(2);
+    last_sync_up = xf.basis.get_column(1);
     fmod_handle = (int32_t)bridge->call(StringName("add_fmod_source"), resonance_handle);
     if (fmod_handle < 0) {
         if (resonance::source_handle_matches_lifecycle_epoch(resonance_handle, source_lifecycle_epoch_,
@@ -159,9 +181,10 @@ void ResonanceFmodEventEmitter::register_fmod_source() {
         }
         resonance_handle = -1;
         source_lifecycle_epoch_ = 0;
-        invalidate_sync_pos(last_sync_pos);
+        invalidate_sync_pose(last_sync_pos, last_sync_forward, last_sync_up);
         return;
     }
+    sync_fmod_source_pose(xf);
     try_push_simulation_handle_to_fmod(fmod_handle);
 }
 
@@ -176,7 +199,7 @@ void ResonanceFmodEventEmitter::invalidate_handles_after_engine_reinit() {
     fmod_handle = -1;
     resonance_handle = -1;
     source_lifecycle_epoch_ = 0;
-    invalidate_sync_pos(last_sync_pos);
+    invalidate_sync_pose(last_sync_pos, last_sync_forward, last_sync_up);
 }
 
 void ResonanceFmodEventEmitter::reload_source_after_reinit() {
@@ -203,7 +226,7 @@ void ResonanceFmodEventEmitter::release_fmod_source_handles() {
     }
     resonance_handle = -1;
     source_lifecycle_epoch_ = 0;
-    invalidate_sync_pos(last_sync_pos);
+    invalidate_sync_pose(last_sync_pos, last_sync_forward, last_sync_up);
     bridge = nullptr;
 }
 

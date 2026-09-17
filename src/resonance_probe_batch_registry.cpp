@@ -1,20 +1,16 @@
 #include "resonance_probe_batch_registry.h"
 #include "resonance_constants.h"
 #include "resonance_log.h"
+#include "resonance_probe_batch_pathing_policy.h"
 #include "resonance_probe_data.h"
+#include "resonance_reflection_type_policy.h"
 #include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 
 namespace godot {
 
 bool ResonanceProbeBatchRegistry::is_reflection_type_compatible(int baked_type, int reflection_type) {
-    bool uses_conv = (reflection_type == resonance::kReflectionConvolution ||
-                      reflection_type == resonance::kReflectionHybrid || reflection_type == resonance::kReflectionTan);
-    bool uses_param = (reflection_type == resonance::kReflectionParametric ||
-                       reflection_type == resonance::kReflectionHybrid);
-    return (baked_type == resonance::kBakedReflectionHybrid) ||
-           (baked_type == resonance::kBakedReflectionConvolution && uses_conv) ||
-           (baked_type == resonance::kBakedReflectionParametric && uses_param);
+    return resonance::baked_reflection_type_matches_runtime(baked_type, reflection_type);
 }
 
 int32_t ResonanceProbeBatchRegistry::load_batch(IPLContext ctx, IPLSimulator sim, std::mutex* sim_mutex,
@@ -85,7 +81,13 @@ int32_t ResonanceProbeBatchRegistry::load_batch(IPLContext ctx, IPLSimulator sim
         hash_to_handle_[data_hash] = handle;
         handle_to_hash_[handle] = data_hash;
         refcount_[handle] = 1;
-        handle_has_pathing_[handle] = (data->get_pathing_params_hash() > 0);
+        const bool ipl_has_pathing = resonance::probe_batch_has_pathing_layer(batch);
+        handle_has_pathing_[handle] = resonance::resolve_handle_has_pathing_from_load(ipl_has_pathing, data->get_pathing_params_hash());
+        if (resonance::should_warn_pathing_hash_without_layer(ipl_has_pathing, data->get_pathing_params_hash())) {
+            UtilityFunctions::push_warning(
+                "Nexus Resonance: probe data pathing_params_hash is set but the loaded batch has no PATHING/DYNAMIC layer. "
+                "Re-bake pathing or verify the probe resource on disk.");
+        }
         handle_baked_refl_[handle] = data->get_baked_reflection_type();
         handle_to_probe_data_[handle] = data;
         has_any_batches_.store(true, std::memory_order_release);
@@ -186,35 +188,52 @@ void ResonanceProbeBatchRegistry::clear_batches(IPLSimulator sim, std::mutex* si
     }
 }
 
+std::vector<int32_t> ResonanceProbeBatchRegistry::list_incompatible_handles(int reflection_type, bool pathing_enabled) const {
+    std::vector<int32_t> to_remove;
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (const auto& kv : handle_to_hash_) {
+        const int32_t handle = kv.first;
+        if (!is_compatible(handle, reflection_type, pathing_enabled))
+            to_remove.push_back(handle);
+    }
+    return to_remove;
+}
+
 int ResonanceProbeBatchRegistry::revalidate_with_config(IPLSimulator sim, std::mutex* sim_mutex,
                                                         int reflection_type, bool pathing_enabled) {
-    std::vector<int32_t> to_remove;
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        for (const auto& kv : handle_to_hash_) {
-            int32_t handle = kv.first;
-            if (!is_compatible(handle, reflection_type, pathing_enabled))
-                to_remove.push_back(handle);
-        }
-    }
+    const std::vector<int32_t> to_remove = list_incompatible_handles(reflection_type, pathing_enabled);
     for (int32_t h : to_remove)
         remove_batch(h, sim, sim_mutex);
-    return (int)to_remove.size();
+    return static_cast<int>(to_remove.size());
+}
+
+ResonanceProbeBatchRegistry::PathingBatchResolve ResonanceProbeBatchRegistry::resolve_pathing_batch(int32_t preferred_handle) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    int32_t sole_pathing_handle = -1;
+    size_t pathing_batch_count = 0;
+    for (const auto& kv : handle_to_hash_) {
+        const int32_t handle = kv.first;
+        if (!handle_has_pathing_.count(handle) || !handle_has_pathing_.at(handle))
+            continue;
+        pathing_batch_count++;
+        sole_pathing_handle = handle;
+    }
+
+    const bool preferred_exists = preferred_handle >= 0 && handle_to_hash_.count(preferred_handle) > 0;
+    const bool preferred_has_pathing =
+        preferred_exists && handle_has_pathing_.count(preferred_handle) && handle_has_pathing_.at(preferred_handle);
+    const resonance::PathingBatchLookup lookup = resonance::resolve_pathing_batch_lookup(
+        preferred_handle, preferred_exists, preferred_has_pathing, sole_pathing_handle, pathing_batch_count);
+
+    PathingBatchResolve out;
+    out.lookup = lookup;
+    if (lookup.handle >= 0)
+        out.batch = probe_batch_manager_.get_batch(lookup.handle);
+    return out;
 }
 
 IPLProbeBatch ResonanceProbeBatchRegistry::get_pathing_batch(int32_t preferred_handle) const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (preferred_handle >= 0 && handle_to_hash_.count(preferred_handle) &&
-        handle_has_pathing_.count(preferred_handle) && handle_has_pathing_.at(preferred_handle)) {
-        return probe_batch_manager_.get_batch(preferred_handle);
-    }
-    for (const auto& kv : handle_to_hash_) {
-        int32_t handle = kv.first;
-        if (handle_has_pathing_.count(handle) && handle_has_pathing_.at(handle)) {
-            return probe_batch_manager_.get_batch(handle);
-        }
-    }
-    return nullptr;
+    return resolve_pathing_batch(preferred_handle).batch;
 }
 
 bool ResonanceProbeBatchRegistry::handle_has_pathing(int32_t handle) const {
@@ -239,8 +258,9 @@ bool ResonanceProbeBatchRegistry::is_compatible(int32_t handle, int reflection_t
         if (!is_reflection_type_compatible(baked_type, reflection_type))
             return false;
     }
-    if (pathing_enabled && !has_pathing)
-        return false;
+    // Pathing mismatch does not drop the batch: reflections stay; pathing is skipped via has_pathing.
+    (void)pathing_enabled;
+    (void)has_pathing;
     return true;
 }
 

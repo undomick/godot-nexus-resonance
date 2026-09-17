@@ -72,6 +72,12 @@ fmod-gdextension does not yet expose event lifecycle callbacks. To automate hand
 - **Option B**: Request upstream: [utopia-rise/fmod-gdextension](https://github.com/utopia-rise/fmod-gdextension) could add signals/callbacks for event start/stop
 - **Option C**: Use the bridge for reverb only (listener-centric); 3D events use FMOD's built-in 3D or manual handle management
 
+## Reverb source identity (R-07)
+
+Steam Audio FMOD receives the listener reverb `IPLSource` once via `iplFMODSetReverbSource` during `init_bridge()` / `rebind_after_reinit()`. Listener motion is kept in sync through `ResonanceServer::update_listener` → `try_update_source` on the dedicated FMOD reverb handle (non-blocking; never waits on `simulation_mutex`).
+
+After a Nexus Resonance engine reinit, `ResonanceRuntime` calls `rebind_after_reinit()` so FMOD binds to the new `IPLContext` and a fresh reverb source. Do not call `init_bridge()` alone after reinit without terminating the old FMOD bridge first.
+
 ## API Summary
 
 

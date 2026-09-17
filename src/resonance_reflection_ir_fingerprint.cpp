@@ -1,5 +1,7 @@
 #include "resonance_reflection_ir_fingerprint.h"
 
+#include "resonance_energy_field_query_policy.h"
+
 #include <algorithm>
 #include <cmath>
 #include <phonon.h>
@@ -17,16 +19,7 @@ float reflection_energy_field_total(const void* field) {
     const IPLint32 bins = iplEnergyFieldGetNumBins(ef);
     if (channels <= 0 || bins <= 0)
         return 0.0f;
-    // Steam Audio energy fields use 3 diffuse bands per channel; band count is not exposed separately.
-    constexpr int kDiffuseBands = 3;
-    const int64_t count = static_cast<int64_t>(channels) * kDiffuseBands * bins;
-    double sum = 0.0;
-    for (int64_t i = 0; i < count; ++i) {
-        const float v = data[i];
-        if (v > 0.0f)
-            sum += static_cast<double>(v);
-    }
-    return static_cast<float>(sum);
+    return resonance::energy_field_total_from_samples(data, resonance::energy_field_sample_count(channels, bins));
 }
 
 uint16_t reflection_conv_ir_fir_energy_q16(const void* ir, int32_t ir_size, int32_t num_channels) {

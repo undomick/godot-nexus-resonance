@@ -69,9 +69,6 @@ class ResonanceProbeVolume : public Node3D {
     void _clear_player_refs_to_this();
     void _ensure_editor_default_resources();
     uint32_t _get_bake_params_hash() const;
-    /// Shared bake logic. p_precomputed_points: when non-null and non-empty, use bake_manual_grid; else bake_probes_for_volume.
-    void _prepare_and_execute_bake(const PackedVector3Array* p_precomputed_points);
-    void _warn_native_bake_deprecated() const;
     void _ensure_viz_instance();
     bool _compute_is_probe_dirty() const;
     bool _has_valid_resonance_config() const;
@@ -106,6 +103,9 @@ class ResonanceProbeVolume : public Node3D {
     Array get_bake_listeners() const;
     void set_bake_influence_radius(float p_radius);
     float get_bake_influence_radius() const;
+
+    /// Resolves BakeConfig bake_ambisonics_order (0 = Use Global) against [param p_global_order].
+    int resolved_bake_ambisonic_order(int p_global_order) const;
 
     /// Accepts NodePath or Node (resolved via get_path_to). Dedupes; no-op on empty/invalid.
     void add_bake_source(const Variant& p_source);
@@ -149,18 +149,11 @@ class ResonanceProbeVolume : public Node3D {
     bool is_headless_baking_mode() const;
 
     /// Called by ResonanceRuntime when runtime config affecting probe compatibility changes.
-    void notify_runtime_config_changed(int p_runtime_refl, bool p_runtime_pathing);
+    /// [param p_runtime_bake_amb] is the global Bake Ambisonic Order (not realtime playback order).
+    void notify_runtime_config_changed(int p_runtime_refl, bool p_runtime_pathing, int p_runtime_bake_amb = 1);
 
     int64_t get_bake_params_hash() const;
 
-    /// @deprecated Reflection-only bake. Use ResonanceBakeRunner.run_bake([volume]) instead - it
-    /// runs the full pathing + static-source + static-listener pipeline, auto-re-exports stale
-    /// ResonanceStaticScene assets, takes an undo backup, and updates all bookkeeping hashes.
-    /// Scheduled for removal in 1.0.
-    void bake_probes();
-    /// @deprecated Reflection-only bake with pre-computed floor raycast points. Use
-    /// ResonanceBakeRunner.run_bake([volume]) instead. Scheduled for removal in 1.0.
-    void bake_probes_with_floor_points(const PackedVector3Array& p_points);
     /// For Uniform Floor: raycast down onto collision geometry. Returns empty if no collisions. Requires CollisionShape3D on floor. MUST be called from main thread.
     PackedVector3Array generate_probes_on_floor_raycast() const;
     /// Returns the probe batch handle for pathing (used when ResonancePlayer.pathing_probe_volume points here). -1 if not loaded.

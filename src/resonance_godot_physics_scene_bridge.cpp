@@ -1,20 +1,32 @@
 #include "resonance_godot_physics_scene_bridge.h"
+#include "resonance_constants.h"
+#include "resonance_material.h"
+#include "resonance_physics_material_lookup_policy.h"
 #include "resonance_physics_ray_math.h"
 
 #include <cmath>
 #include <cstdint>
 #include <limits>
 
+#include <godot_cpp/classes/dir_access.hpp>
 #include <godot_cpp/classes/object.hpp>
 #include <godot_cpp/classes/physics_direct_space_state3d.hpp>
 #include <godot_cpp/classes/physics_ray_query_parameters3d.hpp>
+#include <godot_cpp/classes/project_settings.hpp>
+#include <godot_cpp/classes/resource_loader.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
+#include <godot_cpp/variant/packed_string_array.hpp>
 #include <godot_cpp/variant/string_name.hpp>
 #include <godot_cpp/variant/variant.hpp>
 
 namespace godot {
 
 namespace {
+
+const StringName& meta_material_resource() {
+    static const StringName n("resonance_physics_material");
+    return n;
+}
 
 const StringName& meta_material_preset() {
     static const StringName n("resonance_physics_material_preset");
@@ -33,75 +45,6 @@ IPLMaterial ipl_material_generic() {
     return m;
 }
 
-IPLMaterial ipl_material_named(const String& name) {
-    const String lower = name.to_lower();
-    IPLMaterial m{};
-    if (lower == "brick") {
-        m.absorption[0] = 0.03f;
-        m.absorption[1] = 0.04f;
-        m.absorption[2] = 0.07f;
-        m.scattering = 0.05f;
-        m.transmission[0] = m.transmission[1] = m.transmission[2] = 0.015f;
-    } else if (lower == "concrete") {
-        m.absorption[0] = 0.05f;
-        m.absorption[1] = 0.07f;
-        m.absorption[2] = 0.08f;
-        m.scattering = 0.05f;
-        m.transmission[0] = 0.015f;
-        m.transmission[1] = 0.002f;
-        m.transmission[2] = 0.001f;
-    } else if (lower == "wood") {
-        m.absorption[0] = 0.11f;
-        m.absorption[1] = 0.07f;
-        m.absorption[2] = 0.06f;
-        m.scattering = 0.05f;
-        m.transmission[0] = 0.070f;
-        m.transmission[1] = 0.014f;
-        m.transmission[2] = 0.005f;
-    } else if (lower == "metal") {
-        m.absorption[0] = 0.20f;
-        m.absorption[1] = 0.07f;
-        m.absorption[2] = 0.06f;
-        m.scattering = 0.05f;
-        m.transmission[0] = 0.200f;
-        m.transmission[1] = 0.025f;
-        m.transmission[2] = 0.010f;
-    } else if (lower == "glass") {
-        m.absorption[0] = 0.06f;
-        m.absorption[1] = 0.03f;
-        m.absorption[2] = 0.02f;
-        m.scattering = 0.05f;
-        m.transmission[0] = 0.060f;
-        m.transmission[1] = 0.044f;
-        m.transmission[2] = 0.011f;
-    } else if (lower == "carpet") {
-        m.absorption[0] = 0.24f;
-        m.absorption[1] = 0.69f;
-        m.absorption[2] = 0.73f;
-        m.scattering = 0.05f;
-        m.transmission[0] = 0.020f;
-        m.transmission[1] = 0.005f;
-        m.transmission[2] = 0.003f;
-    } else {
-        m = ipl_material_generic();
-    }
-    return m;
-}
-
-IPLMaterial material_for_collider(Object* collider) {
-    thread_local static IPLMaterial s_storage;
-    if (!collider)
-        return ipl_material_generic();
-    if (collider->has_meta(meta_material_preset())) {
-        Variant v = collider->get_meta(meta_material_preset());
-        if (v.get_type() == Variant::STRING) {
-            s_storage = ipl_material_named((String)v);
-            return s_storage;
-        }
-    }
-    return ipl_material_generic();
-}
-
 void fill_miss(IPLHit* hit) {
     hit->distance = std::numeric_limits<float>::infinity();
     hit->triangleIndex = -1;
@@ -109,6 +52,11 @@ void fill_miss(IPLHit* hit) {
     hit->materialIndex = -1;
     hit->normal.x = hit->normal.y = hit->normal.z = 0.0f;
     hit->material = nullptr;
+}
+
+std::string material_name_key(const String& name) {
+    const CharString utf8 = name.to_lower().utf8();
+    return std::string(utf8.get_data());
 }
 
 } // namespace
@@ -127,6 +75,116 @@ void ResonanceGodotPhysicsSceneBridge::set_collision_mask(uint32_t mask) {
 
 void ResonanceGodotPhysicsSceneBridge::set_exclude_rids(const TypedArray<RID>& exclude) {
     exclude_rids_ = exclude;
+}
+
+void ResonanceGodotPhysicsSceneBridge::set_material_search_paths(const Vector<String>& paths) {
+    material_search_paths_ = paths;
+}
+
+bool ResonanceGodotPhysicsSceneBridge::has_material_map() const {
+    std::lock_guard<std::mutex> lock(material_map_mutex_);
+    return !material_ipl_by_name_.empty();
+}
+
+void ResonanceGodotPhysicsSceneBridge::refresh_material_map() {
+    Vector<String> paths = material_search_paths_;
+    if (paths.is_empty()) {
+        ProjectSettings* ps = ProjectSettings::get_singleton();
+        const String key =
+            String(resonance::kProjectSettingsResonancePrefix) + resonance::kProjectSettingsPhysicsMaterialSearchPaths;
+        if (ps && ps->has_setting(key)) {
+            const Variant v = ps->get_setting(key);
+            if (v.get_type() == Variant::PACKED_STRING_ARRAY) {
+                const PackedStringArray arr = v;
+                for (int i = 0; i < arr.size(); ++i) {
+                    const String p = arr[i];
+                    if (!p.is_empty())
+                        paths.push_back(p);
+                }
+            }
+        }
+        if (paths.is_empty())
+            paths.push_back(String(resonance::kDefaultPhysicsMaterialSearchPath));
+    }
+
+    std::unordered_map<std::string, IPLMaterial> next;
+    ResourceLoader* loader = ResourceLoader::get_singleton();
+    for (int i = 0; i < paths.size(); ++i) {
+        String dir = paths[i];
+        if (dir.is_empty())
+            continue;
+        if (!dir.ends_with("/"))
+            dir += "/";
+
+        const PackedStringArray files = DirAccess::get_files_at(dir);
+        for (int f = 0; f < files.size(); ++f) {
+            const String file = files[f];
+            const String ext = file.get_extension().to_lower();
+            if (ext != "tres" && ext != "res")
+                continue;
+            if (!loader)
+                continue;
+            const Ref<Resource> res = loader->load(dir + file);
+            const Ref<ResonanceMaterial> mat = res;
+            if (mat.is_null())
+                continue;
+            next[material_name_key(file.get_basename())] = mat->get_ipl_material();
+        }
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(material_map_mutex_);
+        material_ipl_by_name_.swap(next);
+    }
+}
+
+bool ResonanceGodotPhysicsSceneBridge::try_lookup_ipl_by_name(const String& name, IPLMaterial& out) const {
+    const std::string key = material_name_key(name);
+    std::lock_guard<std::mutex> lock(material_map_mutex_);
+    const auto it = material_ipl_by_name_.find(key);
+    if (it == material_ipl_by_name_.end())
+        return false;
+    out = it->second;
+    return true;
+}
+
+IPLMaterial ResonanceGodotPhysicsSceneBridge::material_for_collider(Object* collider) const {
+    if (!collider)
+        return ipl_material_generic();
+
+    Ref<ResonanceMaterial> direct_mat;
+    const bool has_direct_meta = collider->has_meta(meta_material_resource());
+    if (has_direct_meta) {
+        const Variant v = collider->get_meta(meta_material_resource());
+        if (v.get_type() == Variant::OBJECT) {
+            if (ResonanceMaterial* rm = Object::cast_to<ResonanceMaterial>(v.operator Object*()))
+                direct_mat = Ref<ResonanceMaterial>(rm);
+        }
+    }
+    const bool has_direct_resource = direct_mat.is_valid();
+
+    String preset_name;
+    bool has_name_meta = false;
+    if (collider->has_meta(meta_material_preset())) {
+        const Variant v = collider->get_meta(meta_material_preset());
+        if (v.get_type() == Variant::STRING) {
+            preset_name = v;
+            has_name_meta = !preset_name.is_empty();
+        }
+    }
+
+    IPLMaterial named{};
+    const bool name_in_map = has_name_meta && try_lookup_ipl_by_name(preset_name, named);
+
+    switch (resonance::physics_material_lookup_path(has_direct_resource, has_name_meta, name_in_map)) {
+    case resonance::PhysicsMaterialLookupResult::DirectResource:
+        return direct_mat->get_ipl_material();
+    case resonance::PhysicsMaterialLookupResult::NameMap:
+        return named;
+    case resonance::PhysicsMaterialLookupResult::Fallback:
+    default:
+        return ipl_material_generic();
+    }
 }
 
 void IPLCALL ResonanceGodotPhysicsSceneBridge::closest_hit_callback(const IPLRay* ray, IPLfloat32 min_distance, IPLfloat32 max_distance,
@@ -204,13 +262,15 @@ void ResonanceGodotPhysicsSceneBridge::trace_closest(const IPLRay& ray, float mi
         return;
     dir.normalize();
 
-    const Vector3 from = origin + dir * min_distance;
+    // Same segment and hit-from-inside policy as trace_any / Custom ClosestHit+AnyHit.
+    const float t_from = resonance::custom_scene_occlusion_ray_start_t(min_distance, max_distance);
+    const Vector3 from = origin + dir * t_from;
     const Vector3 to = origin + dir * max_distance;
 
     Ref<PhysicsRayQueryParameters3D> params = PhysicsRayQueryParameters3D::create(from, to, collision_mask_, exclude_rids_);
     if (params.is_null())
         return;
-    params->set_hit_from_inside(true);
+    params->set_hit_from_inside(false);
 
     const Dictionary d = space->intersect_ray(params);
     if (d.is_empty())

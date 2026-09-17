@@ -143,11 +143,8 @@ void ResonanceAudioEffectInstance::_process(const void* src_buffer, AudioFrame* 
     int server_frame_size = srv->get_audio_frame_size();
 
     if (!initialized_processor) {
-        // Main-thread try_prewarm_processor / try_prewarm_all_live_instances only - no IPL create here.
-        for (int i = 0; i < frame_count; i++) {
-            dst_buffer[i].left = 0.0f;
-            dst_buffer[i].right = 0.0f;
-        }
+        // Main-thread try_prewarm_processor only - no IPL create here. Passthrough bus chain (no mixer wet yet).
+        copy_bus_input_to_dst(src_buffer, dst_buffer, frame_count);
         return;
     }
 
@@ -159,8 +156,16 @@ void ResonanceAudioEffectInstance::_process(const void* src_buffer, AudioFrame* 
         if (!s_frame_size_mismatch_warned) {
             s_frame_size_mismatch_warned = true;
             ResonanceLog::warn_cstr(
-                "Reverb bus frame_count != audio_frame_size. Use Auto (0) frame size or match Project Settings.");
+                "Reverb bus frame_count != server audio_frame_size. Auto reinit will snap to the host mix buffer.");
         }
+    }
+
+    if (ResonanceServer::ipl_audio_teardown_active()) {
+        for (int i = 0; i < frame_count; i++) {
+            dst_buffer[i].left = 0.0f;
+            dst_buffer[i].right = 0.0f;
+        }
+        return;
     }
 
     auto mixer_guard = srv->scoped_mixer_read();
@@ -228,7 +233,7 @@ void ResonanceAudioEffectInstance::_process(const void* src_buffer, AudioFrame* 
             rms_pre_gain = static_cast<float>(std::sqrt(std::max(0.0, mean_sq)));
         }
 
-        // Gain + sanitize. (No hard clip: Unity-style mixer chains typically clip/limit later in the engine.)
+        // Gain + sanitize. (No hard clip: host mixer chains typically clip/limit later.)
         double sum_sq_post = 0.0;
         for (int i = 0; i < frame_count; i++) {
             const float left = resonance::sanitize_audio_float(dst_buffer[i].left * gain);

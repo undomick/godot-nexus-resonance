@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <class name="ResonancePlayerConfig" inherits="Resource" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../class.xsd">
 	<brief_description>
-		Per-source configuration for ResonancePlayer. Link for reusable presets.
+		Per-source Steam Audio settings for ResonancePlayer. Save as .tres for reusable presets.
 	</brief_description>
 	<description>
-		Per-source configuration for ResonancePlayer. Assign from ResonancePlayer as player_config for reusable presets. Save as .tres for sharing across scenes. Falls back to member vars when null. pathing_probe_volume stays on the player node (scene-specific).
+		Assign to [member ResonancePlayer.player_config] for occlusion, distance, air absorption, directivity, reflections, pathing, and mix levels. Without a config the player is plain [AudioStreamPlayer3D]. Pathing volume stays on the player node ([member ResonancePlayer.pathing_probe_volume]).
 	</description>
 	<tutorials>
 	</tutorials>
@@ -13,209 +13,207 @@
 			<return type="StringName" />
 			<param index="0" name="global_fallback" type="StringName" />
 			<description>
-				Returns effective bus for Direct + Pathing. Use Global = global_fallback. Custom = bus_name or global_fallback if empty.
+				Effective bus for Direct + Pathing. Use Global = [param global_fallback]; Custom = [member bus_name] or fallback if empty.
 			</description>
 		</method>
 		<method name="get_reverb_bus_name_effective">
 			<return type="StringName" />
 			<param index="0" name="global_fallback" type="StringName" />
 			<description>
-				Returns effective reverb bus name. Use Global = global_fallback. Custom = reverb_bus_name or global_fallback if empty.
+				Effective reverb bus. Use Global = [param global_fallback]; Custom = [member reverb_bus_name] or fallback if empty.
+			</description>
+		</method>
+		<method name="get_editor_reverb_bus_override_warning">
+			<return type="String" />
+			<param index="0" name="owner" type="Node" />
+			<description>
+				Editor hint when Custom reverb bus is set under Convolution/TAN (split routing only affects Parametric/Hybrid). Empty string when OK.
 			</description>
 		</method>
 		<method name="create_default" qualifiers="static">
 			<return type="ResonancePlayerConfig" />
 			<description>
-				Creates default player config for sources without one assigned.
+				Creates a default config for sources without one assigned.
 			</description>
 		</method>
 	</methods>
 	<members>
-		<member name="min_distance" type="float" default="1.0">
-			Distance (meters) at which sound is at full volume on the direct playback path and in Phonon [code]distanceAttenuationModel[/code] when simulation distance attenuation is active.
-		</member>
-		<member name="max_distance" type="float" default="500.0">
-			Max distance (meters) for direct playback attenuation and for the simulation distance model (Linear/Curve rolloff end; Inverse cutoff in IR correction).
+		<member name="distance_attenuation" type="bool" default="true">
+			Master distance-attenuation switch. When off, Direct gain stays 1 and Phonon uses the default distance model on all slots; mode/min/max remain stored.
 		</member>
 		<member name="attenuation_mode" type="int" default="0">
-			Inverse (0) = Steam inverse distance on direct playback; simulation may apply [code]distanceAttenuationModel[/code] to reflections (IR correction) when enabled. Linear (1) and Curve (2) share rolloff on direct and in simulation. Disabled (3) = no distance rolloff on direct playback; simulation distance model off. Legacy [code]distance_attenuation_simulation_enabled = false[/code] with mode 0 is treated as Disabled (3). Reflection playback wet is not multiplied by this curve (Unity Spatialize parity); use [member reflections_mix_level] and baked wet occlusion only.
+			[code]0[/code] Inverse (1/d with [member min_distance], ignores [member max_distance]), [code]1[/code] Linear, [code]2[/code] Curve, [code]3[/code] Disabled. See [constant ResonancePlayer.ATTENUATION_INVERSE]. Same TYPE feeds Direct (Euclid), Pathing (path length), and Reflections (IR correction); Linear/Curve Reflections CALLBACK only when [member use_distance_curve_for_reflections].
+		</member>
+		<member name="min_distance" type="float" default="1.0">
+			Distance (m) at full volume. Inverse uses this as the 1/d knee; Linear/Curve use it as the near end of the rolloff.
+		</member>
+		<member name="max_distance" type="float" default="500.0">
+			Far end for Linear/Curve rolloff. Grayed out for Inverse and Disabled; Phonon InverseDistance has no max.
 		</member>
 		<member name="attenuation_curve" type="Curve" default="null">
-			Custom attenuation curve. Used when attenuation_mode is Curve.
+			Custom rolloff when [member attenuation_mode] is Curve.
+		</member>
+		<member name="use_distance_curve_for_reflections" type="bool" default="false">
+			When Linear/Curve: feed the Phonon CALLBACK model into Reflections IR correction. Default off. Pathing always uses CALLBACK for Linear/Curve on path length (no extra Direct mix multiply).
 		</member>
 		<member name="source_radius" type="float" default="1.0">
-			Radius of the sound source in meters.
+			Serialized occlusion radius (same as [member occlusion_radius]). Prefer [member occlusion_radius] in the Occlusion group; this key remains for .tres compatibility.
+		</member>
+		<member name="occlusion_radius" type="float" default="1.0">
+			Occlusion / volumetric sampling radius in meters. Aliases [member source_radius].
 		</member>
 		<member name="air_absorption_enabled" type="bool" default="true">
-			Enable distance-based air absorption.
+			Enable distance-based air absorption on the direct path.
 		</member>
 		<member name="air_absorption_input" type="int" default="0">
-			Air absorption source: Simulation (0) = physics-based, User Defined (1) = use low/mid/high sliders.
+			[code]0[/code] Simulation, [code]1[/code] User Defined (use low/mid/high).
 		</member>
 		<member name="air_absorption_low" type="float" default="1.0">
-			Low-band (≤800 Hz) EQ. 0 = fully attenuated, 1 = no change. Only when air_absorption_input is User Defined.
+			Low-band (&lt;=800 Hz) EQ when User Defined. [code]0[/code] = full attenuate, [code]1[/code] = unchanged.
 		</member>
 		<member name="air_absorption_mid" type="float" default="1.0">
-			Mid-band (800 Hz–8 kHz) EQ.
+			Mid-band (800 Hz-8 kHz) EQ when User Defined.
 		</member>
 		<member name="air_absorption_high" type="float" default="1.0">
-			High-band (≥8 kHz) EQ.
+			High-band (&gt;=8 kHz) EQ when User Defined.
 		</member>
 		<member name="bus_override" type="int" default="-1">
-			Bus for Direct + Pathing. -1 = Use Global (RuntimeConfig.bus), 0 = Custom (use bus_name).
+			Direct + Pathing bus: [code]-1[/code] Use Global ([member ResonanceRuntimeConfig.bus]), [code]0[/code] Custom ([member bus_name]).
 		</member>
 		<member name="bus_name" type="StringName" default="Master">
-			Bus for Direct + Pathing when bus_override is Custom. Must exist in Audio Bus Layout.
+			Bus when [member bus_override] is Custom. Must exist in the Audio Bus Layout.
 		</member>
 		<member name="reverb_bus_override" type="int" default="-1">
-			Reverb bus override. -1 = Use Global (RuntimeConfig.reverb_bus_name), 0 = Custom (use reverb_bus_name). For Parametric/Hybrid, this selects the split wet output bus when it differs from the dry bus. For Convolution/TAN, the Steam reflection mixer remains global; this field does not create an extra convolution mixer per source.
+			[code]-1[/code] Use Global, [code]0[/code] Custom. For Parametric/Hybrid selects the split wet bus; Convolution/TAN stay on the global reverb mixer.
 		</member>
 		<member name="reverb_bus_name" type="StringName" default="">
-			Bus for Parametric/Hybrid split wet when reverb_bus_override is Custom (must exist in Audio Bus Layout). When dry and wet buses differ, wet is played on this bus. Convolution/TAN wet stays on the runtime [member ResonanceRuntimeConfig.reverb_bus_name] bus; its Godot send follows [member ResonanceRuntimeConfig.bus].
+			Parametric/Hybrid split wet bus when Custom. Convolution/TAN wet stays on [member ResonanceRuntimeConfig.reverb_bus_name].
 		</member>
 		<member name="directivity_enabled" type="bool" default="false">
-			Enable directional sound source.
+			Enable directional emission pattern.
 		</member>
 		<member name="directivity_weight" type="float" default="0.0">
-			Shape: 0 = Omnidirectional, 1 = Dipole.
+			Dipole mix: [code]0[/code] omni, [code]1[/code] full dipole (Simulation Defined).
 		</member>
 		<member name="directivity_power" type="float" default="1.0">
-			Sharpness of the directivity pattern (0-4). Only when directivity_input is Simulation.
+			Pattern sharpness (0-4) when Simulation Defined.
 		</member>
 		<member name="directivity_input" type="int" default="0">
-			Directivity source: 0=Simulation (dipole), 1=User Defined (use directivity_value).
+			[code]0[/code] Simulation (dipole), [code]1[/code] User Defined ([member directivity_value]).
 		</member>
 		<member name="directivity_value" type="float" default="1.0">
-			Directivity attenuation (0-1). Only when directivity_input is User Defined.
+			Manual directivity (0-1) when User Defined.
 		</member>
 		<member name="playback_parameter_min_interval" type="float" default="0.0">
-			Minimum seconds between full playback-parameter updates. 0 = every frame (subject to other gating).
+			Minimum seconds between full playback-parameter updates. [code]0[/code] = every frame (subject to other gating).
 		</member>
 		<member name="playback_parameter_min_move" type="float" default="0.0">
-			Minimum source movement (meters) to trigger a full update when combined with playback_parameter_min_interval.
+			Minimum source movement (m) to trigger a full update with [member playback_parameter_min_interval].
 		</member>
 		<member name="playback_coeff_smoothing_time" type="float" default="0.0">
-			Exponential smoothing time constant (seconds) for simulation-derived occlusion and transmission. 0 = off. When greater than 0, playback parameters are pushed every frame while smoothing applies. Only Simulation Defined occlusion/transmission.
+			Smoothing time (s) for simulated occlusion/transmission. [code]0[/code] = off. Simulation Defined only.
+		</member>
+		<member name="reflections_enabled" type="bool" default="true">
+			Per-source reflections toggle. Still gated by [member reflections_mix_level] and [member ResonanceServer.output_reverb].
 		</member>
 		<member name="reflections_type" type="int" default="-1">
-			Reflections simulation: -1=Use Global (baked reverb), 0=Realtime, 1=Baked Reverb, 2=Baked Static Source, 3=Baked Static Listener.
-		</member>
-		<member name="current_baked_source" type="NodePath" default="NodePath()">
-			When reflections_type is Baked Static Source: node whose position was baked. Empty = use player position.
-		</member>
-		<member name="current_baked_listener" type="NodePath" default="NodePath()">
-			When reflections_type is Baked Static Listener: node (e.g. listener) whose position was baked. Empty = use active listener.
-		</member>
-		<member name="reflections_enabled" type="int" default="-1">
-			Enable reflections for this source. -1=Use Global, 0=Disabled, 1=Enabled.
+			[code]-1[/code] Use Global, [code]0[/code] Realtime, [code]1[/code] Baked Reverb, [code]2[/code] Static Source, [code]3[/code] Static Listener.
 		</member>
 		<member name="pathing_enabled_override" type="int" default="-1">
-			Enable pathing for this source. -1=Use Global, 0=Disabled, 1=Enabled.
-		</member>
-		<member name="apply_occlusion_to_baked_reflections_override" type="int" default="-1">
-			Per-source override for [member ResonanceRuntimeConfig.apply_occlusion_to_baked_reflections]. -1=Use Global, 0=Disabled, 1=Enabled. Enabled = dampen this source's baked REVERB wet input by its direct-path occlusion/transmission. Disabled = keep wet input unattenuated regardless of the global flag. See [code]docs/baked-reflections-and-outdoor-sources.md[/code] for workflow guidance.
-		</member>
-		<member name="reflections_sampling_mode_override" type="int" default="-1">
-			Per-source override for [member ResonanceRuntimeConfig.reflections_sampling_mode]. -1=Use Global, 0=Listener-centric (pick baked REVERB probe nearest the listener), 1=Source-centric (pick probe nearest the source; legacy behavior). Note: currently this only affects baked REVERB probe lookup; it does not change realtime reflection ray origin.
-		</member>
-		<member name="reverb_transmission_amount_input" type="int" default="0">
-			0=Use Global ([member ResonanceRuntimeConfig.reverb_transmission_amount]), 1=User Defined (use [member reverb_transmission_amount]). Only effective when the wet-path occlusion damping is on (global or [member apply_occlusion_to_baked_reflections_override]).
-		</member>
-		<member name="reverb_transmission_amount" type="float" default="1.0">
-			Per-source transmission damping on reverb (0-1). 0 = no damping, 1 = full damping. Only used when [member reverb_transmission_amount_input] is User Defined and the wet-path occlusion damping is on.
+			[code]-1[/code] Use Global, [code]0[/code] Disabled, [code]1[/code] Enabled.
 		</member>
 		<member name="simulation_occlusion_enabled" type="bool" default="true">
-			When [code]false[/code], occlusion rays are not simulated; use User Defined [member occlusion_input] and [member occlusion_value] for manual occlusion.
+			When false, skip occlusion rays; use User Defined [member occlusion_value].
 		</member>
 		<member name="occlusion_input" type="int" default="0">
-			Occlusion source: 0=Simulation (physics), 1=User Defined (use occlusion_value).
+			[code]0[/code] Simulation, [code]1[/code] User Defined ([member occlusion_value]).
 		</member>
 		<member name="occlusion_value" type="float" default="1.0">
-			Occlusion attenuation (0-1). Only when occlusion_input is User Defined.
+			Manual occlusion (0-1) when User Defined.
 		</member>
 		<member name="occlusion_type_override" type="int" default="2">
-			[code]2[/code] = Use Global ([member ResonanceRuntimeConfig.occlusion_type]). [code]0[/code] = Raycast. [code]1[/code] = Volumetric ([member occlusion_samples]). Applies when using simulation occlusion. Non-negative values keep the Godot inspector enum reliable; older resources may still store [code]-1[/code] for Use Global (normalized at load).
+			[code]2[/code] Use Global, [code]0[/code] Raycast, [code]1[/code] Volumetric ([member occlusion_samples]).
 		</member>
 		<member name="occlusion_samples" type="int" default="64">
-			Rays per source for volumetric occlusion (1–64, Steam Audio [code]numOcclusionSamples[/code]). Inspector slider is editable only when [member occlusion_type_override] is **Volumetric** ([code]1[/code]); otherwise use runtime/global occlusion type without per-source sample count in the UI. Higher = more stable occlusion fraction near boundaries.
+			Volumetric occlusion rays (1-64). Inspector editable only when override is Volumetric.
 		</member>
 		<member name="simulation_transmission_enabled" type="bool" default="true">
-			When [code]false[/code], transmission through geometry is not simulated; use User Defined [member transmission_input] for manual bands.
+			When false, skip transmission simulation; use User Defined bands.
 		</member>
 		<member name="transmission_input" type="int" default="0">
-			Transmission source: 0=Simulation, 1=User Defined (use transmission low/mid/high).
+			[code]0[/code] Simulation, [code]1[/code] User Defined (low/mid/high).
 		</member>
 		<member name="transmission_low" type="float" default="1.0">
-			Low-band transmission (0-1). Only when transmission_input is User Defined.
+			Low-band transmission (0-1) when User Defined.
 		</member>
 		<member name="transmission_mid" type="float" default="1.0">
-			Mid-band transmission (0-1). Only when transmission_input is User Defined.
+			Mid-band transmission (0-1) when User Defined.
 		</member>
 		<member name="transmission_high" type="float" default="1.0">
-			High-band transmission (0-1). Only when transmission_input is User Defined.
+			High-band transmission (0-1) when User Defined.
 		</member>
 		<member name="transmission_type_override" type="int" default="-1">
-			-1 = use runtime transmission type. 0 = frequency-independent. 1 = frequency-dependent (3-band), for the direct effect only.
+			[code]-1[/code] Use Global, [code]0[/code] frequency-independent, [code]1[/code] 3-band (direct effect).
 		</member>
 		<member name="max_transmission_surfaces_override" type="int" default="0">
-			[code]0[/code] = Use Global ([member ResonanceRuntimeConfig.max_transmission_surfaces]), default. [code]1[/code] = User Defined: use [member max_transmission_surfaces]. Older resources may still have [code]-1[/code] for Use Global; the native player normalizes that to [code]0[/code].
+			[code]0[/code] Use Global, [code]1[/code] User Defined ([member max_transmission_surfaces]).
 		</member>
-		<member name="max_transmission_surfaces" type="int" default="16">
-			Max surfaces along the transmission path from listener (1–256; Steam Audio [code]numTransmissionRays[/code]). Inspector slider is editable only when [member max_transmission_surfaces_override] is User Defined ([code]1[/code]). Limits depth of stacked surfaces on the path, not lateral blending between materials at an edge.
+		<member name="max_transmission_surfaces" type="int" default="1">
+			Max surfaces on the transmission path (1-256). Higher values multiply hits and can silence quickly.
 		</member>
 		<member name="path_validation_override" type="int" default="-1">
-			Path validation (dynamic occlusion of baked paths). [code]-1[/code] = Use Global ([member ResonanceRuntimeConfig.path_validation_enabled]). [code]0[/code] = Disabled. [code]1[/code] = Enabled. Costs scale with [member ResonanceRuntimeConfig.pathing_num_vis_samples] and ray tracer; tune [member ResonanceRuntimeConfig.pathing_sim_interval] (and [member ResonanceRuntimeConfig.reflections_sim_interval]) and use [method ResonanceServer.get_simulation_worker_timing] for [code]us_run_pathing[/code].
+			[code]-1[/code] Use Global, [code]0[/code] Off, [code]1[/code] On. Dynamic occlusion of baked paths; tune [member ResonanceRuntimeConfig.pathing_sim_interval].
 		</member>
 		<member name="find_alternate_paths_override" type="int" default="-1">
-			Find alternate paths when a baked path is occluded. [code]-1[/code] = Use Global ([member ResonanceRuntimeConfig.find_alternate_paths]). [code]0[/code] = Disabled. [code]1[/code] = Enabled. Only effective when path validation is on for this source. Very CPU-heavy - tune [member ResonanceRuntimeConfig.pathing_sim_interval] and [member ResonanceRuntimeConfig.pathing_num_vis_samples] when enabling.
+			[code]-1[/code] Use Global, [code]0[/code] Off, [code]1[/code] On. Only with path validation; very CPU-heavy.
 		</member>
 		<member name="master_mix_level" type="float" default="1.0">
-			Scales [member direct_mix_level], [member reflections_mix_level], and [member pathing_mix_level] together. Use when the stream has no reliable volume control (e.g. [AudioStreamSynchronized]).
+			Scales direct, reflections, and pathing mix together (0-10).
 		</member>
 		<member name="direct_mix_level" type="float" default="1.0">
-			Volume of the direct sound path (0-10).
+			Direct path volume (0-10).
 		</member>
 		<member name="reflections_mix_level" type="float" default="1.0">
-			Volume of reflections and reverb (0-10).
+			Reflections / reverb volume (0-10).
 		</member>
 		<member name="pathing_mix_level" type="float" default="1.0">
-			Volume of pathing (0-10).
+			Pathing volume (0-10).
 		</member>
 		<member name="reflections_eq_low" type="float" default="1.0">
-			Per-source EQ multiplier for low band.
+			Per-source low-band EQ for hybrid/parametric reflections.
 		</member>
 		<member name="reflections_eq_mid" type="float" default="1.0">
-			Per-source EQ multiplier for mid band.
+			Per-source mid-band EQ for hybrid/parametric reflections.
 		</member>
 		<member name="reflections_eq_high" type="float" default="1.0">
-			Per-source EQ multiplier for high band.
+			Per-source high-band EQ for hybrid/parametric reflections.
 		</member>
 		<member name="reflections_delay" type="int" default="-1">
-			Samples before parametric part starts. -1 = use simulation value.
+			Samples before parametric part starts. [code]-1[/code] = simulation value.
 		</member>
 		<member name="direct_binaural_override" type="int" default="-1">
-			Per-source override for [member ResonanceRuntimeConfig.direct_binaural]. -1=Use Global, 0=Disabled (panning on dry path), 1=Enabled (force HRTF).
+			[code]-1[/code] Use Global, [code]0[/code] panning, [code]1[/code] HRTF on dry path.
 		</member>
 		<member name="reverb_binaural_override" type="int" default="-1">
-			Per-source override for [member ResonanceRuntimeConfig.reverb_binaural] (reflection / mixer wet Ambisonics decode). -1=Use Global, 0=Disabled, 1=Enabled.
+			Local reflection wet HOA HRTF: [code]-1[/code] Use Global, [code]0[/code]/[code]1[/code]. Does not affect the shared Convolution/TAN reverb bus.
 		</member>
 		<member name="pathing_binaural_override" type="int" default="-1">
-			Per-source override for [member ResonanceRuntimeConfig.pathing_binaural]. -1=Use Global, 0=Disabled (less CPU), 1=Enabled.
+			[code]-1[/code] Use Global, [code]0[/code] Off, [code]1[/code] On for pathing HRTF.
 		</member>
 		<member name="spatial_blend" type="float" default="1.0">
-			Blends output between 2D (0, stereo panning without HRTF on the dry path) and full 3D spatial audio (1). Intermediate values mix both (e.g. UI vs world-attached sources).
+			[code]0[/code] = 2D-ish dry pan, [code]1[/code] = full 3D spatial. Intermediate mixes both.
 		</member>
 		<member name="use_ambisonics_encode" type="bool" default="false">
-			Encode point source to Ambisonics before binaural.
+			Encode the point source to Ambisonics before binaural.
 		</member>
 		<member name="hrtf_interpolation_override" type="int" default="-1">
-			-1 = use [member ResonanceRuntimeConfig.hrtf_interpolation_bilinear]. 0 = nearest HRTF (faster). 1 = bilinear (smoother motion).
+			[code]-1[/code] Use Global, [code]0[/code] nearest, [code]1[/code] bilinear.
 		</member>
 		<member name="perspective_correction_override" type="int" default="-1">
-			Per-source perspective correction. -1 = use global, 0 = disabled, 1 = enabled.
+			[code]-1[/code] Use Global, [code]0[/code] Off, [code]1[/code] On (third-person offset).
 		</member>
 		<member name="perspective_factor" type="float" default="1.0">
-			Factor for on-screen position mapping (0.5–2.0). Used when override is Enabled.
+			On-screen mapping factor (0.5-2.0) when perspective override is Enabled.
 		</member>
 	</members>
 </class>

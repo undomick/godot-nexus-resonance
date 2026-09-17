@@ -1,11 +1,13 @@
 #include "resonance_scene_manager.h"
 #include "ray_trace_debug_context.h"
 #include "resonance_constants.h"
+#include "resonance_export_transform.h"
 #include "resonance_geometry.h"
 #include "resonance_geometry_asset.h"
 #include "resonance_ipl_guard.h"
 #include "resonance_log.h"
 #include "resonance_material.h"
+#include "resonance_mesh_ipl_godot.h"
 #include "resonance_static_export_policy.h"
 #include "resonance_static_scene.h"
 #include "resonance_utils.h"
@@ -130,7 +132,7 @@ static void collect_mesh_instances_from_children(Node* from, std::vector<MeshIns
             continue; // Don't recurse; that geometry handles itself
         if (child->is_class("MeshInstance3D")) {
             MeshInstance3D* mi = Object::cast_to<MeshInstance3D>(child);
-            if (mi && mi->is_visible_in_tree())
+            if (mi && ResonanceUtils::node3d_visible_for_export(mi))
                 out.push_back(mi);
         }
         collect_mesh_instances_from_children(child, out);
@@ -177,54 +179,13 @@ void ResonanceSceneManager::collect_static_mesh_data(Node* scene_root, std::vect
     };
 
     auto add_mesh_to_output = [&](const Ref<Mesh>& mesh, const Transform3D& xform, int32_t mat_index) {
-        if (mesh.is_null())
-            return;
-        for (int i = 0; i < mesh->get_surface_count(); i++) {
-            Array arrays = mesh->surface_get_arrays(i);
-            if (arrays.size() != Mesh::ARRAY_MAX)
-                continue;
-
-            PackedVector3Array vertices = arrays[Mesh::ARRAY_VERTEX];
-            PackedInt32Array indices = arrays[Mesh::ARRAY_INDEX];
-
-            if (vertices.size() < 3)
-                continue;
-
-            size_t v_offset = out_vertices.size();
-
-            for (int v = 0; v < vertices.size(); v++) {
-                Vector3 vec = xform.xform(vertices[v]);
-                out_vertices.push_back({vec.x, vec.y, vec.z});
-            }
-
-            if (!indices.is_empty()) {
-                for (int idx = 0; idx < indices.size(); idx += 3) {
-                    if (idx + 2 >= (int)indices.size())
-                        break;
-                    out_triangles.push_back({(int)indices[idx] + (int)v_offset,
-                                             (int)indices[idx + 1] + (int)v_offset,
-                                             (int)indices[idx + 2] + (int)v_offset});
-                    if (out_mat_indices)
-                        out_mat_indices->push_back(mat_index);
-                }
-            } else {
-                for (int v = 0; v < vertices.size(); v += 3) {
-                    if (v + 2 >= vertices.size())
-                        break;
-                    out_triangles.push_back({(int)v + (int)v_offset,
-                                             (int)v + 1 + (int)v_offset,
-                                             (int)v + 2 + (int)v_offset});
-                    if (out_mat_indices)
-                        out_mat_indices->push_back(mat_index);
-                }
-            }
-        }
+        append_godot_mesh_to_ipl(mesh, xform, out_vertices, out_triangles, out_mat_indices, mat_index);
     };
 
     for (ResonanceGeometry* geom : static_geoms) {
         Node* parent = geom->get_parent();
         Node3D* node3d = Object::cast_to<Node3D>(parent);
-        if (!node3d || !node3d->is_visible_in_tree())
+        if (!node3d || !ResonanceUtils::node3d_visible_for_export(node3d))
             continue;
 
         int32_t mat_index = (out_mat_indices && out_materials) ? material_index_for_geom(geom) : 0;
@@ -241,7 +202,7 @@ void ResonanceSceneManager::collect_static_mesh_data(Node* scene_root, std::vect
             for (MeshInstance3D* mi : child_meshes) {
                 Ref<Mesh> m = mi->get_mesh();
                 if (m.is_valid()) {
-                    add_mesh_to_output(m, mi->get_global_transform(), mat_index);
+                    add_mesh_to_output(m, ResonanceUtils::node3d_export_transform(mi), mat_index);
                 }
             }
         }
@@ -591,6 +552,7 @@ void ResonanceSceneManager::clear_static_scenes(IPLScene scene, RayTraceDebugCon
         }
     }
     state.meshes.clear();
+    const bool had_instanced = !state.instanced_meshes.empty();
     for (IPLInstancedMesh& im : state.instanced_meshes) {
         if (im) {
             iplInstancedMeshRemove(im, scene);
@@ -599,6 +561,9 @@ void ResonanceSceneManager::clear_static_scenes(IPLScene scene, RayTraceDebugCon
     }
     state.instanced_meshes.clear();
     state.instanced_transforms.clear();
+    // Phonon/Embree: commit parent after InstancedMeshRemove before sub-scene mesh release.
+    if (had_instanced && scene)
+        iplSceneCommit(scene);
     if (state.meshes_in_sub) {
         const size_t n = state.meshes_in_sub->size();
         for (size_t i = 0; i < n; i++) {
@@ -628,9 +593,10 @@ void ResonanceSceneManager::clear_static_scenes(IPLScene scene, RayTraceDebugCon
         state.scene_dirty->store(true);
 }
 
-Error ResonanceSceneManager::export_static_scene_to_asset(Node* scene_root, const String& p_path) {
+Ref<ResonanceGeometryAsset> ResonanceSceneManager::export_static_scene_to_geometry_asset(Node* scene_root) {
+    Ref<ResonanceGeometryAsset> empty;
     if (!scene_root)
-        return ERR_INVALID_PARAMETER;
+        return empty;
 
     std::vector<IPLVector3> ipl_vertices;
     std::vector<IPLTriangle> ipl_triangles;
@@ -640,14 +606,14 @@ Error ResonanceSceneManager::export_static_scene_to_asset(Node* scene_root, cons
 
     if (ipl_triangles.empty()) {
         UtilityFunctions::push_warning("Nexus Resonance: No valid mesh data in static geometry.");
-        return ERR_INVALID_PARAMETER;
+        return empty;
     }
 
     IPLContext export_context = nullptr;
     IPLScene temp_scene = nullptr;
     IPLStaticMesh temp_mesh = nullptr;
     if (!_build_temp_scene_for_export(ipl_vertices, ipl_triangles, ipl_mat_indices, ipl_materials, &export_context, &temp_scene, &temp_mesh)) {
-        return ERR_CANT_CREATE;
+        return empty;
     }
 
     IPLSerializedObjectSettings serial_settings{};
@@ -656,7 +622,7 @@ Error ResonanceSceneManager::export_static_scene_to_asset(Node* scene_root, cons
         iplStaticMeshRelease(&temp_mesh);
         iplSceneRelease(&temp_scene);
         iplContextRelease(&export_context);
-        return ERR_CANT_CREATE;
+        return empty;
     }
 
     iplStaticMeshSave(temp_mesh, serial_obj);
@@ -668,7 +634,7 @@ Error ResonanceSceneManager::export_static_scene_to_asset(Node* scene_root, cons
         iplStaticMeshRelease(&temp_mesh);
         iplSceneRelease(&temp_scene);
         iplContextRelease(&export_context);
-        return ERR_CANT_CREATE;
+        return empty;
     }
 
     Ref<ResonanceGeometryAsset> asset;
@@ -697,6 +663,16 @@ Error ResonanceSceneManager::export_static_scene_to_asset(Node* scene_root, cons
     iplStaticMeshRelease(&temp_mesh);
     iplSceneRelease(&temp_scene);
     iplContextRelease(&export_context);
+    return asset;
+}
+
+Error ResonanceSceneManager::export_static_scene_to_asset(Node* scene_root, const String& p_path) {
+    if (!scene_root)
+        return ERR_INVALID_PARAMETER;
+
+    Ref<ResonanceGeometryAsset> asset = export_static_scene_to_geometry_asset(scene_root);
+    if (!asset.is_valid())
+        return ERR_INVALID_PARAMETER;
 
     String path = p_path;
     if (!path.ends_with(".tres") && !path.ends_with(".res")) {
@@ -726,7 +702,7 @@ Error ResonanceSceneManager::export_static_scene_to_asset(Node* scene_root, cons
         return rename_err;
     }
     if (Engine::get_singleton() && Engine::get_singleton()->is_editor_hint()) {
-        UtilityFunctions::print_rich("[color=cyan]Nexus Resonance:[/color] Static scene exported to " + path + " (" + String::num((int)ipl_triangles.size()) + " triangles).");
+        UtilityFunctions::print_rich("[color=cyan]Nexus Resonance:[/color] Static scene exported to " + path + " (" + String::num(asset->get_triangle_count()) + " triangles).");
     }
     return OK;
 }

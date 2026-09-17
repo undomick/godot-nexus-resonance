@@ -1,5 +1,6 @@
 #include "../lib/catch2/single_include/catch2/catch.hpp"
 #include "../resonance_math.h"
+#include "../resonance_playback_attenuation_policy.h"
 #include <cmath>
 #include <limits>
 
@@ -116,10 +117,17 @@ TEST_CASE("reverb_ir_size_samples nominal", "[resonance_math]") {
     REQUIRE(reverb_ir_size_samples(44100, 1.0f) == 44100);
 }
 
+TEST_CASE("reflection_effect_create_ir_size caps to convolution_ir_max_samples", "[resonance_math]") {
+    REQUIRE(reflection_effect_create_ir_size(48000, 2.0f, 0) == 96000);
+    REQUIRE(reflection_effect_create_ir_size(48000, 2.0f, 512) == 512);
+    REQUIRE(reflection_effect_create_ir_size(48000, 2.0f, 200000) == 96000);
+    REQUIRE(reflection_effect_create_ir_size(48000, 0.0f, 512) == 1);
+}
+
 // --- Pathing (ResonancePathProcessor + ResonancePlayer) ---
-// Steam Audio Unity/FMOD spatialize: applyVolumeRamp(prevPathingMixLevel, pathingMixLevel) on mono
-// after downmix, then iplPathEffectApply; output is iplAudioBufferMix at unity — no extra multiply by
-// reverb_pathing_attenuation on the wet (distance is already in path SH from the simulation).
+// Steam Audio spatialize (Valve spatialize_effect.cpp): applyVolumeRamp(prevPathingMixLevel,
+// pathingMixLevel) on mono after downmix, then iplPathEffectApply; no extra multiply by Direct distanceAttenuation
+// on the wet (path SH includes distanceAttenuationModel at RunPathing in path_simulator.cpp).
 
 TEST_CASE("pathing: mono input ramp matches apply_volume_ramp step", "[volume_ramp][pathing]") {
     const int n = 8;
@@ -181,14 +189,12 @@ TEST_CASE("apply_volume_ramp_and_sanitize constant gain nan to zero", "[volume_r
     REQUIRE(buf[2] == Approx(1.5f));
 }
 
-TEST_CASE("pathing: wet add unity not times reverb_pathing_attenuation", "[pathing]") {
-    // Regression: path stereo used to be scaled by reverb_pathing_attenuation * pathing_mix per sample.
-    // Steam Audio Unity/FMOD spatialize mixes path effect output at unity (distance is in SH coeffs).
-    const float att = 0.2f;
+TEST_CASE("pathing: wet add unity not times direct playback attenuation", "[pathing][path-h01][steam]") {
+    const float direct_playback_att = 0.2f;
     const float path_out_sample = 1.0f;
-    const float legacy_wet = att * path_out_sample;
-    const float reference_wet = 1.0f * path_out_sample;
-    REQUIRE(legacy_wet == Approx(0.2f));
-    REQUIRE(reference_wet == Approx(1.0f));
-    REQUIRE(legacy_wet != Approx(reference_wet));
+    const float wrong_wet = direct_playback_att * path_out_sample;
+    const float steam_wet = pathing_wet_playback_mix_level(1.0f) * path_out_sample;
+    REQUIRE(steam_wet == Approx(1.0f));
+    REQUIRE(wrong_wet == Approx(0.2f));
+    REQUIRE(steam_wet != Approx(wrong_wet));
 }

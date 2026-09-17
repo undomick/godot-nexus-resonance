@@ -1,5 +1,4 @@
 extends Object
-class_name ResonanceProbeVolumeDefaults
 
 ## Shared editor defaults for ResonanceProbeVolume (probe_data + bake_config).
 ## Used by the inspector when _ready / ENTER_TREE is not enough at node creation time.

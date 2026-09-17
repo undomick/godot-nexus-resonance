@@ -8,6 +8,7 @@
 		For Convolution reflection type, it pulls accumulated Ambisonics wet from the Steam Audio reflection mixer, decodes it with the listener pose (same DSP tick as [code]iplReflectionMixerApply[/code]), and adds it to the bus input buffer (prior effects / sends on this bus).
 		For Parametric/Hybrid, reverb is applied per-source in [ResonancePlayer]; when dry and wet buses differ, wet is routed to a separate child player on the effective reverb bus. With no reflection mixer, this effect passes bus audio through unchanged.
 		Adjust [member gain_db] for reverb bus volume. After this bus, Godot routes output to the same target as [method ResonanceRuntimeConfig.get_bus_effective] (runtime [member ResonanceRuntimeConfig.bus]).
+		Until [code]MixerProcessor[/code] prewarm completes on the main thread (for example right after engine reinit), the effect passes the bus input through unchanged (activator / sends only; shared convolution wet is not mixed yet). This matches the no-mixer passthrough path and avoids a silent bus during prewarm.
 	</description>
 	<tutorials>
 	</tutorials>

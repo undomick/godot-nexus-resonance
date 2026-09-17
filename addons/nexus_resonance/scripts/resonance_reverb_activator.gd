@@ -1,7 +1,10 @@
 extends RefCounted
-class_name ResonanceReverbActivator
 
-## Feeds silence into the reverb bus via [AudioStreamGenerator] so the effect stays active ([ResonanceRuntime]).
+## Feeds silence into the runtime reverb bus via [AudioStreamGenerator] so [ResonanceAudioEffect] stays active ([ResonanceRuntime]).
+## Uses [method ResonanceRuntimeBus.get_reverb_bus_name] only (global [member ResonanceRuntimeConfig.reverb_bus_name]).
+## Per-player custom reverb buses from [ResonancePlayerConfig] are not driven here; Parametric/Hybrid split wet needs a [ResonanceReverbOutput] child on that bus.
+
+const ResonanceRuntimeBus = preload("res://addons/nexus_resonance/scripts/resonance_runtime_bus.gd")
 
 var _player: AudioStreamPlayer
 var _frames_pushed: int = 0

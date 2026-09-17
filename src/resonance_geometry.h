@@ -37,6 +37,10 @@ class ResonanceGeometry : public Node3D {
     int triangle_count = 0;
     int debug_mesh_id = -1; // RayTraceDebugContext mesh id for unregister
 
+    /// Per-instance transform coalesce (Geo-01); avoids global round-robin starvation across movers.
+    uint32_t transform_coalesce_counter_ = 0;
+    bool consume_transform_coalesce_tick();
+
     /// When _create_meshes runs before ResonanceServer::init_audio_engine, retry on later frames.
     static constexpr int kMaxServerInitRetries = 64;
     bool server_init_retry_pending_ = false;
@@ -46,10 +50,13 @@ class ResonanceGeometry : public Node3D {
     void _schedule_retry_create_meshes_when_server_ready();
     void _deferred_retry_create_meshes();
     void _clear_meshes();
+    /// Swap material on existing IPLStaticMesh handles (iplStaticMeshSetMaterial) without rebuild.
+    void _update_material_inplace();
     void _propagate_material_and_geometry_to_descendants();
     /// Internal: cleanup without locking. Caller must hold simulation lock when touching scene.
     /// When notify_server is false, triangle accounting is left to the caller (rebuild net-notify).
-    void _clear_meshes_impl(bool notify_server = true);
+    /// When for_shutdown is true, skip per-node global iplSceneCommit (server releases the scene once).
+    void _clear_meshes_impl(bool notify_server = true, bool for_shutdown = false);
     void _update_dynamic_transform();
     /// Invalidate caches. When include_static_scene_query is false, preserve root static-scene lookup (still valid after IPL teardown only).
     void _invalidate_topology_caches(bool include_static_scene_query = true);

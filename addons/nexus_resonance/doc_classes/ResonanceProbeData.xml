@@ -4,9 +4,8 @@
 		Resource storing baked Steam Audio probe batch data.
 	</brief_description>
 	<description>
-		Holds the serialized probe batch from a bake (reflections, optional pathing, optional static layers). Assign to [member ResonanceProbeVolume.probe_data]. Created and updated by the bake pipeline; save the scene or external resource after baking.
-		Default external path pattern: [code]{{bake_output}}/batches/&lt;scene&gt;_&lt;node_path&gt;_batch.tres[/code] or [code].res[/code] (Project Settings -> Nexus -> Resonance -> Bake -> Default output directory; Export -> Probe data format).
-		[member baked_reflection_type] must be compatible with [member ResonanceRuntimeConfig.reflection_type] at runtime. When runtime pathing is on, [member pathing_params_hash] must be non-zero.
+		Serialized probe batch (reflections, optional pathing, optional static layers). Assign to [member ResonanceProbeVolume.probe_data]. Written by the bake pipeline; save the scene or resource after baking. Default external paths come from Project Settings (Nexus Resonance Bake output / format).
+		[member baked_reflection_type] must match [member ResonanceRuntimeConfig.reflection_type] on [url=#ResonanceRuntimeConfig]ResonanceRuntimeConfig[/url] at runtime (TAN accepts Convolution). When [member baked_ambisonics_order] differs from the order resolved via [url=#ResonanceBakeConfig]ResonanceBakeConfig[/url] / RuntimeConfig, a warning is printed; playback uses [code]min(baked, realtime)[/code]. Pathing without a pathing layer is skipped; reflections still load.
 	</description>
 	<tutorials>
 	</tutorials>
@@ -14,7 +13,7 @@
 		<method name="get_bake_layer_info">
 			<return type="Dictionary" />
 			<description>
-				Editor/debug summary of baked layers. Keys include [code]total_size[/code] (int) and [code]layers[/code] (array of per-layer info).
+				Editor/debug summary of baked layers ([code]total_size[/code], [code]layers[/code]).
 			</description>
 		</method>
 	</methods>
@@ -26,7 +25,7 @@
 			World-space probe positions stored at bake time for editor visualization.
 		</member>
 		<member name="bake_params_hash" type="int" setter="set_bake_params_hash" getter="get_bake_params_hash">
-			Hash of volume layout and reflection bake parameters. Compared with [method ResonanceProbeVolume.get_bake_params_hash] to detect outdated reflection data.
+			Hash of volume layout and reflection bake parameters. Compared with [method ResonanceProbeVolume.get_bake_params_hash] for outdated detection.
 		</member>
 		<member name="pathing_params_hash" type="int" setter="set_pathing_params_hash" getter="get_pathing_params_hash">
 			Hash of pathing bake parameters. 0 when pathing was not baked.
@@ -35,13 +34,16 @@
 			Hash of the static scene used for the last bake. 0 when not recorded.
 		</member>
 		<member name="static_source_params_hash" type="int" setter="set_static_source_params_hash" getter="get_static_source_params_hash">
-			Hash of static source bake inputs ([member ResonanceProbeVolume.bake_sources], config). 0 when no static source layer.
+			Hash of static source bake inputs. 0 when no static source layer.
 		</member>
 		<member name="static_listener_params_hash" type="int" setter="set_static_listener_params_hash" getter="get_static_listener_params_hash">
-			Hash of static listener bake inputs ([member ResonanceProbeVolume.bake_listeners], config). 0 when no static listener layer.
+			Hash of static listener bake inputs. 0 when no static listener layer.
 		</member>
 		<member name="baked_reflection_type" type="int" setter="set_baked_reflection_type" getter="get_baked_reflection_type">
-			Baked reverb algorithm: Convolution (0), Parametric (1), Hybrid (2). -1 = legacy (compatible with any runtime reflection type).
+			Baked reverb algorithm: Convolution (0), Parametric (1), Hybrid (2). -1 = legacy (compatible with any runtime type).
+		</member>
+		<member name="baked_ambisonics_order" type="int" setter="set_baked_ambisonics_order" getter="get_baked_ambisonics_order">
+			HOA order used when baking convolution IRs (1-3). -1 = legacy (treated as 1). Mismatch vs resolved Bake Ambisonic Order warns; playback uses [code]min(baked, realtime)[/code].
 		</member>
 	</members>
 </class>

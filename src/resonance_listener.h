@@ -2,12 +2,8 @@
 #define RESONANCE_LISTENER_H
 
 #include <godot_cpp/classes/camera3d.hpp>
-#include <godot_cpp/classes/immediate_mesh.hpp>
-#include <godot_cpp/classes/mesh_instance3d.hpp>
 #include <godot_cpp/classes/node3d.hpp>
-#include <godot_cpp/classes/standard_material3d.hpp>
 #include <godot_cpp/classes/viewport.hpp>
-#include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/typed_array.hpp>
 
 namespace godot {
@@ -29,6 +25,9 @@ class ResonanceListener : public Node3D {
     /// Active listeners under the viewport camera; call before ResonanceServer::tick.
     static void sync_viewport_listeners_to_server(Viewport* vp, const TypedArray<Node>& listener_nodes);
 
+    /// Pose + validity from the viewport camera (Lis-01 / no-driver fallback).
+    static void push_camera_fallback_listener_to_server(Camera3D* cam, ResonanceServer* server);
+
     void _enter_tree() override;
     void _exit_tree() override;
     void _process(double delta) override;
@@ -42,16 +41,8 @@ class ResonanceListener : public Node3D {
 
     bool _listener_sync_uses_physics() const;
     void _apply_process_mode_for_tracer();
-    void _push_listener_pose_if_active(Camera3D* cam);
-    void _sync_reflection_debug_viz(ResonanceServer* server);
+    bool _push_listener_pose_if_active(Camera3D* cam);
     void _sync_listener_tick(double delta, bool use_physics_frame);
-
-    void _ensure_reflection_viz();
-    void _draw_reflection_rays(const Array& segments);
-
-    MeshInstance3D* reflection_mesh_instance = nullptr;
-    Ref<ImmediateMesh> reflection_immediate_mesh;
-    Ref<StandardMaterial3D> reflection_material;
 };
 
 } // namespace godot

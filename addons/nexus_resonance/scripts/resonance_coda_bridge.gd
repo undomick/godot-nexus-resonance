@@ -1,5 +1,4 @@
 extends RefCounted
-class_name ResonanceCodaBridge
 
 ## Connects Nexus Coda event voices to ResonanceServer source handles (Option A).
 ## Applies occlusion/transmission/distance as volume_db on Coda's AudioStreamPlayer pool.

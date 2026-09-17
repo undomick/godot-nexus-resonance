@@ -1,11 +1,12 @@
 #include "resonance_listener.h"
 #include "resonance_constants.h"
+#include "resonance_listener_sync_policy.h"
+#include "resonance_runtime.h"
 #include "resonance_server.h"
 #include <godot_cpp/classes/camera3d.hpp>
 #include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/viewport.hpp>
 #include <godot_cpp/core/class_db.hpp>
-#include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/transform3d.hpp>
 #include <godot_cpp/variant/vector3.hpp>
 using namespace godot;
@@ -18,7 +19,6 @@ void ResonanceListener::_enter_tree() {
 }
 
 void ResonanceListener::_exit_tree() {
-    reflection_mesh_instance = nullptr;
     remove_from_group("resonance_listener");
 }
 
@@ -39,16 +39,14 @@ void ResonanceListener::_apply_process_mode_for_tracer() {
     set_physics_process(custom);
 }
 
-void ResonanceListener::_push_listener_pose_if_active(Camera3D* cam) {
+bool ResonanceListener::_push_listener_pose_if_active(Camera3D* cam) {
     ResonanceServer* server = ResonanceServer::get_singleton();
     if (!server || !server->is_initialized())
-        return;
+        return false;
 
     const bool drives_server = cam && cam->is_ancestor_of(this);
-    if (!drives_server) {
-        server->set_listener_valid(false);
-        return;
-    }
+    if (!resonance::listener_node_should_publish_validity(drives_server))
+        return false;
 
     server->set_listener_valid(listener_valid);
 
@@ -57,6 +55,15 @@ void ResonanceListener::_push_listener_pose_if_active(Camera3D* cam) {
     Vector3 forward = -gt.basis.get_column(2);
     Vector3 up = gt.basis.get_column(1);
     server->update_listener(position, forward, up);
+    return true;
+}
+
+void ResonanceListener::push_camera_fallback_listener_to_server(Camera3D* cam, ResonanceServer* server) {
+    if (!cam || !server || !server->is_initialized())
+        return;
+    const Transform3D gt = cam->get_global_transform();
+    server->update_listener(cam->get_global_position(), -gt.basis.get_column(2), gt.basis.get_column(1));
+    server->set_listener_valid(resonance::camera_fallback_listener_validity());
 }
 
 void ResonanceListener::sync_viewport_listeners_to_server(Viewport* vp, const TypedArray<Node>& listener_nodes) {
@@ -66,30 +73,19 @@ void ResonanceListener::sync_viewport_listeners_to_server(Viewport* vp, const Ty
     if (!server || !server->is_initialized())
         return;
     Camera3D* cam = vp->get_camera_3d();
+    bool any_driver = false;
     for (int i = 0; i < listener_nodes.size(); i++) {
         ResonanceListener* rl = Object::cast_to<ResonanceListener>(listener_nodes[i]);
-        if (rl)
-            rl->_push_listener_pose_if_active(cam);
+        if (rl && rl->_push_listener_pose_if_active(cam))
+            any_driver = true;
     }
-}
-
-void ResonanceListener::_sync_reflection_debug_viz(ResonanceServer* server) {
-    if (!server)
+    if (!resonance::listener_sync_should_use_camera_fallback(any_driver)) {
         return;
-    if (server->wants_debug_reflection_viz()) {
-        Array segments = server->get_ray_debug_segments();
-        if (!segments.is_empty()) {
-            _ensure_reflection_viz();
-            _draw_reflection_rays(segments);
-            if (reflection_mesh_instance)
-                reflection_mesh_instance->set_visible(true);
-        } else {
-            if (reflection_mesh_instance)
-                reflection_mesh_instance->set_visible(false);
-        }
+    }
+    if (cam) {
+        push_camera_fallback_listener_to_server(cam, server);
     } else {
-        if (reflection_mesh_instance)
-            reflection_mesh_instance->set_visible(false);
+        server->set_listener_valid(resonance::listener_sync_validity_when_no_driver(false));
     }
 }
 
@@ -108,8 +104,9 @@ void ResonanceListener::_sync_listener_tick(double delta, bool use_physics_frame
 
     Viewport* vp = get_viewport();
     Camera3D* cam = vp ? vp->get_camera_3d() : nullptr;
-    _push_listener_pose_if_active(cam);
-    _sync_reflection_debug_viz(server);
+    // Pose SSOT: primary ResonanceRuntime::apply_resonance_viewport_to_server (prio 0) calls sync_viewport_listeners_to_server.
+    if (resonance::listener_node_should_push_pose(ResonanceRuntime::primary_runtime_syncs_viewport_listeners()))
+        _push_listener_pose_if_active(cam);
 }
 
 void ResonanceListener::_process(double delta) {
@@ -118,49 +115,6 @@ void ResonanceListener::_process(double delta) {
 
 void ResonanceListener::_physics_process(double delta) {
     _sync_listener_tick(delta, true);
-}
-
-void ResonanceListener::_ensure_reflection_viz() {
-    if (reflection_mesh_instance)
-        return;
-
-    reflection_material.instantiate();
-    reflection_material->set_shading_mode(BaseMaterial3D::SHADING_MODE_UNSHADED);
-    reflection_material->set_flag(BaseMaterial3D::FLAG_ALBEDO_FROM_VERTEX_COLOR, true);
-    reflection_material->set_flag(BaseMaterial3D::FLAG_DISABLE_DEPTH_TEST, true);
-
-    reflection_immediate_mesh.instantiate();
-    reflection_mesh_instance = memnew(MeshInstance3D);
-    reflection_mesh_instance->set_mesh(reflection_immediate_mesh);
-    reflection_mesh_instance->set_material_override(reflection_material);
-    reflection_mesh_instance->set_cast_shadows_setting(GeometryInstance3D::SHADOW_CASTING_SETTING_OFF);
-    reflection_mesh_instance->set_name("ResonanceReflectionRayDebugViz");
-    add_child(reflection_mesh_instance);
-}
-
-void ResonanceListener::_draw_reflection_rays(const Array& segments) {
-    if (!reflection_immediate_mesh.is_valid())
-        return;
-
-    reflection_immediate_mesh->clear_surfaces();
-    reflection_immediate_mesh->surface_begin(Mesh::PRIMITIVE_LINES);
-
-    const Color col = Color(resonance::kListenerReflectionRayR, resonance::kListenerReflectionRayG, resonance::kListenerReflectionRayB);
-    reflection_immediate_mesh->surface_set_color(col);
-
-    for (int i = 0; i < segments.size(); i++) {
-        Variant v = segments[i];
-        if (v.get_type() != Variant::DICTIONARY)
-            continue;
-        Dictionary d = v;
-        Variant from_v = d.get("from", Vector3());
-        Variant to_v = d.get("to", Vector3());
-        Vector3 from_pt = from_v;
-        Vector3 to_pt = to_v;
-        reflection_immediate_mesh->surface_add_vertex(to_local(from_pt));
-        reflection_immediate_mesh->surface_add_vertex(to_local(to_pt));
-    }
-    reflection_immediate_mesh->surface_end();
 }
 
 void ResonanceListener::_bind_methods() {

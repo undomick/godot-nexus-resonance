@@ -53,6 +53,22 @@ inline bool eos_zero_input_from_silent_full_buffer(int samples_read, int frames,
     return samples_read == frames && !base_playing && max_abs_sample <= k_eos_silent_eps;
 }
 
+/// True when the geometry gate just reopened and the output ring is empty (avoid underrun fade to silence).
+inline bool geometry_gate_output_reopen_hold_active(bool was_holding_decode, bool holding_decode_now, int valid_copy) {
+    return was_holding_decode && !holding_decode_now && valid_copy == 0;
+}
+
+/// Fill underrun region with last_mix hold after geometry gate reopen (avoid cosine fade-to-silence).
+template <typename FrameLike>
+inline void fill_geometry_gate_reopen_hold(FrameLike* buffer, int32_t frames, int valid_copy, float hold_l, float hold_r) {
+    if (!buffer || valid_copy >= frames)
+        return;
+    for (int i = valid_copy; i < frames; i++) {
+        buffer[i].left = hold_l;
+        buffer[i].right = hold_r;
+    }
+}
+
 /// Pad `buffer[valid_copy..frames)` with a cosine fade from the last valid sample (or last_mix hold).
 template <typename FrameLike>
 inline void pad_output_with_cosine_underrun_fade(FrameLike* buffer, int32_t frames, int valid_copy, float hold_l,

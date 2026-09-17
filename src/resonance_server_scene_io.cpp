@@ -1,4 +1,5 @@
 #include "resonance_constants.h"
+#include "resonance_dynamic_transform_queue_policy.h"
 #include "resonance_geometry.h"
 #include "resonance_geometry_asset.h"
 #include "resonance_scene_manager.h"
@@ -36,38 +37,24 @@ void refresh_geometry_recursive(Node* node) {
 
 } // namespace
 
-bool ResonanceServer::consume_geometry_transform_coalesce_tick() {
-    constexpr int interval = resonance::kGeometryTransformCoalesceInterval;
-    if (interval <= 1)
-        return true;
-    const uint32_t c = geometry_transform_coalesce_counter_.fetch_add(1, std::memory_order_relaxed) + 1;
-    return (c % static_cast<uint32_t>(interval)) == 0;
-}
-
 void ResonanceServer::notify_geometry_changed_assume_locked(int triangle_delta) {
     if (!_ctx())
         return;
-    if (triangle_delta != 0) {
-        const int after = global_triangle_count.fetch_add(triangle_delta, std::memory_order_release) + triangle_delta;
-        const int before = after - triangle_delta;
-        scene_dirty.store(true, std::memory_order_release);
-        // Arm gate only when entering a non-empty scene (cold / first triangles), not on incremental add/remove.
-        if (resonance::spatial_audio_geometry_notify_should_arm_gate(before, after))
-            arm_spatial_audio_output_gate();
-    } else if (consume_geometry_transform_coalesce_tick()) {
-        scene_dirty.store(true, std::memory_order_release);
-    }
+    if (triangle_delta == 0)
+        return;
+    const int after = global_triangle_count.fetch_add(triangle_delta, std::memory_order_release) + triangle_delta;
+    const int before = after - triangle_delta;
+    scene_dirty.store(true, std::memory_order_release);
+    // Arm gate only when entering a non-empty scene (cold / first triangles), not on incremental add/remove.
+    if (resonance::spatial_audio_geometry_notify_should_arm_gate(before, after))
+        arm_spatial_audio_output_gate();
 }
 
 void ResonanceServer::notify_geometry_changed(int triangle_delta) {
     if (!_ctx())
         return;
     notify_geometry_changed_assume_locked(triangle_delta);
-    if (!_uses_main_thread_phonon_simulation() && thread_running) {
-        std::lock_guard<std::mutex> lock(worker_mutex);
-        simulation_requested = true;
-        worker_cv.notify_one();
-    }
+    _wake_phonon_worker_for_lifecycle();
 }
 
 void ResonanceServer::mark_scene_commit_pending_assume_locked() {
@@ -159,6 +146,10 @@ void ResonanceServer::_deferred_refresh_all_geometry_after_scene_load() {
     arm_spatial_audio_output_gate();
 }
 
+Ref<ResonanceGeometryAsset> ResonanceServer::export_static_scene_to_geometry_asset(Node* scene_root) {
+    return scene_manager_.export_static_scene_to_geometry_asset(scene_root);
+}
+
 Error ResonanceServer::export_static_scene_to_asset(Node* scene_root, const String& p_path) {
     return scene_manager_.export_static_scene_to_asset(scene_root, p_path);
 }
@@ -189,15 +180,40 @@ void ResonanceServer::enqueue_dynamic_instanced_mesh_transform(IPLInstancedMesh 
     if (!mesh || !_ctx())
         return;
     const auto t0 = std::chrono::steady_clock::now();
+    DynamicInstancedTransformEntry entry{};
+    entry.transform = transform;
+    entry.force_apply = false;
     {
         std::lock_guard<std::mutex> qlock(dynamic_instanced_transform_queue_mutex_);
-        dynamic_instanced_transform_queue_[mesh] = transform;
+        const auto it = dynamic_instanced_transform_queue_.find(mesh);
+        if (it != dynamic_instanced_transform_queue_.end())
+            entry.force_apply = resonance::dynamic_instanced_transform_force_apply_merge(it->second.force_apply,
+                                                                                         entry.force_apply);
+        dynamic_instanced_transform_queue_[mesh] = entry;
     }
     const auto t1 = std::chrono::steady_clock::now();
     const uint64_t us = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count());
     instrumentation_main_us_last_dynamic_transform_enqueue_.store(us, std::memory_order_relaxed);
     instrumentation_main_us_dynamic_transform_enqueue_.fetch_add(us, std::memory_order_relaxed);
     instrumentation_dynamic_transform_enqueue_events_.fetch_add(1, std::memory_order_relaxed);
+}
+
+void ResonanceServer::flush_dynamic_instanced_mesh_transform(IPLInstancedMesh mesh, const IPLMatrix4x4& transform) {
+    if (!mesh || !_ctx())
+        return;
+    DynamicInstancedTransformEntry entry{};
+    entry.transform = transform;
+    entry.force_apply = true;
+    {
+        std::lock_guard<std::mutex> qlock(dynamic_instanced_transform_queue_mutex_);
+        const auto it = dynamic_instanced_transform_queue_.find(mesh);
+        if (it != dynamic_instanced_transform_queue_.end())
+            entry.force_apply = resonance::dynamic_instanced_transform_force_apply_merge(it->second.force_apply,
+                                                                                         entry.force_apply);
+        dynamic_instanced_transform_queue_[mesh] = entry;
+    }
+    mark_scene_commit_pending();
+    _wake_phonon_worker_for_lifecycle();
 }
 
 void ResonanceServer::cancel_pending_dynamic_instanced_mesh_transform(IPLInstancedMesh mesh) {
@@ -208,11 +224,12 @@ void ResonanceServer::cancel_pending_dynamic_instanced_mesh_transform(IPLInstanc
 }
 
 // Applies queued instanced-mesh transforms; may defer under dynamic_scene_commit_min_interval_ (re-queue transforms if not due).
+// flush_dynamic_instanced_mesh_transform sets force_apply to bypass the interval without disabling the default throttle.
 bool ResonanceServer::_apply_queued_dynamic_instanced_mesh_transforms_assume_locked() {
     if (!_ctx() || !scene)
         return false;
 
-    std::unordered_map<IPLInstancedMesh, IPLMatrix4x4> local;
+    std::unordered_map<IPLInstancedMesh, DynamicInstancedTransformEntry> local;
     {
         std::lock_guard<std::mutex> qlock(dynamic_instanced_transform_queue_mutex_);
         local.swap(dynamic_instanced_transform_queue_);
@@ -221,9 +238,17 @@ bool ResonanceServer::_apply_queued_dynamic_instanced_mesh_transforms_assume_loc
     if (local.empty())
         return false;
 
+    bool any_force = false;
+    for (const auto& kv : local) {
+        if (kv.second.force_apply) {
+            any_force = true;
+            break;
+        }
+    }
+
     const bool static_wants_commit = scene_dirty.load(std::memory_order_acquire);
     const auto now = std::chrono::steady_clock::now();
-    bool apply_now = static_wants_commit || dynamic_scene_commit_min_interval_ <= 0.0f;
+    bool apply_now = any_force || static_wants_commit || dynamic_scene_commit_min_interval_ <= 0.0f;
     if (!apply_now) {
         const float dt_sec = std::chrono::duration<float>(now - last_dynamic_scene_commit_time_).count();
         apply_now = (dt_sec >= dynamic_scene_commit_min_interval_);
@@ -231,14 +256,22 @@ bool ResonanceServer::_apply_queued_dynamic_instanced_mesh_transforms_assume_loc
 
     if (!apply_now) {
         std::lock_guard<std::mutex> qlock(dynamic_instanced_transform_queue_mutex_);
-        for (auto& kv : local)
-            dynamic_instanced_transform_queue_[kv.first] = kv.second;
+        for (auto& kv : local) {
+            const auto it = dynamic_instanced_transform_queue_.find(kv.first);
+            DynamicInstancedTransformEntry merged = kv.second;
+            if (it != dynamic_instanced_transform_queue_.end()) {
+                merged.force_apply = resonance::dynamic_instanced_transform_force_apply_merge(
+                    kv.second.force_apply, it->second.force_apply);
+                merged.transform = it->second.transform;
+            }
+            dynamic_instanced_transform_queue_[kv.first] = merged;
+        }
         return false;
     }
 
     for (auto& kv : local) {
         if (kv.first)
-            iplInstancedMeshUpdateTransform(kv.first, scene, kv.second);
+            iplInstancedMeshUpdateTransform(kv.first, scene, kv.second.transform);
     }
     last_dynamic_scene_commit_time_ = now;
     mark_scene_commit_pending_assume_locked();
@@ -247,6 +280,13 @@ bool ResonanceServer::_apply_queued_dynamic_instanced_mesh_transforms_assume_loc
 
 void ResonanceServer::set_physics_world(const Ref<World3D>& world) {
     godot_physics_bridge_.set_world(world);
+    // Load preset map once when Custom physics world first becomes available (not every tick).
+    if (world.is_valid() && !godot_physics_bridge_.has_material_map())
+        godot_physics_bridge_.refresh_material_map();
+}
+
+void ResonanceServer::refresh_physics_materials() {
+    godot_physics_bridge_.refresh_material_map();
 }
 
 void ResonanceServer::_rebuild_and_apply_physics_ray_excludes_unlocked() {

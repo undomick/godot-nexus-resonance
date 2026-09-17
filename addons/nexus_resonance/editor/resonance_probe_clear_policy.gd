@@ -1,5 +1,4 @@
 extends RefCounted
-class_name ResonanceProbeClearPolicy
 
 ## Pure helpers for "Clear Unreferenced Probe Data". Keeps cancel / partial-scan
 ## decisions out of the editor UI path so they can be unit-tested.

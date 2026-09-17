@@ -1,6 +1,5 @@
 @tool
 extends RefCounted
-class_name ResonanceEditorSceneIndex
 
 ## Collects .tscn paths from EditorFileSystem (preferred) or a narrow res:// directory walk.
 
@@ -63,13 +62,9 @@ static func _collect_tscn_dir_walk(
 	return out
 
 
-static func scene_text_has_static_resonance_content(scene_path: String) -> bool:
+## True if the .tscn text already declares a ResonanceStaticScene (not geometry alone).
+static func scene_text_has_resonance_static_scene(scene_path: String) -> bool:
 	var content: String = ResonanceFsPaths.read_file_as_string(scene_path)
 	if content.is_empty():
 		return false
-	return (
-		"ResonanceStaticGeometry" in content
-		or "ResonanceStaticScene" in content
-		or 'type="ResonanceStaticGeometry"' in content
-		or 'type="ResonanceStaticScene"' in content
-	)
+	return "ResonanceStaticScene" in content or 'type="ResonanceStaticScene"' in content

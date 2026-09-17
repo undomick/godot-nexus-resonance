@@ -28,11 +28,11 @@ func _parse_begin(object: Object) -> void:
 
 	# Node creation in the editor often skips _ready; ensure defaults when inspecting.
 	if ResonanceProbeVolumeDefaults.ensure_resources(object):
-		editor_interface.mark_scene_as_unsaved()
+		EditorInterface.mark_scene_as_unsaved()
 		if object is Object and object.has_method("notify_property_list_changed"):
 			object.notify_property_list_changed()
 
-	var base: Control = editor_interface.get_base_control() if editor_interface else null
+	var base: Control = EditorInterface.get_base_control() if editor_interface else null
 
 	# Bake Probes
 	var btn = Button.new()
@@ -55,7 +55,7 @@ func _parse_property(
 	# Insert below scan_targets: controls added here appear before bake_sources.
 	if name != "bake_sources":
 		return false
-	var base: Control = editor_interface.get_base_control() if editor_interface else null
+	var base: Control = EditorInterface.get_base_control() if editor_interface else null
 	var update_btn := Button.new()
 	update_btn.text = tr(UIStrings.BTN_UPDATE_TARGETS)
 	update_btn.tooltip_text = tr(UIStrings.TT_UPDATE_TARGETS)
@@ -73,7 +73,7 @@ func _on_update_targets_pressed(vol: Object) -> void:
 		vol as Node
 	)
 	if editor_interface:
-		editor_interface.mark_scene_as_unsaved()
+		EditorInterface.mark_scene_as_unsaved()
 	print(
 		(
 			"Nexus Resonance: Updated bake targets (%s sources, %s listeners from %s scan roots)."

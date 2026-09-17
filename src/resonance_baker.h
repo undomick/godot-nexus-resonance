@@ -11,6 +11,8 @@
 #include "resonance_probe_data.h"
 #include "resonance_utils.h"
 
+#include <godot_cpp/variant/dictionary.hpp>
+
 namespace godot {
 
 /// Probe placement grids and IPL bakes (reflection IRs, pathing, static endpoint variations) into `ResonanceProbeData`.
@@ -60,7 +62,8 @@ class ResonanceBaker {
         int num_threads = 2,
         int ambisonics_order = resonance::kBakeDefaultAmbisonicsOrder);
 
-    // Fixed probe positions → bake IRs. reflection_type selects convolution/parametric/hybrid bake flags; GPU devices needed for Radeon scene type.
+    // Fixed probe positions -> bake IRs. spacing sets IPLSphere.radius (Steam UniformFloor: radius = spacing).
+    // reflection_type selects convolution/parametric/hybrid bake flags; GPU devices needed for Radeon scene type.
     bool bake_manual_grid(
         IPLContext context,
         IPLScene scene,
@@ -68,6 +71,7 @@ class ResonanceBaker {
         IPLOpenCLDevice opencl_device,
         IPLRadeonRaysDevice radeon_rays_device,
         const PackedVector3Array& points,
+        float spacing,
         int num_bounces,
         int num_rays,
         int reflection_type,
@@ -140,6 +144,16 @@ class ResonanceBaker {
     float probe_data_static_source_interpolated_energy(IPLContext context, Ref<ResonanceProbeData> probe_data_res, Vector3 endpoint_position,
                                                        float influence_radius, Vector3 listener_position, float neighbor_radius_m,
                                                        int* out_probes_with_data = nullptr, int* out_probes_missing = nullptr) const;
+
+    /// Baked reflections layer at a probe index (Steam 4.7 energy field readback). [baked_variation]: 0=reverb, 1=static source, 2=static listener.
+    Dictionary probe_data_query_baked_at_probe_index(IPLContext context, Ref<ResonanceProbeData> probe_data_res, int32_t probe_index,
+                                                     int baked_variation, Vector3 endpoint_position, float influence_radius,
+                                                     bool reconstruct_ir, int sampling_rate) const;
+
+    /// Interpolate baked reflections at [world_position] from neighboring probes (inverse-distance squared).
+    Dictionary probe_data_query_baked_at_point(IPLContext context, Ref<ResonanceProbeData> probe_data_res, Vector3 world_position,
+                                               int baked_variation, Vector3 endpoint_position, float influence_radius, float neighbor_radius_m,
+                                               bool reconstruct_ir, int sampling_rate) const;
 
   private:
     bool _bake_static_endpoint(

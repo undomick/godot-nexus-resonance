@@ -6,7 +6,8 @@
 namespace resonance {
 
 /// Ray parameter [code]t[/code] along [code]origin + direction * t[/code] where Godot [code]intersect_ray[/code] should start
-/// for Custom-scene occlusion [code]anyHit[/code] (avoids immediate inside-collider hits at the listener).
+/// for Custom-scene [code]anyHit[/code] and [code]closestHit[/code] (avoids immediate inside-collider hits at the listener;
+/// same start-t for occlusion and transmission, matching Custom scene raycast).
 inline float custom_scene_occlusion_ray_start_t(float min_distance, float max_distance) {
     float t_from = min_distance;
     if (max_distance > min_distance) {

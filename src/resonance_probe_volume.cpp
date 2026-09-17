@@ -4,18 +4,17 @@
 #include "resonance_player.h"
 #include "resonance_probe_exclusion.h"
 #include "resonance_probe_exclusion_filter.h"
+#include "resonance_reflection_type_policy.h"
 #include "resonance_server.h"
 #include "resonance_source_handle_policy.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
-#include <godot_cpp/classes/dir_access.hpp>
 #include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/global_constants.hpp>
 #include <godot_cpp/classes/node.hpp>
 #include <godot_cpp/classes/physics_direct_space_state3d.hpp>
 #include <godot_cpp/classes/physics_ray_query_parameters3d.hpp>
-#include <godot_cpp/classes/project_settings.hpp>
 #include <godot_cpp/classes/resource_loader.hpp>
 #include <godot_cpp/classes/scene_tree.hpp>
 #include <godot_cpp/classes/script.hpp>
@@ -329,6 +328,12 @@ void ResonanceProbeVolume::reload_probe_batch() {
         }
         return;
     }
+    if (srv->is_bake_pipeline_active()) {
+        UtilityFunctions::push_warning(
+            "Nexus Resonance: reload_probe_batch skipped while an editor bake pipeline is running. "
+            "Probe batches reload automatically when the bake finishes.");
+        return;
+    }
     _release_probe_batch_if_live();
     _store_probe_batch_handle(srv->load_probe_batch(probe_data));
     if (Engine::get_singleton() && Engine::get_singleton()->is_editor_hint() && viz_visible) {
@@ -348,6 +353,7 @@ void ResonanceProbeVolume::release_probe_batch() {
 }
 
 void ResonanceProbeVolume::_exit_tree() {
+    // Quit teardown is Runtime/Window only; live probe unload must keep the worker alive.
     _release_probe_batch_if_live();
     // viz_instance is a child node; Godot frees children when parent is removed.
     viz_instance = nullptr;
@@ -411,29 +417,28 @@ uint32_t ResonanceProbeVolume::_get_bake_params_hash() const {
     h = hash_murmur3_one_float(t.basis.rows[2].y, h);
     h = hash_murmur3_one_float(t.basis.rows[2].z, h);
 
-    // Include bake_config reflection params so changing quality triggers re-bake
-    int refl_type = 2;
+    // Include bake_config quality params so changing quality triggers re-bake.
+    // reflection_type / ambisonics_order / pathing_enabled are gated by ResonanceRuntime.
     int num_rays = resonance::kBakeDefaultNumRays;
     int num_bounces = resonance::kBakeDefaultNumBounces;
-    int ambisonics_order = resonance::kBakeDefaultAmbisonicsOrder;
     if (bake_config.is_valid()) {
-        Variant v_refl = bake_config->get("reflection_type");
-        if (v_refl.get_type() == Variant::INT)
-            refl_type = static_cast<int>(v_refl);
         Variant v_rays = bake_config->get("bake_num_rays");
         if (v_rays.get_type() == Variant::INT)
             num_rays = static_cast<int>(v_rays);
         Variant v_bounces = bake_config->get("bake_num_bounces");
         if (v_bounces.get_type() == Variant::INT)
             num_bounces = static_cast<int>(v_bounces);
-        Variant v_order = bake_config->get("bake_ambisonics_order");
-        if (v_order.get_type() == Variant::INT)
-            ambisonics_order = resonance::clamp_bake_ambisonics_order(static_cast<int>(v_order));
     }
-    h = hash_murmur3_one_32(static_cast<uint32_t>(refl_type), h);
     h = hash_murmur3_one_32(static_cast<uint32_t>(num_rays), h);
     h = hash_murmur3_one_32(static_cast<uint32_t>(num_bounces), h);
-    h = hash_murmur3_one_32(static_cast<uint32_t>(ambisonics_order), h);
+    // BakeConfig Bake Ambisonic Order (0 = Use Global).
+    int bake_amb_order = 0;
+    if (bake_config.is_valid()) {
+        Variant v_amb = bake_config->get("bake_ambisonics_order");
+        if (v_amb.get_type() == Variant::INT)
+            bake_amb_order = static_cast<int>(v_amb);
+    }
+    h = hash_murmur3_one_32(static_cast<uint32_t>(bake_amb_order), h);
 
     Array excl = collect_exclusion_boxes();
     h = hash_murmur3_one_32(static_cast<uint32_t>(excl.size()), h);
@@ -665,107 +670,6 @@ PackedVector3Array ResonanceProbeVolume::generate_probes_on_floor_raycast() cons
     return points;
 }
 
-void ResonanceProbeVolume::_prepare_and_execute_bake(const PackedVector3Array* p_precomputed_points) {
-    if (!_has_valid_resonance_config()) {
-        UtilityFunctions::push_error("Nexus Resonance: ResonanceProbeVolume requires a ResonanceRuntime node with a valid ResonanceRuntimeConfig in the scene.");
-        return;
-    }
-    ResonanceServer* srv = ResonanceServer::get_singleton();
-    if (!srv || !srv->is_initialized()) {
-        UtilityFunctions::push_error("ResonanceProbeVolume: Resonance Server not initialized!");
-        return;
-    }
-
-    if (probe_data.is_null()) {
-        probe_data.instantiate();
-        set_probe_data(probe_data);
-    }
-
-    if (Engine::get_singleton() && Engine::get_singleton()->is_editor_hint()) {
-        String scene_name = "unsaved";
-        String node_name = get_name().to_lower().replace(" ", "_");
-        SceneTree* tree = get_tree();
-        if (tree) {
-            Node* root = tree->get_edited_scene_root();
-            if (root) {
-                String scene_path = root->get_scene_file_path();
-                if (!scene_path.is_empty()) {
-                    scene_name = scene_path.get_file().get_basename();
-                }
-            }
-        }
-        ProjectSettings* ps = ProjectSettings::get_singleton();
-        const String base_dir = resonance_bake_batches_dir_from_settings();
-        const String ext = resonance_probe_data_save_extension_from_settings();
-        String path = base_dir + scene_name + String("_") + node_name + String("_batch.") + ext;
-        String dir = path.get_base_dir();
-        if (!dir.is_empty() && ps) {
-            String abs_dir = ps->globalize_path(dir);
-            DirAccess::make_dir_recursive_absolute(abs_dir);
-        }
-        probe_data->take_over_path(path);
-        probe_data->emit_changed();
-    }
-
-    Transform3D volume_transform = get_global_transform();
-    Vector3 extents = region_size * 0.5f;
-    Array exclusion_boxes = collect_exclusion_boxes();
-
-    bool success = false;
-    if (p_precomputed_points && !p_precomputed_points->is_empty()) {
-        PackedVector3Array filtered =
-            resonance::filter_points_outside_exclusion_boxes(*p_precomputed_points, exclusion_boxes);
-        if (!filtered.is_empty()) {
-            success = srv->bake_manual_grid(filtered, probe_data);
-            if (success && Engine::get_singleton() && Engine::get_singleton()->is_editor_hint()) {
-                UtilityFunctions::print_rich("[color=cyan]Nexus Resonance:[/color] Uniform Floor used geometry raycast. Probes placed on floor. (Requires CollisionShape3D on floor geometry.)");
-            }
-        }
-    }
-    if (!success) {
-        success = srv->bake_probes_for_volume(volume_transform, extents, spacing, (int)generation_type,
-                                              height_above_floor, probe_data, exclusion_boxes);
-    }
-
-    if (!success) {
-        UtilityFunctions::push_error("Nexus Resonance: Bake failed. Previous probe data kept. Check ResonanceGeometry / ResonanceStaticScene.");
-    } else {
-        probe_data->set_bake_params_hash(static_cast<int64_t>(_get_bake_params_hash()));
-        if (viz_visible)
-            _update_visuals();
-        _release_probe_batch_if_live();
-        _store_probe_batch_handle(srv->load_probe_batch(probe_data));
-    }
-}
-
-// Native bake entry points (bake_probes, bake_probes_with_floor_points) are DEPRECATED.
-// They run only the reflection layer and skip pathing, static-source/listener, automatic
-// stale-asset re-export, undo backups, and the static-scene hash bookkeeping. Everything they do is
-// a strict subset of `ResonanceBakeRunner.run_bake([volume])`. Scheduled for removal in 1.0.
-void ResonanceProbeVolume::_warn_native_bake_deprecated() const {
-    UtilityFunctions::push_warning(
-        "Nexus Resonance: ResonanceProbeVolume.bake_probes() / bake_probes_with_floor_points() "
-        "are deprecated and scheduled for removal in 1.0. Use ResonanceBakeRunner.run_bake([volume]) "
-        "instead - it covers the same reflection bake plus pathing, static-source / static-listener "
-        "passes, automatic re-export of stale ResonanceStaticScene assets, undo backup, and full "
-        "incremental-rebake bookkeeping. The native API only updates the reflection layer and the "
-        "inspector will report 'Outdated' afterwards.");
-}
-
-void ResonanceProbeVolume::bake_probes_with_floor_points(const PackedVector3Array& p_points) {
-    _warn_native_bake_deprecated();
-    _prepare_and_execute_bake(!p_points.is_empty() ? &p_points : nullptr);
-}
-
-void ResonanceProbeVolume::bake_probes() {
-    _warn_native_bake_deprecated();
-    PackedVector3Array raycast_points;
-    if (generation_type == GEN_UNIFORM_FLOOR) {
-        raycast_points = generate_probes_on_floor_raycast();
-    }
-    _prepare_and_execute_bake(!raycast_points.is_empty() ? &raycast_points : nullptr);
-}
-
 void ResonanceProbeVolume::set_probe_data(const Ref<ResonanceProbeData>& p_data) {
     if (probe_data == p_data)
         return;
@@ -809,6 +713,17 @@ void ResonanceProbeVolume::set_bake_influence_radius(float p_radius) {
 }
 float ResonanceProbeVolume::get_bake_influence_radius() const {
     return bake_influence_radius;
+}
+
+int ResonanceProbeVolume::resolved_bake_ambisonic_order(int p_global_order) const {
+    int setting = 0;
+    if (bake_config.is_valid()) {
+        Variant v = bake_config->get("bake_ambisonics_order");
+        if (v.get_type() == Variant::INT || v.get_type() == Variant::FLOAT) {
+            setting = (int)v;
+        }
+    }
+    return resonance::resolve_volume_bake_ambisonic_order(setting, p_global_order);
 }
 
 void ResonanceProbeVolume::add_bake_source(const Variant& p_source) {
@@ -904,21 +819,20 @@ void ResonanceProbeVolume::set_viz_color_state(int p_state) {
 }
 int ResonanceProbeVolume::get_viz_color_state() const { return viz_color_state; }
 
-void ResonanceProbeVolume::notify_runtime_config_changed(int p_runtime_refl, bool p_runtime_pathing) {
+void ResonanceProbeVolume::notify_runtime_config_changed(int p_runtime_refl, bool p_runtime_pathing, int p_runtime_bake_amb) {
     if (!Engine::get_singleton() || !Engine::get_singleton()->is_editor_hint())
         return;
 
     int baked_refl = probe_data.is_valid() ? probe_data->get_baked_reflection_type() : -1;
     bool has_data = probe_data.is_valid() && probe_data->get_size() > 0;
 
-    bool wants_path = false;
     bool want_ss = false;
     bool want_sl = false;
-    if (bake_config.is_valid()) {
-        wants_path = bake_config->get("pathing_enabled").booleanize();
-        want_ss = bake_config->get("static_source_enabled").booleanize();
-        want_sl = bake_config->get("static_listener_enabled").booleanize();
-    }
+    // Pathing bake/use is gated by ResonanceRuntime.pathing_enabled (not BakeConfig).
+    bool wants_path = p_runtime_pathing;
+    // Static passes are gated by bake_sources / bake_listeners arrays (not BakeConfig flags).
+    want_ss = bake_sources.size() > 0;
+    want_sl = bake_listeners.size() > 0;
 
     bool has_pathing = probe_data.is_valid() && probe_data->get_pathing_params_hash() > 0;
     int64_t pd_hash = probe_data.is_valid() ? probe_data->get_bake_params_hash() : 0;
@@ -926,12 +840,14 @@ void ResonanceProbeVolume::notify_runtime_config_changed(int p_runtime_refl, boo
     bool has_ss = probe_data.is_valid() && probe_data->get_static_source_params_hash() > 0;
     bool has_sl = probe_data.is_valid() && probe_data->get_static_listener_params_hash() > 0;
 
-    bool config_compatible = (baked_refl == p_runtime_refl) ||
-                             (baked_refl == resonance::kBakedReflectionHybrid && p_runtime_refl >= resonance::kReflectionConvolution && p_runtime_refl <= resonance::kReflectionHybrid) ||
-                             (p_runtime_refl == resonance::kReflectionHybrid && baked_refl >= resonance::kBakedReflectionConvolution && baked_refl <= resonance::kBakedReflectionParametric) ||
-                             (baked_refl == -1);
-    bool reflection_ok = !has_data || (pd_hash == vol_hash && config_compatible);
-    bool pathing_ok = !p_runtime_pathing || !wants_path || has_pathing;
+    bool config_compatible =
+        resonance::baked_reflection_type_matches_runtime(baked_refl, p_runtime_refl);
+    int baked_amb = probe_data.is_valid() ? probe_data->get_baked_ambisonics_order() : -1;
+    const int desired_amb = resolved_bake_ambisonic_order(p_runtime_bake_amb);
+    bool amb_ok = !has_data || !resonance::ambisonics_order_mismatches_bake_setting(baked_amb, desired_amb);
+    bool reflection_ok = !has_data || (pd_hash == vol_hash && config_compatible && amb_ok);
+    // Runtime pathing on without baked layer -> outdated (gray). Runtime off with leftover layer is OK (pathing skipped).
+    bool pathing_ok = !p_runtime_pathing || has_pathing;
     bool static_ok = (!want_ss || has_ss) && (!want_sl || has_sl);
 
     int out_state = 0;
@@ -966,6 +882,8 @@ void ResonanceProbeVolume::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_bake_listeners"), &ResonanceProbeVolume::get_bake_listeners);
     ClassDB::bind_method(D_METHOD("set_bake_influence_radius", "p_radius"), &ResonanceProbeVolume::set_bake_influence_radius);
     ClassDB::bind_method(D_METHOD("get_bake_influence_radius"), &ResonanceProbeVolume::get_bake_influence_radius);
+    ClassDB::bind_method(D_METHOD("resolved_bake_ambisonic_order", "p_global_order"),
+                         &ResonanceProbeVolume::resolved_bake_ambisonic_order);
     ClassDB::bind_method(D_METHOD("add_bake_source", "source"), &ResonanceProbeVolume::add_bake_source);
     ClassDB::bind_method(D_METHOD("remove_bake_source", "source"), &ResonanceProbeVolume::remove_bake_source);
     ClassDB::bind_method(D_METHOD("add_bake_listener", "listener"), &ResonanceProbeVolume::add_bake_listener);
@@ -983,8 +901,6 @@ void ResonanceProbeVolume::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_spacing"), &ResonanceProbeVolume::get_spacing);
     ClassDB::bind_method(D_METHOD("set_height_above_floor", "p_height"), &ResonanceProbeVolume::set_height_above_floor);
     ClassDB::bind_method(D_METHOD("get_height_above_floor"), &ResonanceProbeVolume::get_height_above_floor);
-    ClassDB::bind_method(D_METHOD("bake_probes"), &ResonanceProbeVolume::bake_probes);
-    ClassDB::bind_method(D_METHOD("bake_probes_with_floor_points", "points"), &ResonanceProbeVolume::bake_probes_with_floor_points);
     ClassDB::bind_method(D_METHOD("generate_probes_on_floor_raycast"), &ResonanceProbeVolume::generate_probes_on_floor_raycast);
     ClassDB::bind_method(D_METHOD("reload_probe_batch"), &ResonanceProbeVolume::reload_probe_batch);
     ClassDB::bind_method(D_METHOD("release_probe_batch"), &ResonanceProbeVolume::release_probe_batch);
@@ -995,7 +911,8 @@ void ResonanceProbeVolume::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_viz_probe_scale"), &ResonanceProbeVolume::get_viz_probe_scale);
     ClassDB::bind_method(D_METHOD("set_viz_color_state", "p_state"), &ResonanceProbeVolume::set_viz_color_state);
     ClassDB::bind_method(D_METHOD("get_viz_color_state"), &ResonanceProbeVolume::get_viz_color_state);
-    ClassDB::bind_method(D_METHOD("notify_runtime_config_changed", "p_runtime_refl", "p_runtime_pathing"), &ResonanceProbeVolume::notify_runtime_config_changed);
+    ClassDB::bind_method(D_METHOD("notify_runtime_config_changed", "p_runtime_refl", "p_runtime_pathing", "p_runtime_bake_amb"),
+                         &ResonanceProbeVolume::notify_runtime_config_changed, DEFVAL(1));
     ClassDB::bind_method(D_METHOD("get_bake_params_hash"), &ResonanceProbeVolume::get_bake_params_hash);
     ClassDB::bind_method(D_METHOD("_update_visuals"), &ResonanceProbeVolume::_update_visuals);
     ClassDB::bind_method(D_METHOD("_runtime_load_probe_batch"), &ResonanceProbeVolume::_runtime_load_probe_batch);

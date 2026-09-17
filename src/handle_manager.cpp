@@ -1,5 +1,6 @@
 #include "handle_manager.h"
 #include "resonance_log.h"
+#include "resonance_source_handle_policy.h"
 
 namespace godot {
 
@@ -9,12 +10,24 @@ SourceManager::~SourceManager() {
     release_all();
 }
 
+int32_t SourceManager::alloc_source_handle_locked() {
+    if (!free_handles.empty()) {
+        int32_t h = free_handles.top();
+        free_handles.pop();
+        return h;
+    }
+    if (!resonance::can_alloc_sequential_source_handle(next_handle)) {
+        return -1;
+    }
+    return alloc_handle();
+}
+
 int32_t SourceManager::add_source(IPLSource source) {
     if (!source)
         return -1;
     IPLSource retained_source = iplSourceRetain(source);
     std::lock_guard<std::mutex> lock(mutex);
-    int32_t handle = alloc_handle();
+    int32_t handle = alloc_source_handle_locked();
     if (handle < 0) {
         iplSourceRelease(&retained_source);
         ResonanceLog::error("SourceManager: Handle overflow (max sources exceeded).");

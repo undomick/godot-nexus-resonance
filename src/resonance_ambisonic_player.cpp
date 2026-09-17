@@ -1,7 +1,11 @@
 #include "resonance_ambisonic_player.h"
+#include "resonance_ambisonic_processor_thread_policy.h"
 #include "resonance_ambisonics_decode_orientation.h"
 #include "resonance_constants.h"
+#include "resonance_geometry_gate_ingest_policy.h"
+#include "resonance_listener_coords_util.h"
 #include "resonance_log.h"
+#include "resonance_playback_fade.h"
 #include "resonance_server.h"
 #include <algorithm>
 #include <cstring>
@@ -98,23 +102,32 @@ AmbisonicPlaybackParameters build_ambisonic_params_from_player(ResonanceAmbisoni
     listener_orient.origin = {0.0f, 0.0f, 0.0f};
 
     Transform3D listener_world_inverse{};
-    Viewport* vp = player->get_viewport();
-    Camera3D* cam = vp ? vp->get_camera_3d() : nullptr;
-    const bool have_camera = cam != nullptr;
-    if (have_camera) {
-        Transform3D cam_xform = cam->get_global_transform();
-        listener_world_inverse = cam_xform.affine_inverse();
-
-        Vector3 forward = -cam_xform.basis.get_column(2);
-        Vector3 up = cam_xform.basis.get_column(1);
-        Vector3 right = cam_xform.basis.get_column(0);
-        listener_orient.ahead = {forward.x, forward.y, forward.z};
-        listener_orient.up = {up.x, up.y, up.z};
-        listener_orient.right = {right.x, right.y, right.z};
-    } else {
-        listener_orient.ahead = {0.0f, 0.0f, -1.0f};
-        listener_orient.up = {0.0f, 1.0f, 0.0f};
-        listener_orient.right = {1.0f, 0.0f, 0.0f};
+    ResonanceServer* srv = ResonanceServer::get_singleton();
+    bool have_listener_pose = false;
+    if (srv && srv->is_initialized()) {
+        listener_orient = srv->get_current_listener_coords();
+        const Transform3D listener_xform = resonance::listener_coords_to_transform(listener_orient);
+        listener_world_inverse = listener_xform.affine_inverse();
+        have_listener_pose = true;
+    }
+    if (!have_listener_pose) {
+        Viewport* vp = player->get_viewport();
+        Camera3D* cam = vp ? vp->get_camera_3d() : nullptr;
+        if (cam) {
+            Transform3D cam_xform = cam->get_global_transform();
+            listener_world_inverse = cam_xform.affine_inverse();
+            Vector3 forward = -cam_xform.basis.get_column(2);
+            Vector3 up = cam_xform.basis.get_column(1);
+            Vector3 right = cam_xform.basis.get_column(0);
+            listener_orient.ahead = {forward.x, forward.y, forward.z};
+            listener_orient.up = {up.x, up.y, up.z};
+            listener_orient.right = {right.x, right.y, right.z};
+            have_listener_pose = true;
+        } else {
+            listener_orient.ahead = {0.0f, 0.0f, -1.0f};
+            listener_orient.up = {0.0f, 1.0f, 0.0f};
+            listener_orient.right = {1.0f, 0.0f, 0.0f};
+        }
     }
 
     params.listener_orientation = listener_orient;
@@ -124,7 +137,7 @@ AmbisonicPlaybackParameters build_ambisonic_params_from_player(ResonanceAmbisoni
     params.apply_output_gain = player->get_apply_output_gain();
 
     Node3D* bed = resolve_ambisonic_bed_orientation_node(player);
-    const bool use_combined_bed_listener_matrices = player->is_rotation_enabled() && bed != nullptr && have_camera;
+    const bool use_combined_bed_listener_matrices = player->is_rotation_enabled() && bed != nullptr && have_listener_pose;
     params.combined_matrix_decode = use_combined_bed_listener_matrices;
     if (use_combined_bed_listener_matrices) {
         float S[16]{};
@@ -194,8 +207,11 @@ void ResonanceAmbisonicInternalPlayback::_sync_params() {
 }
 
 bool ResonanceAmbisonicInternalPlayback::_has_pending_output() const {
-    return output_ring_l.get_available_read() > 0 || output_ring_r.get_available_read() > 0 ||
-           input_ring.get_available_read() > 0;
+    if (output_ring_l.get_available_read() > 0 || output_ring_r.get_available_read() > 0)
+        return true;
+    if (input_ring.get_available_read() > 0)
+        return true;
+    return processor.get_tail_size_samples() > 0;
 }
 
 void ResonanceAmbisonicInternalPlayback::_cleanup_steam_audio() {
@@ -210,23 +226,35 @@ void ResonanceAmbisonicInternalPlayback::_cleanup_steam_audio() {
     context = nullptr;
     is_initialized = false;
     steam_context_stale_.store(false, std::memory_order_release);
+    processor_config_stale_.store(false, std::memory_order_release);
 
     input_ring.clear();
     output_ring_l.clear();
     output_ring_r.clear();
 }
 
-void ResonanceAmbisonicInternalPlayback::_ensure_ambisonic_processor(ResonanceServer* srv) {
+bool ResonanceAmbisonicInternalPlayback::_processor_matches_current_config(ResonanceServer* srv) const {
     if (!srv || !srv->is_initialized() || !context)
+        return true;
+    const AmbisonicPlaybackParameters& p = params_current;
+    const bool use_rot_eff = ambisonic_needs_rotation_effect(p);
+    return processor.matches_config(ambisonic_order, use_rot_eff, p.apply_hrtf, p.input_is_sn3d, p.apply_output_gain);
+}
+
+void ResonanceAmbisonicInternalPlayback::_reinit_ambisonic_processor_on_main(ResonanceServer* srv) {
+    if (!srv || !srv->is_initialized() || !context || !is_initialized)
         return;
     _sync_params();
     const AmbisonicPlaybackParameters& p = params_current;
     const bool use_rot_eff = ambisonic_needs_rotation_effect(p);
-    if (processor.matches_config(ambisonic_order, use_rot_eff, p.apply_hrtf, p.input_is_sn3d, p.apply_output_gain))
+    if (processor.matches_config(ambisonic_order, use_rot_eff, p.apply_hrtf, p.input_is_sn3d, p.apply_output_gain)) {
+        processor_config_stale_.store(false, std::memory_order_release);
         return;
+    }
     processor.cleanup();
     processor.initialize(context, current_sample_rate, frame_size_, ambisonic_order, use_rot_eff, p.apply_hrtf, p.input_is_sn3d,
                          p.apply_output_gain, srv->get_hrtf_handle());
+    processor_config_stale_.store(false, std::memory_order_release);
 }
 
 bool ResonanceAmbisonicInternalPlayback::prewarm_steam_audio() {
@@ -245,6 +273,14 @@ void ResonanceAmbisonicInternalPlayback::resolve_stale_steam_context_on_main() {
     }
     if (!is_initialized)
         prewarm_steam_audio();
+    if (is_initialized) {
+        _sync_params();
+        ResonanceServer* srv = ResonanceServer::get_singleton();
+        if (resonance::ambisonic_main_should_reinit_processor(
+                is_initialized, processor_config_stale_.load(std::memory_order_acquire),
+                _processor_matches_current_config(srv)))
+            _reinit_ambisonic_processor_on_main(srv);
+    }
 }
 
 void ResonanceAmbisonicInternalPlayback::_lazy_init_steam_audio() {
@@ -282,29 +318,31 @@ void ResonanceAmbisonicInternalPlayback::_lazy_init_steam_audio() {
     ResonanceLog::info("Nexus Resonance: Ambisonic DSP Initialized (Order: " + String::num(ambisonic_order) + ").");
 }
 
-void ResonanceAmbisonicInternalPlayback::_process_steam_audio_block() {
+bool ResonanceAmbisonicInternalPlayback::_process_steam_audio_block() {
     // Crash protection: validate buffers before use
     if (!sa_out_buffer.data || !sa_out_buffer.data[0] || !sa_out_buffer.data[1])
-        return;
+        return false;
 
     int num_channels = resonance::ambisonic_num_channels_for_order(ambisonic_order);
     size_t block_samples = static_cast<size_t>(frame_size_) * static_cast<size_t>(num_channels);
 
+    ResonanceServer* srv = ResonanceServer::get_singleton();
+    if (!_processor_matches_current_config(srv)) {
+        processor_config_stale_.store(true, std::memory_order_release);
+        return false;
+    }
+    if (srv && srv->is_initialized() && !srv->is_spatial_audio_output_ready())
+        return false;
+
     input_ring.read(temp_interleaved_input.data(), block_samples);
 
-    ResonanceServer* srv = ResonanceServer::get_singleton();
-    _ensure_ambisonic_processor(srv);
-    if (srv && srv->is_initialized() && !srv->is_spatial_audio_output_ready()) {
-        for (int ch = 0; ch < sa_out_buffer.numChannels && sa_out_buffer.data && sa_out_buffer.data[ch]; ch++)
-            memset(sa_out_buffer.data[ch], 0, frame_size_ * sizeof(float));
-    } else {
-        IPLHRTF hrtf = (srv && params_current.apply_hrtf) ? srv->get_hrtf_handle() : nullptr;
-        processor.process(temp_interleaved_input.data(), block_samples, sa_out_buffer, params_current.combined_matrix_decode,
-                          params_current.listener_orientation, params_current.combined_decode_orientation, hrtf);
-    }
+    IPLHRTF hrtf = (srv && params_current.apply_hrtf) ? srv->get_hrtf_handle() : nullptr;
+    processor.process(temp_interleaved_input.data(), block_samples, sa_out_buffer, params_current.combined_matrix_decode,
+                      params_current.listener_orientation, params_current.combined_decode_orientation, hrtf);
 
     output_ring_l.write(sa_out_buffer.data[0], frame_size_);
     output_ring_r.write(sa_out_buffer.data[1], frame_size_);
+    return true;
 }
 
 int32_t ResonanceAmbisonicInternalPlayback::pull_channel_samples(float rate_scale, int32_t frames, int num_channels) {
@@ -319,6 +357,14 @@ int32_t ResonanceAmbisonicInternalPlayback::pull_channel_samples(float rate_scal
             channel_mix_bufs_[c] = channel_playbacks[c]->mix_audio(rate_scale, frames);
         else
             channel_mix_bufs_[c].clear();
+        const int32_t ch_samples = channel_mix_bufs_[c].size();
+        if (ch_samples != samples_read && ch_samples > 0 && !channel_length_mismatch_warned_) {
+            channel_length_mismatch_warned_ = true;
+            UtilityFunctions::push_warning(
+                "Nexus Resonance: ResonanceAmbisonicPlayer channel ", c, " returned ", ch_samples,
+                " samples while channel 0 returned ", samples_read,
+                ". Shorter channels are zero-padded for that block.");
+        }
     }
     return samples_read;
 }
@@ -341,7 +387,7 @@ void ResonanceAmbisonicInternalPlayback::push_interleaved_input(int32_t samples_
         input_ring.write(temp_interleaved_input.data(), to_write);
 }
 
-void ResonanceAmbisonicInternalPlayback::pull_stereo_output(AudioFrame* buffer, int32_t samples_read) {
+void ResonanceAmbisonicInternalPlayback::pull_stereo_output(AudioFrame* buffer, int32_t samples_read, bool holding_decode) {
     const int available = (int)output_ring_l.get_available_read();
     const int valid_copy = (samples_read < available) ? samples_read : available;
 
@@ -359,9 +405,15 @@ void ResonanceAmbisonicInternalPlayback::pull_stereo_output(AudioFrame* buffer, 
         }
     }
 
-    for (int i = valid_copy; i < samples_read; i++) {
-        buffer[i].left = 0.0f;
-        buffer[i].right = 0.0f;
+    if (valid_copy < samples_read) {
+        if (resonance::geometry_gate_output_reopen_hold_active(geometry_gate_was_holding_decode_, holding_decode,
+                                                               valid_copy) &&
+            last_mix_out_valid_) {
+            resonance::fill_geometry_gate_reopen_hold(buffer, samples_read, valid_copy, last_mix_out_l_, last_mix_out_r_);
+        } else {
+            resonance::pad_output_with_cosine_underrun_fade(buffer, samples_read, valid_copy, last_mix_out_l_, last_mix_out_r_,
+                                                            last_mix_out_valid_);
+        }
     }
 }
 
@@ -382,11 +434,27 @@ int32_t ResonanceAmbisonicInternalPlayback::_mix(AudioFrame* buffer, float rate_
     if (is_initialized && srv_guard && srv_guard->is_initialized() && context != srv_guard->get_context_handle())
         steam_context_stale_.store(true, std::memory_order_release);
 
+    bool spatial_output_ready = true;
+    if (srv_guard && srv_guard->is_initialized())
+        spatial_output_ready = srv_guard->is_spatial_audio_output_ready();
+
+    const bool stopping = stop_requested.load(std::memory_order_acquire);
+    if (!stopping && srv_guard && srv_guard->is_initialized() &&
+        resonance::geometry_gate_should_hold_ambisonic_decoder_advance(spatial_output_ready)) {
+        pull_stereo_output(buffer, frames, true);
+        geometry_gate_was_holding_decode_ = true;
+        if (frames > 0) {
+            last_mix_out_l_ = buffer[frames - 1].left;
+            last_mix_out_r_ = buffer[frames - 1].right;
+            last_mix_out_valid_ = true;
+        }
+        return frames;
+    }
+
     int num_channels = resonance::ambisonic_num_channels_for_order(ambisonic_order);
     size_t block_samples = static_cast<size_t>(frame_size_) * static_cast<size_t>(num_channels);
 
     int32_t samples_read;
-    const bool stopping = stop_requested.load(std::memory_order_acquire);
     if (stopping) {
         // Keep mixer alive while input/output rings drain after stop().
         samples_read = frames;
@@ -398,8 +466,13 @@ int32_t ResonanceAmbisonicInternalPlayback::_mix(AudioFrame* buffer, float rate_
             return 0;
     }
 
-    if (!is_initialized || steam_context_stale_.load(std::memory_order_acquire)) {
-        // No IPL create/teardown on the audio thread; W-channel passthrough until main resolve/prewarm.
+    const bool processor_matches = _processor_matches_current_config(srv_guard);
+    if (!processor_matches)
+        processor_config_stale_.store(true, std::memory_order_release);
+    if (resonance::ambisonic_audio_should_passthrough(
+            is_initialized, steam_context_stale_.load(std::memory_order_acquire),
+            processor_config_stale_.load(std::memory_order_acquire), processor_matches)) {
+        // No IPL create/teardown on the audio thread; W-channel passthrough until main resolve/prewarm/reinit.
         for (int i = 0; i < samples_read; i++) {
             float w = (!channel_mix_bufs_[0].is_empty() && channel_mix_bufs_[0].size() > (unsigned)i)
                           ? channel_mix_bufs_[0][i].x
@@ -410,18 +483,45 @@ int32_t ResonanceAmbisonicInternalPlayback::_mix(AudioFrame* buffer, float rate_
         return samples_read;
     }
 
-    if (!stopping)
-        push_interleaved_input(samples_read, num_channels);
+    if (!stopping) {
+        if (!resonance::geometry_gate_should_pause_ambisonic_input_ingest(spatial_output_ready))
+            push_interleaved_input(samples_read, num_channels);
+    }
 
     while (input_ring.get_available_read() >= block_samples) {
+        const bool processor_matches = _processor_matches_current_config(srv_guard);
+        if (!processor_matches)
+            processor_config_stale_.store(true, std::memory_order_release);
+        if (resonance::ambisonic_pump_should_break(processor_matches, spatial_output_ready))
+            break;
         if (output_ring_l.get_available_write() >= frame_size_) {
-            _process_steam_audio_block();
+            if (!_process_steam_audio_block())
+                break;
         } else {
             break;
         }
     }
 
-    pull_stereo_output(buffer, samples_read);
+    if (stopping && is_initialized && sa_out_buffer.data && sa_out_buffer.data[0] && sa_out_buffer.data[1]) {
+        while (output_ring_l.get_available_write() >= frame_size_ && processor.get_tail_size_samples() > 0) {
+            if (!processor.process_tail(sa_out_buffer))
+                break;
+            output_ring_l.write(sa_out_buffer.data[0], frame_size_);
+            output_ring_r.write(sa_out_buffer.data[1], frame_size_);
+        }
+    }
+
+    bool holding_decode = false;
+    if (srv_guard && srv_guard->is_initialized())
+        holding_decode = resonance::geometry_gate_should_hold_ambisonic_decoder_advance(spatial_output_ready);
+    pull_stereo_output(buffer, samples_read, holding_decode);
+    geometry_gate_was_holding_decode_ = holding_decode;
+
+    if (samples_read > 0) {
+        last_mix_out_l_ = buffer[samples_read - 1].left;
+        last_mix_out_r_ = buffer[samples_read - 1].right;
+        last_mix_out_valid_ = true;
+    }
 
     if (stopping && !_has_pending_output()) {
         stop_requested.store(false, std::memory_order_release);
@@ -432,6 +532,7 @@ int32_t ResonanceAmbisonicInternalPlayback::_mix(AudioFrame* buffer, float rate_
 
 void ResonanceAmbisonicInternalPlayback::_start(double from_pos) {
     stop_requested.store(false, std::memory_order_release);
+    processor.reset_for_new_playback();
     for (size_t i = 0; i < channel_playbacks.size(); i++) {
         if (channel_playbacks[i].is_valid())
             channel_playbacks[i]->start(from_pos);
@@ -552,6 +653,7 @@ void ResonanceAmbisonicInternalStream::_bind_methods() {
 }
 
 void ResonanceAmbisonicPlayer::_ready() {
+    add_to_group("resonance_ambisonic_player");
     Ref<AudioStream> s = get_stream();
     if (s.is_valid() && !Object::cast_to<ResonanceAmbisonicInternalStream>(s.ptr())) {
         UtilityFunctions::push_warning(
@@ -565,16 +667,13 @@ void ResonanceAmbisonicPlayer::_process(double delta) {
     Ref<AudioStreamPlayback> pb = get_stream_playback();
     ResonanceAmbisonicInternalPlayback* res_pb =
         pb.is_valid() ? Object::cast_to<ResonanceAmbisonicInternalPlayback>(pb.ptr()) : nullptr;
-    if (res_pb)
-        res_pb->resolve_stale_steam_context_on_main();
-
-    if (!is_playing())
+    if (!res_pb)
         return;
 
-    AmbisonicPlaybackParameters params = build_ambisonic_params_from_player(this);
+    res_pb->resolve_stale_steam_context_on_main();
 
-    if (res_pb)
-        res_pb->update_parameters(params);
+    AmbisonicPlaybackParameters params = build_ambisonic_params_from_player(this);
+    res_pb->update_parameters(params);
 }
 
 void ResonanceAmbisonicPlayer::set_rotation_enabled(bool p_enabled) {
@@ -583,6 +682,8 @@ void ResonanceAmbisonicPlayer::set_rotation_enabled(bool p_enabled) {
 
 void ResonanceAmbisonicPlayer::set_use_bed_scene_orientation(bool p_enabled) {
     use_bed_scene_orientation = p_enabled;
+    if (p_enabled && !rotation_enabled)
+        rotation_enabled = true;
 }
 
 void ResonanceAmbisonicPlayer::set_ambisonic_orientation_node(const NodePath& p_path) {
@@ -606,6 +707,10 @@ void ResonanceAmbisonicPlayer::_validate_property(PropertyInfo& p_property) cons
     // IPL decode is always stereo; sample playback and mix_target routing do not apply.
     if (name == StringName("mix_target") || name == StringName("playback_type")) {
         p_property.usage &= ~PROPERTY_USAGE_EDITOR;
+    }
+    if (name == StringName("use_bed_scene_orientation")) {
+        p_property.hint_string =
+            "Requires rotation_enabled (auto-enabled when you turn this on). HOA bed follows ambisonic_orientation_node or parent Node3D.";
     }
 }
 

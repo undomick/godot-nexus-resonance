@@ -105,6 +105,8 @@ class SourceManager : public HandleManagerBase<IPLSource, _handle_release_source
     void get_all_handles(std::vector<int32_t>& out);
 
   private:
+    /// Alloc under mutex. Caps sequential ids so parallel server caches stay indexed safely.
+    int32_t alloc_source_handle_locked();
     /// Handles removed with recycle=false; must not be alloc'd again until recycle_source_handle.
     std::unordered_set<int32_t> deferred_recycle_;
 };

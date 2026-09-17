@@ -8,8 +8,9 @@
 namespace godot {
 
 /// SPSC FIFO for bridging Godot `mix_audio()` (variable/partial frame counts) to fixed IPL `frameSize` in ResonancePlayer / AmbisonicPlayer.
-/// Use from one producer and one consumer only. Overfull writes truncate silently-watch instrumentation when dry audio drops.
-/// `resize(0)` makes write/read no-ops (safe guard). `T` must be trivially copyable (`memcpy`).
+/// Single producer, single consumer. When full, write() stores only what fits and drops the rest; compare the
+/// return value to n or poll get_overflow_drop_count() to detect loss. resize(0) makes write/read no-ops.
+/// `T` must be trivially copyable (`memcpy`).
 template <typename T>
 class RingBuffer {
   private:
@@ -18,6 +19,7 @@ class RingBuffer {
     size_t write_pos = 0;
     size_t capacity = 0;
     size_t count = 0;
+    size_t overflow_drop_count = 0;
 
   public:
     /// Resize buffer; resets read/write positions. Call only before first use or when no read/write is in progress.
@@ -27,17 +29,23 @@ class RingBuffer {
         read_pos = 0;
         write_pos = 0;
         count = 0;
+        overflow_drop_count = 0;
     }
 
     size_t get_available_read() const { return count; }
     size_t get_available_write() const { return capacity - count; }
+    size_t get_overflow_drop_count() const { return overflow_drop_count; }
 
-    void write(const T* data, size_t n) {
+    /// Returns the number of elements written (may be less than n when the buffer is full).
+    size_t write(const T* data, size_t n) {
         if (capacity == 0 || n == 0) {
-            return;
+            return 0;
         }
+        const size_t requested = n;
         if (n > get_available_write())
             n = get_available_write();
+        if (requested > n)
+            overflow_drop_count += requested - n;
 
         size_t first_chunk = std::min(n, capacity - write_pos);
         memcpy(buffer.data() + write_pos, data, first_chunk * sizeof(T));
@@ -49,6 +57,7 @@ class RingBuffer {
 
         write_pos = (write_pos + n) % capacity;
         count += n;
+        return n;
     }
 
     void read(T* out_data, size_t n) {
@@ -74,6 +83,7 @@ class RingBuffer {
         read_pos = 0;
         write_pos = 0;
         count = 0;
+        overflow_drop_count = 0;
     }
 };
 

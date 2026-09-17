@@ -1,6 +1,5 @@
 @tool
 extends RefCounted
-class_name ResonanceSceneUtils
 
 const UIStrings = preload("res://addons/nexus_resonance/scripts/resonance_ui_strings.gd")
 

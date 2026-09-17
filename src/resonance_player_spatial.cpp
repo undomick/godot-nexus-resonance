@@ -1,9 +1,17 @@
+#include "resonance_ambisonics_decode_binaural_policy.h"
+#include "resonance_attenuation_callback_policy.h"
 #include "resonance_constants.h"
+#include "resonance_listener_attenuation_policy.h"
+#include "resonance_listener_coords_util.h"
 #include "resonance_log.h"
 #include "resonance_math.h"
+#include "resonance_playback_attenuation_policy.h"
+#include "resonance_playback_lod_policy.h"
 #include "resonance_player.h"
 #include "resonance_probe_volume.h"
 #include "resonance_server.h"
+#include "resonance_sim_distance_attenuation_policy.h"
+#include "resonance_source_update_policy.h"
 #include "resonance_utils.h"
 #include <algorithm>
 #include <atomic>
@@ -36,6 +44,66 @@ using namespace godot;
 
 // ResonancePlayer spatial/simulation: config cache, listener, attenuation, source updates, playback params.
 
+void ResonancePlayer::_resolve_playback_occ_tx_directivity(const OcclusionData& occ_data, double delta_seconds,
+                                                           bool reset_smooth_state_when_not_smoothing,
+                                                           float& occ_val, float& tx_low, float& tx_mid, float& tx_high,
+                                                           float& directivity_val) {
+    const ConfigCache& c = config_cache_;
+
+    occ_val = (c.occlusion_input == 1) ? CLAMP(c.occlusion_value, 0.0f, 1.0f) : occ_data.occlusion;
+    tx_low = (c.transmission_input == 1) ? CLAMP(c.transmission_low, 0.0f, 1.0f) : occ_data.transmission[0];
+    tx_mid = (c.transmission_input == 1) ? CLAMP(c.transmission_mid, 0.0f, 1.0f) : occ_data.transmission[1];
+    tx_high = (c.transmission_input == 1) ? CLAMP(c.transmission_high, 0.0f, 1.0f) : occ_data.transmission[2];
+    if (c.occlusion_input == 0 && !c.simulation_occlusion_enabled)
+        occ_val = 1.0f;
+    if (c.transmission_input == 0 && !c.simulation_transmission_enabled) {
+        tx_low = 1.0f;
+        tx_mid = 1.0f;
+        tx_high = 1.0f;
+    }
+    directivity_val = (c.directivity_input == 1) ? CLAMP(c.directivity_value, 0.0f, 1.0f) : occ_data.directivity;
+
+    const float tau = c.playback_coeff_smoothing_time;
+    const bool smooth_occ = (tau > 0.0f) && (c.occlusion_input == 0);
+    const bool smooth_tx = (tau > 0.0f) && (c.transmission_input == 0);
+    if (smooth_occ || smooth_tx) {
+        const bool reinit = !coeff_smooth_initialized_ || (coeff_smooth_source_handle_ != source_handle);
+        if (reinit) {
+            if (smooth_occ)
+                coeff_smooth_occ_ = occ_val;
+            if (smooth_tx) {
+                coeff_smooth_tx_[0] = tx_low;
+                coeff_smooth_tx_[1] = tx_mid;
+                coeff_smooth_tx_[2] = tx_high;
+            }
+            coeff_smooth_initialized_ = true;
+            coeff_smooth_source_handle_ = source_handle;
+        } else {
+            float alpha = 1.0f;
+            if (delta_seconds > 0.0 && std::isfinite(static_cast<double>(tau)) && tau > 0.0f) {
+                const double t = std::max(static_cast<double>(tau), 1.0e-6);
+                alpha = 1.0f - static_cast<float>(std::exp(-delta_seconds / t));
+            }
+            if (smooth_occ)
+                coeff_smooth_occ_ += alpha * (occ_val - coeff_smooth_occ_);
+            if (smooth_tx) {
+                coeff_smooth_tx_[0] += alpha * (tx_low - coeff_smooth_tx_[0]);
+                coeff_smooth_tx_[1] += alpha * (tx_mid - coeff_smooth_tx_[1]);
+                coeff_smooth_tx_[2] += alpha * (tx_high - coeff_smooth_tx_[2]);
+            }
+        }
+        if (smooth_occ)
+            occ_val = std::clamp(coeff_smooth_occ_, 0.0f, 1.0f);
+        if (smooth_tx) {
+            tx_low = std::clamp(coeff_smooth_tx_[0], 0.0f, 1.0f);
+            tx_mid = std::clamp(coeff_smooth_tx_[1], 0.0f, 1.0f);
+            tx_high = std::clamp(coeff_smooth_tx_[2], 0.0f, 1.0f);
+        }
+    } else if (reset_smooth_state_when_not_smoothing) {
+        coeff_smooth_initialized_ = false;
+    }
+}
+
 float ResonancePlayer::_config_float(const char* key, float default_val) const {
     if (!player_config.is_valid())
         return default_val;
@@ -54,6 +122,16 @@ bool ResonancePlayer::_config_bool(const char* key, bool default_val) const {
     Variant v = player_config->get(StringName(key));
     return (v.get_type() != Variant::NIL) ? (bool)v : default_val;
 }
+
+bool ResonancePlayer::internal_wants_wet_effects() const {
+    if (!player_config.is_valid())
+        return true;
+    ResonanceServer* srv = ResonanceServer::get_singleton();
+    const bool path_global = srv && srv->is_pathing_enabled();
+    return resonance::playback_wants_wet_effects(_config_bool("reflections_enabled", true) ? 1 : 0,
+                                                 _config_int("pathing_enabled_override", -1), path_global);
+}
+
 ResonanceStreamPlayback* ResonancePlayer::_get_resonance_playback() {
     if (!is_playing())
         return nullptr;
@@ -73,15 +151,6 @@ Ref<Curve> ResonancePlayer::_config_curve(const char* key, const Ref<Curve>& def
     return default_val;
 }
 
-NodePath ResonancePlayer::_config_node_path(const char* key) const {
-    if (!player_config.is_valid())
-        return NodePath();
-    Variant v = player_config->get(StringName(key));
-    if (v.get_type() == Variant::NODE_PATH)
-        return NodePath(v);
-    return NodePath();
-}
-
 // Loads AudioStreamResonancePlayerConfig keys into `config_cache_` for hot playback paths.
 // Handles legacy keys (e.g. distance_attenuation_simulation_enabled for Linear/Curve sim flag),
 // tri-state -1/0/1 overrides with older bool fallbacks, sentinel "use global" values resolved via
@@ -95,7 +164,16 @@ void ResonancePlayer::_refresh_config_cache() {
         return;
     config_cache_.min_distance = _config_float("min_distance", 1.0f);
     config_cache_.max_distance = _config_float("max_distance", 500.0f);
-    config_cache_.source_radius = _config_float("source_radius", 1.0f);
+    {
+        // occlusion_radius aliases source_radius; prefer new key when present.
+        Variant occ_r = player_config->get(StringName("occlusion_radius"));
+        if (occ_r.get_type() != Variant::NIL)
+            config_cache_.source_radius = (float)occ_r;
+        else
+            config_cache_.source_radius = _config_float("source_radius", 1.0f);
+    }
+    config_cache_.distance_attenuation = _config_bool("distance_attenuation", true);
+    config_cache_.use_distance_curve_for_reflections = _config_bool("use_distance_curve_for_reflections", false);
     const bool legacy_dist_sim = _config_bool("distance_attenuation_simulation_enabled", true);
     int am = _config_int("attenuation_mode", 0);
     if (am == 0 && !legacy_dist_sim)
@@ -134,7 +212,8 @@ void ResonancePlayer::_refresh_config_cache() {
     config_cache_.path_validation_override = read_tri_state("path_validation_override", "path_validation_enabled");
     config_cache_.find_alternate_paths_override = read_tri_state("find_alternate_paths_override", "find_alternate_paths");
     config_cache_.reflections_type = _config_int("reflections_type", -1);
-    config_cache_.reflections_enabled = _config_int("reflections_enabled", -1);
+    // Bool in player config (default on). Legacy int -1/1 still casts to true, 0 to false.
+    config_cache_.reflections_enabled = _config_bool("reflections_enabled", true) ? 1 : 0;
     config_cache_.pathing_enabled_override = _config_int("pathing_enabled_override", -1);
     {
         auto read_tri_state_hrtf = [this](const char* new_key, const char* legacy_key) -> int {
@@ -212,52 +291,14 @@ void ResonancePlayer::_refresh_config_cache() {
     config_cache_.hrtf_interpolation_override = _config_int("hrtf_interpolation_override", -1);
     if (config_cache_.hrtf_interpolation_override < -1 || config_cache_.hrtf_interpolation_override > 1)
         config_cache_.hrtf_interpolation_override = -1;
-    {
-        int occ_wet_ov = _config_int("apply_occlusion_to_baked_reflections_override", -1);
-        if (occ_wet_ov < -1 || occ_wet_ov > 1)
-            occ_wet_ov = -1;
-        config_cache_.apply_occlusion_to_baked_reflections_override = occ_wet_ov;
-    }
-    {
-        // Reflections sampling mode (Phase 4): public config is an enum (listener-centric=0, source-centric=1),
-        // but the native server override is a tri-state bool-like switch (-1=global, 0=off, 1=on) for the baked
-        // REVERB listener-probe redirect. Keep backward compatibility with the old key.
-        int mode_ov = _config_int("reflections_sampling_mode_override", -99);
-        if (mode_ov == -99)
-            mode_ov = _config_int("baked_reverb_use_listener_probe_override", -1);
-        if (mode_ov < -1 || mode_ov > 1)
-            mode_ov = -1;
-        // Map enum -> bool override expected by the server: listener-centric => 1, source-centric => 0.
-        if (mode_ov == 0)
-            config_cache_.baked_reverb_use_listener_probe_override = 1;
-        else if (mode_ov == 1)
-            config_cache_.baked_reverb_use_listener_probe_override = 0;
-        else
-            config_cache_.baked_reverb_use_listener_probe_override = -1;
-    }
-    {
-        int tx_input = _config_int("reverb_transmission_amount_input", 0);
-        if (tx_input != 0 && tx_input != 1)
-            tx_input = 0;
-        config_cache_.reverb_transmission_amount_input = tx_input;
-        float tx_amt = _config_float("reverb_transmission_amount", 1.0f);
-        if (tx_amt < 0.0f)
-            tx_amt = 0.0f;
-        if (tx_amt > 1.0f)
-            tx_amt = 1.0f;
-        config_cache_.reverb_transmission_amount = tx_amt;
-    }
     config_cache_valid_ = true;
+    attenuation_setup_cache_.valid = false;
 }
 
 bool ResonancePlayer::_steam_sim_distance_attenuation_enabled(const ConfigCache& c) {
-    if (c.attenuation_mode == ATTENUATION_DISABLED)
-        return false;
-    if (c.attenuation_mode == ATTENUATION_INVERSE)
-        return true;
-    // Unity parity: Linear/Curve distance attenuation is applied on the direct playback path, not through the simulator.
-    // Feeding a callback distanceAttenuationModel into the simulator can skew baked/static reflection IR levels.
-    return false;
+    // Direct simulation flag only for Inverse (Physics Based). Linear/Curve: playback DA on Direct;
+    // Pathing/Reflections CALLBACK is chosen in ResonanceServer from attenuation_mode + use_distance_curve_for_reflections.
+    return resonance::sim_direct_distance_attenuation_flag(c.distance_attenuation, c.attenuation_mode);
 }
 void ResonancePlayer::_ensure_config_valid() {
     if (config_cache_frame_countdown <= 0 || !config_cache_valid_) {
@@ -305,21 +346,12 @@ ResonanceServer::SourceUpdateParams ResonancePlayer::_build_source_update_params
     const Vector3 up = gt.basis.get_column(1);
     const int baked_var = _compute_baked_data_variation(srv);
 
+    // Static Source: this player's pose. Static Listener: active listener pose.
+    // No separate marker NodePaths (bake targets live on ResonanceProbeVolume).
     Vector3 baked_center = get_global_position();
-    Vector3 listener_pos_for_bake = get_global_position();
-    Viewport* vp = get_viewport();
-    if (vp && vp->get_camera_3d())
-        listener_pos_for_bake = vp->get_camera_3d()->get_global_position();
-    if (baked_var == 1) {
-        NodePath np = _config_node_path("current_baked_source");
-        Node* n = np.is_empty() ? nullptr : get_node_or_null(np);
-        Node3D* n3d = n ? Object::cast_to<Node3D>(n) : nullptr;
-        baked_center = n3d ? n3d->get_global_position() : get_global_position();
-    } else if (baked_var == 2) {
-        NodePath np = _config_node_path("current_baked_listener");
-        Node* n = np.is_empty() ? nullptr : get_node_or_null(np);
-        Node3D* n3d = n ? Object::cast_to<Node3D>(n) : nullptr;
-        baked_center = n3d ? n3d->get_global_position() : listener_pos_for_bake;
+    if (baked_var == 2) {
+        if (srv && srv->is_initialized())
+            baked_center = resonance::listener_origin_godot(srv->get_current_listener_coords());
     }
 
     const bool eff_path_validation = (c.path_validation_override == -1) ? srv->get_default_path_validation_enabled()
@@ -337,6 +369,11 @@ ResonanceServer::SourceUpdateParams ResonancePlayer::_build_source_update_params
     params.air_absorption_enabled = c.air_absorption_enabled && (c.air_absorption_input == 0);
     params.use_sim_distance_attenuation = _steam_sim_distance_attenuation_enabled(c);
     params.min_distance = c.min_distance;
+    params.distance_attenuation = c.distance_attenuation && c.attenuation_mode != ATTENUATION_DISABLED;
+    params.attenuation_mode = c.attenuation_mode;
+    params.use_distance_curve_for_reflections =
+        c.use_distance_curve_for_reflections &&
+        resonance::use_distance_curve_for_reflections_editable(c.distance_attenuation, c.attenuation_mode);
     params.path_validation_enabled = eff_path_validation;
     params.find_alternate_paths = eff_find_alternate;
     params.occlusion_samples = c.occlusion_samples;
@@ -365,9 +402,6 @@ void ResonancePlayer::_apply_update_source(int32_t pathing_batch, bool defer_if_
     if (!srv || source_handle < 0)
         return;
 
-    srv->set_source_baked_reverb_use_listener_probe_override(source_handle,
-                                                             config_cache_.baked_reverb_use_listener_probe_override);
-
     const ResonanceServer::SourceUpdateParams params = _build_source_update_params(srv, pathing_batch);
 
     if (defer_if_sim_mutex_busy) {
@@ -381,35 +415,70 @@ void ResonancePlayer::_apply_update_source(int32_t pathing_batch, bool defer_if_
 }
 
 void ResonancePlayer::_setup_attenuation(ResonanceServer* srv) {
+    if (!srv || source_handle < 0)
+        return;
     const ConfigCache& c = config_cache_;
+    int mode_for_server = 0;
+    float curve_local[resonance::kAttenuationCurveSamples]{};
+    int num_curve = 0;
     if (c.attenuation_mode == ATTENUATION_LINEAR || c.attenuation_mode == ATTENUATION_CUSTOM_CURVE) {
-        PackedFloat32Array curve_samples;
+        mode_for_server = c.attenuation_mode;
         const int n = resonance::kAttenuationCurveSamples;
+        num_curve = n;
         if (c.attenuation_mode == ATTENUATION_LINEAR) {
-            curve_samples.resize(n);
             for (int i = 0; i < n; i++)
-                curve_samples[i] = 1.0f - (float)i / (n - 1); // Linear falloff
+                curve_local[i] = 1.0f - (float)i / (n - 1);
         } else if (c.attenuation_curve.is_valid()) {
-            curve_samples.resize(n);
             for (int i = 0; i < n; i++) {
                 float t = (float)i / (n - 1);
-                curve_samples[i] = c.attenuation_curve->sample(t);
+                curve_local[i] = c.attenuation_curve->sample(t);
             }
         } else {
-            curve_samples.resize(n);
             for (int i = 0; i < n; i++)
-                curve_samples[i] = (i == 0) ? 1.0f : 0.0f;
+                curve_local[i] = (i == 0) ? 1.0f : 0.0f;
         }
-        srv->set_source_attenuation_callback_data(source_handle, c.attenuation_mode, c.min_distance, c.max_distance, curve_samples);
     } else if (c.attenuation_mode == ATTENUATION_INVERSE || c.attenuation_mode == ATTENUATION_DISABLED) {
-        PackedFloat32Array empty_curve;
-        srv->set_source_attenuation_callback_data(source_handle, 0, c.min_distance, c.max_distance, empty_curve);
+        mode_for_server = 0;
+        num_curve = 0;
+    } else {
+        return;
     }
+
+    if (attenuation_setup_cache_.valid &&
+        resonance::attenuation_callback_data_equal(attenuation_setup_cache_.mode, attenuation_setup_cache_.min_distance,
+                                                   attenuation_setup_cache_.max_distance, attenuation_setup_cache_.curve_samples,
+                                                   attenuation_setup_cache_.num_curve_samples, mode_for_server, c.min_distance,
+                                                   c.max_distance, curve_local, num_curve)) {
+        return;
+    }
+
+    PackedFloat32Array curve_samples;
+    if (num_curve > 0) {
+        curve_samples.resize(num_curve);
+        for (int i = 0; i < num_curve; i++)
+            curve_samples[i] = curve_local[i];
+    }
+    srv->set_source_attenuation_callback_data(source_handle, mode_for_server, c.min_distance, c.max_distance, curve_samples);
+
+    attenuation_setup_cache_.mode = mode_for_server;
+    attenuation_setup_cache_.min_distance = c.min_distance;
+    attenuation_setup_cache_.max_distance = c.max_distance;
+    attenuation_setup_cache_.num_curve_samples = num_curve;
+    for (int i = 0; i < num_curve; i++)
+        attenuation_setup_cache_.curve_samples[i] = curve_local[i];
+    attenuation_setup_cache_.valid = true;
 }
 
-void ResonancePlayer::_compute_listener_data(Viewport* vp, Vector3& out_listener_pos, IPLCoordinateSpace3& out_listener_orient) {
+void ResonancePlayer::_compute_listener_data(ResonanceServer* srv, Vector3& out_listener_pos,
+                                             IPLCoordinateSpace3& out_listener_orient) {
     out_listener_pos = Vector3(0, 0, 0);
     out_listener_orient = IPLCoordinateSpace3{};
+    if (srv && srv->is_initialized()) {
+        out_listener_orient = srv->get_current_listener_coords();
+        out_listener_pos = resonance::listener_origin_godot(out_listener_orient);
+        return;
+    }
+    Viewport* vp = get_viewport();
     if (vp && vp->get_camera_3d()) {
         Camera3D* cam = vp->get_camera_3d();
         out_listener_pos = cam->get_global_position();
@@ -426,8 +495,14 @@ void ResonancePlayer::_compute_listener_data(Viewport* vp, Vector3& out_listener
 void ResonancePlayer::_compute_attenuation(float dist, const OcclusionData& occ_data, float& out_attenuation) {
     const ConfigCache& c = config_cache_;
     out_attenuation = 1.0f;
+    if (!c.distance_attenuation) {
+        out_attenuation = 1.0f;
+        return;
+    }
     if (c.attenuation_mode == ATTENUATION_INVERSE) {
-        out_attenuation = occ_data.distance_attenuation;
+        // Inverse: 1/d with min_distance knee; max_distance ignored (Phonon InverseDistance).
+        out_attenuation =
+            resonance::playback_inverse_distance_attenuation(dist, c.min_distance, occ_data.distance_attenuation);
     } else if (c.attenuation_mode == ATTENUATION_DISABLED) {
         out_attenuation = 1.0f;
     } else if (c.attenuation_mode == ATTENUATION_LINEAR) {
@@ -499,8 +574,10 @@ PlaybackParameters ResonancePlayer::_build_playback_params(const Vector3& listen
     new_params.air_absorption[2] = air_abs.z;
     new_params.apply_directivity = c.directivity_enabled;
     new_params.directivity_value = directivity_val;
-    new_params.apply_hrtf_to_reflections = (c.reverb_binaural_override == -1) ? srv->use_reverb_binaural() : (c.reverb_binaural_override == 1);
-    new_params.apply_hrtf_to_pathing = (c.pathing_binaural_override == -1) ? srv->use_pathing_binaural() : (c.pathing_binaural_override == 1);
+    new_params.apply_hrtf_to_reflections =
+        resonance::resolve_binaural_override(c.reverb_binaural_override, srv->use_reverb_binaural());
+    new_params.apply_hrtf_to_pathing =
+        resonance::resolve_binaural_override(c.pathing_binaural_override, srv->use_pathing_binaural());
     new_params.listener_orientation = listener_orient;
     new_params.enable_direct = direct_enabled;
     new_params.enable_reverb = reverb_enabled;
@@ -533,31 +610,8 @@ PlaybackParameters ResonancePlayer::_build_playback_params(const Vector3& listen
         eff_hrtf_bi = true;
     new_params.direct_effect_hrtf_bilinear = eff_hrtf_bi;
 
-    // Optional extra wet damping for baked REVERB (IR has no source direction); realtime/static bakes use factor 1.
-    bool apply_occ_wet = false;
-    if (srv) {
-        switch (c.apply_occlusion_to_baked_reflections_override) {
-        case 0:
-            apply_occ_wet = false;
-            break;
-        case 1:
-            apply_occ_wet = true;
-            break;
-        default:
-            apply_occ_wet = srv->get_apply_occlusion_to_baked_reflections();
-            break;
-        }
-    }
-    float trans_amount = 1.0f;
-    if (c.reverb_transmission_amount_input == 1)
-        trans_amount = c.reverb_transmission_amount;
-    else if (srv)
-        trans_amount = srv->get_reverb_transmission_amount();
+    // Baked REVERB wet is not multiplied by direct-path occlusion/transmission.
     new_params.wet_occlusion_factor = 1.0f;
-    if (srv && apply_occ_wet && _compute_baked_data_variation(srv) == 0) {
-        new_params.wet_occlusion_factor = resonance::baked_reverb_wet_occlusion_factor(
-            occ_val, tx_low, tx_mid, tx_high, trans_amount);
-    }
 
     // Air absorption on the wet path: baked REVERB only. STATICSOURCE/STATICLISTENER IRs encode endpoint geometry;
     // runtime air absorption on the wet pre-EQ is distance-based and can over-damp at probe boundaries.
@@ -621,7 +675,7 @@ void ResonancePlayer::_apply_playback_params_from_simulation(ResonanceServer* sr
     Viewport* vp = get_viewport();
     Vector3 listener_pos;
     IPLCoordinateSpace3 listener_orient;
-    _compute_listener_data(vp, listener_pos, listener_orient);
+    _compute_listener_data(srv, listener_pos, listener_orient);
 
     OcclusionData occ_data = srv->get_source_occlusion_data(source_handle);
     float dist = get_global_position().distance_to(listener_pos);
@@ -636,60 +690,12 @@ void ResonancePlayer::_apply_playback_params_from_simulation(ResonanceServer* sr
     } else {
         air_abs = Vector3(occ_data.air_absorption[0], occ_data.air_absorption[1], occ_data.air_absorption[2]);
     }
-    float occ_val = (c.occlusion_input == 1) ? CLAMP(c.occlusion_value, 0.0f, 1.0f) : occ_data.occlusion;
-    float tx_low = (c.transmission_input == 1) ? CLAMP(c.transmission_low, 0.0f, 1.0f) : occ_data.transmission[0];
-    float tx_mid = (c.transmission_input == 1) ? CLAMP(c.transmission_mid, 0.0f, 1.0f) : occ_data.transmission[1];
-    float tx_high = (c.transmission_input == 1) ? CLAMP(c.transmission_high, 0.0f, 1.0f) : occ_data.transmission[2];
-    if (c.occlusion_input == 0 && !c.simulation_occlusion_enabled)
-        occ_val = 1.0f;
-    if (c.transmission_input == 0 && !c.simulation_transmission_enabled) {
-        tx_low = 1.0f;
-        tx_mid = 1.0f;
-        tx_high = 1.0f;
-    }
-    // Sim occlusion/transmission off: force unity so wet path is not damped by stale worker values.
-    float directivity_val = (c.directivity_input == 1) ? CLAMP(c.directivity_value, 0.0f, 1.0f) : occ_data.directivity;
-
-    // Low-pass sim occ/tx only when not manually overridden (playback_coeff_smoothing_time).
-    const float tau = c.playback_coeff_smoothing_time;
-    const bool smooth_occ = (tau > 0.0f) && (c.occlusion_input == 0);
-    const bool smooth_tx = (tau > 0.0f) && (c.transmission_input == 0);
-    if (smooth_occ || smooth_tx) {
-        const bool reinit = !coeff_smooth_initialized_ || (coeff_smooth_source_handle_ != source_handle);
-        if (reinit) {
-            if (smooth_occ)
-                coeff_smooth_occ_ = occ_val;
-            if (smooth_tx) {
-                coeff_smooth_tx_[0] = tx_low;
-                coeff_smooth_tx_[1] = tx_mid;
-                coeff_smooth_tx_[2] = tx_high;
-            }
-            coeff_smooth_initialized_ = true;
-            coeff_smooth_source_handle_ = source_handle;
-        } else {
-            float alpha = 1.0f;
-            if (delta_seconds > 0.0 && std::isfinite(static_cast<double>(tau)) && tau > 0.0f) {
-                const double t = std::max(static_cast<double>(tau), 1.0e-6);
-                alpha = 1.0f - static_cast<float>(std::exp(-delta_seconds / t));
-            }
-            if (smooth_occ)
-                coeff_smooth_occ_ += alpha * (occ_val - coeff_smooth_occ_);
-            if (smooth_tx) {
-                coeff_smooth_tx_[0] += alpha * (tx_low - coeff_smooth_tx_[0]);
-                coeff_smooth_tx_[1] += alpha * (tx_mid - coeff_smooth_tx_[1]);
-                coeff_smooth_tx_[2] += alpha * (tx_high - coeff_smooth_tx_[2]);
-            }
-        }
-        if (smooth_occ)
-            occ_val = std::clamp(coeff_smooth_occ_, 0.0f, 1.0f);
-        if (smooth_tx) {
-            tx_low = std::clamp(coeff_smooth_tx_[0], 0.0f, 1.0f);
-            tx_mid = std::clamp(coeff_smooth_tx_[1], 0.0f, 1.0f);
-            tx_high = std::clamp(coeff_smooth_tx_[2], 0.0f, 1.0f);
-        }
-    } else {
-        coeff_smooth_initialized_ = false;
-    }
+    float occ_val = 0.0f;
+    float tx_low = 0.0f;
+    float tx_mid = 0.0f;
+    float tx_high = 0.0f;
+    float directivity_val = 0.0f;
+    _resolve_playback_occ_tx_directivity(occ_data, delta_seconds, true, occ_val, tx_low, tx_mid, tx_high, directivity_val);
 
     // Peek first to avoid fetch cost; fetch only when worker cache has no reverb hint yet.
     IPLReflectionEffectParams ignored_params{};
@@ -697,12 +703,10 @@ void ResonancePlayer::_apply_playback_params_from_simulation(ResonanceServer* sr
     if (!has_reverb)
         has_reverb = srv->fetch_reverb_params(source_handle, ignored_params);
 
-    const float master_mix = resonance::sanitize_audio_float(c.master_mix_level);
-    const float eff_direct_mix = c.direct_mix_level * master_mix;
-    const float eff_refl_mix = c.reflections_mix_level * master_mix;
-    const float eff_path_mix = c.pathing_mix_level * master_mix;
-    bool direct_enabled = (eff_direct_mix > 0.0f) && (!srv || srv->is_output_direct_enabled());
-    bool reverb_enabled = ((eff_refl_mix > 0.0f) || (eff_path_mix > 0.0f)) && (!srv || srv->is_output_reverb_enabled());
+    // Mix levels live in PlaybackParameters and ramp DSP only. Enable gates
+    // follow output_* so Mix 0 still feeds EffectApply / Overlap-Save with silence.
+    const bool direct_enabled = resonance::playback_enable_direct(!srv || srv->is_output_direct_enabled());
+    const bool reverb_enabled = resonance::playback_enable_reverb(!srv || srv->is_output_reverb_enabled());
 
     bool apply_perspective = (c.perspective_override == 1) || (c.perspective_override == -1 && srv->is_perspective_correction_enabled());
     float perspective_factor_val = (c.perspective_override == 1) ? CLAMP(c.perspective_factor, resonance::kPlayerPerspectiveFactorMin, resonance::kPlayerPerspectiveFactorMax) : srv->get_perspective_correction_factor();
@@ -714,6 +718,8 @@ void ResonancePlayer::_apply_playback_params_from_simulation(ResonanceServer* sr
                                                            has_reverb, direct_enabled, reverb_enabled);
 
     _broadcast_update_parameters(new_params);
+    last_pushed_playback_params_ = new_params;
+    last_pushed_playback_params_valid_ = true;
 
     if (opt_debug_out) {
         opt_debug_out->source_pos = get_global_position();
@@ -722,6 +728,11 @@ void ResonancePlayer::_apply_playback_params_from_simulation(ResonanceServer* sr
         opt_debug_out->transmission[0] = tx_low;
         opt_debug_out->transmission[1] = tx_mid;
         opt_debug_out->transmission[2] = tx_high;
+        opt_debug_out->hit0_transmission[0] = occ_data.hit0_transmission[0];
+        opt_debug_out->hit0_transmission[1] = occ_data.hit0_transmission[1];
+        opt_debug_out->hit0_transmission[2] = occ_data.hit0_transmission[2];
+        opt_debug_out->hit0_valid = occ_data.hit0_valid;
+        opt_debug_out->num_transmission_rays = occ_data.num_transmission_rays;
         opt_debug_out->attenuation = attenuation;
         opt_debug_out->distance = dist;
         opt_debug_out->air_absorption = air_abs;
@@ -729,6 +740,55 @@ void ResonancePlayer::_apply_playback_params_from_simulation(ResonanceServer* sr
         opt_debug_out->air_abs_enabled = c.air_absorption_enabled;
         opt_debug_out->directivity_enabled = c.directivity_enabled;
     }
+}
+
+void ResonancePlayer::_apply_playback_coeff_refresh_from_simulation(ResonanceServer* srv, double delta_seconds) {
+    if (!srv || !srv->is_spatial_audio_output_ready() || !last_pushed_playback_params_valid_)
+        return;
+
+    const ConfigCache& c = config_cache_;
+    OcclusionData occ_data = srv->get_source_occlusion_data(source_handle);
+
+    float occ_val = 0.0f;
+    float tx_low = 0.0f;
+    float tx_mid = 0.0f;
+    float tx_high = 0.0f;
+    float directivity_val = 0.0f;
+    _resolve_playback_occ_tx_directivity(occ_data, delta_seconds, false, occ_val, tx_low, tx_mid, tx_high, directivity_val);
+
+    PlaybackParameters patched = last_pushed_playback_params_;
+    patched.occlusion = occ_val;
+    patched.transmission[0] = tx_low;
+    patched.transmission[1] = tx_mid;
+    patched.transmission[2] = tx_high;
+    patched.directivity_value = directivity_val;
+
+    patched.wet_occlusion_factor = 1.0f;
+
+    patched.enable_direct = resonance::playback_enable_direct(srv->is_output_direct_enabled());
+    patched.enable_reverb = resonance::playback_enable_reverb(srv->is_output_reverb_enabled());
+
+    if (resonance::playback_lod_coeff_refresh_includes_position_attenuation()) {
+        Viewport* vp = get_viewport();
+        Vector3 listener_pos;
+        IPLCoordinateSpace3 listener_orient;
+        _compute_listener_data(srv, listener_pos, listener_orient);
+        float dist = get_global_position().distance_to(listener_pos);
+        float attenuation = 1.0f;
+        _compute_attenuation(dist, occ_data, attenuation);
+        bool apply_perspective = (c.perspective_override == 1) || (c.perspective_override == -1 && srv->is_perspective_correction_enabled());
+        float perspective_factor_val = (c.perspective_override == 1)
+                                           ? CLAMP(c.perspective_factor, resonance::kPlayerPerspectiveFactorMin, resonance::kPlayerPerspectiveFactorMax)
+                                           : srv->get_perspective_correction_factor();
+        Vector3 effective_source_pos = _apply_perspective_correction(listener_pos, vp, apply_perspective, perspective_factor_val);
+        patched.attenuation = attenuation;
+        patched.distance = dist;
+        patched.source_position = effective_source_pos;
+        patched.listener_orientation = listener_orient;
+    }
+
+    _broadcast_update_parameters(patched);
+    last_pushed_playback_params_ = patched;
 }
 
 void ResonancePlayer::_sync_player_debug_drawer(double delta, ResonanceServer* srv, const ResonanceDebugData& dbg_data, bool hud_active) {
@@ -739,8 +799,10 @@ void ResonancePlayer::_sync_player_debug_drawer(double delta, ResonanceServer* s
     debug_drawer.process(delta, dbg_data, occ, ref, get_name(), hud_active);
 }
 
-void ResonancePlayer::_push_playback_parameters_from_simulation(ResonanceServer* srv, ResonanceDebugData* opt_debug_out, double delta_seconds) {
-    _prepare_source_for_simulation(srv);
+void ResonancePlayer::_push_playback_parameters_from_simulation(ResonanceServer* srv, ResonanceDebugData* opt_debug_out, double delta_seconds,
+                                                                bool run_prepare) {
+    if (run_prepare)
+        _prepare_source_for_simulation(srv);
     _apply_playback_params_from_simulation(srv, opt_debug_out, delta_seconds);
 }
 

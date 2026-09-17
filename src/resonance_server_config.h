@@ -16,19 +16,14 @@ struct ResonanceServerConfig {
     int sample_rate = 48000;
     int frame_size = resonance::kGodotDefaultFrameSize;
     int ambisonic_order = 1;
-    float max_reverb_duration = 2.0f;
 
     // Simulation
     int simulation_threads = 1;
     float simulation_cpu_cores_percent = resonance::kDefaultSimulationCpuCoresPercent;
-    int max_rays = 4096;
+    int max_rays = resonance::kDefaultRealtimeRays;
     int max_bounces = 4;
-    float reverb_influence_radius = 10000.0f;
-    float reverb_transmission_amount = 1.0f;
-    /// If true (default), damp baked REVERB wet by direct-path occlusion×transmission so walls reduce the wet IR (which itself does not encode source/listener geometry). Set false for always-on stylised reverb beds.
-    bool apply_occlusion_to_baked_reflections = true;
-    /// If true (default), baked REVERB picks the probe nearest the listener (Steam Audio IPL_BAKEDDATAVARIATION_REVERB assumes source==listener). Disable to fall back to legacy source-position lookup.
-    bool baked_reverb_use_listener_probe = true;
+    /// Fallback endpoint radius for STATICSOURCE/STATICLISTENER when per-bake radius is unset.
+    float reverb_influence_radius = resonance::kBakedEndpointRadius;
 
     // Reflection
     int reflection_type = 0;
@@ -61,14 +56,14 @@ struct ResonanceServerConfig {
     /// Direct path non-HRTF panning: 1,2,4,6,8 (Mono/Stereo/Quad/5.1/7.1). Invalid values become stereo.
     int direct_speaker_channels = 2;
 
-    // Pathing
+    // Pathing (visibility defaults: radius 1.0, threshold 0.1, range 1000)
     bool pathing_enabled = false;
-    float pathing_vis_radius = 0.5f;
+    float pathing_vis_radius = 1.0f;
     float pathing_vis_threshold = 0.1f;
-    float pathing_vis_range = 100.0f;
+    float pathing_vis_range = 1000.0f;
     bool pathing_normalize_eq = true;
-    /// Runtime pathing: IPL numVisSamples when pathing on (1–16). Independent of bake_pathing_num_samples.
-    int pathing_num_vis_samples = resonance::kRuntimePathingDefaultNumVisSamples;
+    /// Pathing visibility samples for bake and runtime (1-16).
+    int pathing_num_samples = resonance::kRuntimePathingDefaultNumVisSamples;
     /// Default when ResonancePlayerConfig uses Use Global (-1) for path validation (dynamic occlusion of baked paths).
     bool path_validation_enabled = true;
     /// Default when player uses Use Global (-1) for find-alternate-paths (requires validation on to take effect).

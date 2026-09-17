@@ -51,7 +51,7 @@ class ResonanceMixerProcessor {
     size_t pending_len_ = 0; // Valid samples in pending_* (fixed capacity; no hotpath resize)
 
     void _write_stereo_to_audio_frames_with_carry(AudioFrame* out_frames, int frame_count);
-    void _decode_ambisonic_to_stereo_buffer(IPLAudioBuffer* ambi_in, const IPLCoordinateSpace3& listener_coords);
+    void _decode_ambisonic_to_stereo_buffer(IPLAudioBuffer* ambi_in, const IPLCoordinateSpace3& listener_coords, bool apply_binaural);
     void _cache_last_stereo_block();
     bool _restore_last_stereo_block();
     bool _can_decode() const;
@@ -78,7 +78,8 @@ class ResonanceMixerProcessor {
     bool process_mixer_return(IPLReflectionMixer mixer_handle, const IPLCoordinateSpace3& listener_coords, AudioFrame* out_frames, int frame_count);
 
     /// Decode caller-owned HOA (no `iplReflectionMixerApply`; e.g. player convolution tap).
-    bool decode_ambisonic_to_stereo(IPLAudioBuffer* ambi_buf, const IPLCoordinateSpace3& listener_coords, AudioFrame* out_frames, int frame_count);
+    bool decode_ambisonic_to_stereo(IPLAudioBuffer* ambi_buf, const IPLCoordinateSpace3& listener_coords, AudioFrame* out_frames,
+                                    int frame_count, bool apply_binaural);
 };
 
 } // namespace godot

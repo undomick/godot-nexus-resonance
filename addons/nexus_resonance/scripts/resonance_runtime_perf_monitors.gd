@@ -1,5 +1,4 @@
 extends RefCounted
-class_name ResonanceRuntimePerfMonitors
 
 ## Debugger [Performance] monitors for [ResonanceRuntime]. The runtime node owns one instance and drives it:
 ## [method register](owner, level), [method tick](owner) per frame, [method unregister_all] on exit. Monitor callables

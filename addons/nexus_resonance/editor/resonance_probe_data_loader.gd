@@ -56,7 +56,7 @@ func _load_tres(path: String) -> Variant:
 		return ERR_CANT_OPEN
 	var content: String = f.get_as_text()
 	f.close()
-	var parsed := _parse_tres_data(content)
+	var parsed: Variant = _parse_tres_data(content)
 	if parsed == null:
 		return ERR_PARSE_ERROR
 	var data_val = parsed.data
@@ -72,6 +72,7 @@ func _load_tres(path: String) -> Variant:
 	res.set("probe_positions", probe_pos_val)
 	res.set("bake_params_hash", parsed.bake_params_hash)
 	res.set("baked_reflection_type", parsed.baked_reflection_type)
+	res.set("baked_ambisonics_order", parsed.baked_ambisonics_order)
 	res.set("pathing_params_hash", parsed.pathing_params_hash)
 	res.set("static_source_params_hash", parsed.static_source_params_hash)
 	res.set("static_listener_params_hash", parsed.static_listener_params_hash)
@@ -87,6 +88,7 @@ func _parse_tres_data(content: String) -> Variant:
 	var probe_positions_expr := ""
 	var bake_params_hash := 0
 	var baked_reflection_type := -1
+	var baked_ambisonics_order := -1
 	var pathing_params_hash := 0
 	var static_source_params_hash := 0
 	var static_listener_params_hash := 0
@@ -108,6 +110,8 @@ func _parse_tres_data(content: String) -> Variant:
 			bake_params_hash = int(stripped.substr(19))
 		elif stripped.begins_with("baked_reflection_type = "):
 			baked_reflection_type = int(stripped.substr(23))
+		elif stripped.begins_with("baked_ambisonics_order = "):
+			baked_ambisonics_order = int(stripped.substr(24))
 		elif stripped.begins_with("pathing_params_hash = "):
 			pathing_params_hash = int(stripped.substr(21))
 		elif stripped.begins_with("static_source_params_hash = "):
@@ -152,6 +156,7 @@ func _parse_tres_data(content: String) -> Variant:
 		"probe_positions": probe_positions_result,
 		"bake_params_hash": bake_params_hash,
 		"baked_reflection_type": baked_reflection_type,
+		"baked_ambisonics_order": baked_ambisonics_order,
 		"pathing_params_hash": pathing_params_hash,
 		"static_source_params_hash": static_source_params_hash,
 		"static_listener_params_hash": static_listener_params_hash,

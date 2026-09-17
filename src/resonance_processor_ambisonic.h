@@ -39,6 +39,7 @@ class ResonanceAmbisonicProcessor {
     bool apply_hrtf = true;
     bool input_is_sn3d = true;
     bool apply_output_gain = true;
+    bool last_used_rotation_effect_ = false;
 
   public:
     ResonanceAmbisonicProcessor() = default;
@@ -66,6 +67,11 @@ class ResonanceAmbisonicProcessor {
     void process(const std::vector<float>& input_data, IPLAudioBuffer& out_buffer, bool combined_matrix_decode,
                  const IPLCoordinateSpace3& listener_orient, const IPLCoordinateSpace3& combined_decode_orientation,
                  IPLHRTF runtime_hrtf);
+
+    int get_tail_size_samples() const;
+    /// EOS: drain rotation (if active) then decode internal tails into stereo out.
+    bool process_tail(IPLAudioBuffer& out_buffer);
+    void reset_for_new_playback();
 };
 
 } // namespace godot

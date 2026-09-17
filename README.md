@@ -23,9 +23,9 @@ Steam Audio integration for Godot 4: physics-based occlusion, reverb, and pathin
 
 ## Bake Workflow
 
-1. **Bake Probes (Reflections)** - Required first. Samples reverb at probe positions. Requires ResonanceGeometry on MeshInstance3Ds. Saves to the Probe Data resource on the volume. Optional: add **ResonanceProbeExclusion** children under the volume to skip probes inside those boxes.
+1. **Bake Probes (Reflections)** - Required first. Samples reverb at probe positions using `ResonanceRuntime.reflection_type` and bake Ambisonic Order (`ResonanceRuntimeConfig.bake_ambisonic_order`, overridable per volume on `ResonanceBakeConfig.bake_ambisonics_order`: Use Global / 1st–3rd). Playback uses Realtime Ambisonic Order separately. Pathing bake follows Runtime `pathing_enabled`. Requires ResonanceGeometry on MeshInstance3Ds. Saves to the Probe Data resource on the volume. Optional: add **ResonanceProbeExclusion** children under the volume to skip probes inside those boxes.
 2. **Bake Pathing** - Optional. Enables multi-path sound around obstacles. Run after Bake Probes.
-3. **Bake Static Source / Static Listener** - Optional. For static sound sources or listener positions. Set `scan_targets` to scene-tree roots (nodes or instanced scenes), then use inspector **Update Targets** to fill `bake_sources` / `bake_listeners` (replaces those arrays). Or assign NodePaths manually. At runtime use `add_bake_source` / `remove_bake_source` and the listener equivalents.
+3. **Bake Static Source / Static Listener** - Optional. For static sound sources or listener positions. Set `scan_targets` to scene-tree roots (nodes or instanced scenes), then use inspector **Update Targets** to fill `bake_sources` / `bake_listeners` (replaces those arrays). Or assign NodePaths manually. Non-empty arrays enable the corresponding bake pass (no separate Additional Bake checkbox). At runtime use `add_bake_source` / `remove_bake_source` and the listener equivalents.
 
 Use the toolbar buttons (Bake Probes, Bake Pathing, Bake More) when a ResonanceProbeVolume is selected. Bake progress appears in the toolbar.
 
@@ -54,6 +54,33 @@ runtime_baker.reload_all_runtime_bakes(map_root_node)
 runtime_baker.shutdown()
 ```
 
+### Runtime Static Rebuild (Destroyable / Streaming)
+
+When a level uses a merged **ResonanceStaticScene**, live static geometry nodes are not registered in Phonon. Hiding or freeing walls does not update occlusion/reverb until you re-export and reload. Use the `ResonanceRuntimeExporter` public API from play mode / exported games. Hidden (`visible = false`) and freed nodes are omitted from the merge.
+
+```gdscript
+# Prefer await when gameplay must wait for reload (+ optional RAM probe bake)
+wall.visible = false
+await ResonanceRuntimeExporter.export_static_async(level_root, { "bake_probes": true })
+
+# Fire-and-forget (returns immediately; with bake_probes, RAM bake starts next frame after reload)
+# ResonanceRuntimeExporter.export_static(level_root, { "bake_probes": true })
+
+# In-memory asset only (no assign / reload)
+# var asset = ResonanceRuntimeExporter.export_asset(level_root)
+
+# Full pack replace when there is no ResonanceStaticScene node
+# ResonanceRuntimeExporter.replace_static(assets, transforms)
+
+# Debounced ResonanceRuntime.request_static_scene_reload
+# ResonanceRuntimeExporter.reload(level_root)
+
+# opts keys: bake_probes, probe_volumes, baker (ResonanceRuntimeBaker),
+# optional_save_path, static_scene_node, reload (default true)
+```
+
+Movers belong on **ResonanceDynamicGeometry**, not a static re-export. Custom scene type (Godot Physics) cannot replace static packs. Low-level C++ (prefer the helper): `ResonanceServer.export_static_scene_to_geometry_asset`, `export_static_scene_to_asset`, `replace_static_scenes_from_assets`.
+
 ## Audio Buffer & Latency
 
 - **ResonanceRuntimeConfig → Ray Tracer Settings → Audio Frame Size**: Steam Audio processing block size (256, 512, 1024). 512 matches Godot’s typical mix callback. 256 = lower latency, more CPU; 1024 = higher latency, less CPU.
@@ -69,16 +96,20 @@ Configure in Project Settings → Audio → Nexus Resonance:
 
 ## Probe / Runtime Compatibility
 
-Baked probe data must match the runtime configuration. Incompatible combinations are rejected to avoid corrupted audio output:
+Baked probe data must match the runtime reflection type exactly (same bake layer). Mismatched reflection types skip the whole Probe Volume at load and show red gizmos in the editor:
 
 | baked_reflection_type | runtime reflection_type | Compatible? |
 |-----------------------|--------------------------|-------------|
-| 0 (Convolution)       | 0 or 2                   | Yes         |
-| 1 (Parametric)        | 1 or 2                   | Yes         |
-| 2 (Hybrid)            | 0, 1, or 2               | Yes         |
-| -1 (Legacy, both)     | 0, 1, or 2               | Yes         |
+| 0 (Convolution)       | 0 (Convolution) or 3 (TAN) | Yes       |
+| 1 (Parametric)        | 1 (Parametric)           | Yes         |
+| 2 (Hybrid)            | 2 (Hybrid)               | Yes         |
+| -1 (Legacy, both)     | 0, 1, 2, or 3            | Yes         |
 
-**Pathing:** When `pathing_enabled` is true in ResonanceRuntimeConfig, probe data must have pathing baked (`pathing_params_hash > 0`). Enable Pathing in the volume's bake_config and run Bake Pathing before or with Bake Probes.
+Bake `reflection_type`, pathing on/off, and ambisonics order come from [ResonanceRuntime] (not BakeConfig). Changing them after a bake requires a rebake for an exact match.
+
+**Ambisonics:** If bake order and runtime order differ, the batch still loads and playback uses `min(baked, runtime)` with one aggregated warning naming the volumes.
+
+**Pathing:** Controlled by `ResonanceRuntimeConfig.pathing_enabled`. If pathing is on but the volume has no pathing layer, pathing is skipped (reflections keep working) and a warning lists the volumes. Pathing quality ranges stay on BakeConfig.
 
 ## Troubleshooting
 
@@ -89,7 +120,8 @@ Baked probe data must match the runtime configuration. Incompatible combinations
 | **"Steam Audio Context/Scene missing"** | ResonanceGeometry nodes must be in the scene and refreshed. Add ResonanceGeometry as child of MeshInstance3Ds, assign ResonanceMaterial, then try Bake Probes again. |
 | **Probes not visible** | Select the ResonanceProbeVolume and enable the "Viz" toggle in the toolbar. Ensure the GDExtension is loaded. |
 | **Bake fails / no output** | Check the Godot Output/Console for Steam Audio errors. Ensure scene geometry has ResonanceGeometry with valid materials. |
-| **Probe batch rejected / no reverb** | Baked reflection type must match runtime (see Probe/Runtime Compatibility). Or pathing is enabled but probes have no pathing baked; disable pathing or re-bake with Pathing enabled. |
+| **Probe batch rejected / no reverb** | Baked reflection type must match runtime (see Probe/Runtime Compatibility). |
+| **Pathing silent / Ambisonics warning** | Enable pathing on ResonanceRuntime and rebake pathing, or match Bake Ambisonic Order (Runtime / BakeConfig) to the baked data and rebake. Realtime Ambisonic Order is playback-only. |
 | **Debug Reflection Rays** | Enable **Realtime Rays** (64+) in ResonanceRuntimeConfig and **Debug Reflections** in the config. Add a ResonanceListener (e.g. under Camera3D). Geometry from ResonanceGeometry or re-exported static scenes is used for ray viz. |
 
 ## Requirements

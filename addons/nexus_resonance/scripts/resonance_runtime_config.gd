@@ -11,7 +11,27 @@ const Constants = preload("resonance_config_constants.gd")
 
 signal reflection_type_changed(new_type: int)
 signal pathing_enabled_changed(enabled: bool)
-signal audio_frame_size_changed(new_size: int)
+## Emitted when global bake Ambisonic order changes (gizmo / mismatch only; no IPL reinit).
+signal bake_ambisonic_order_changed(new_order: int)
+## Emitted when an IPL-context field changes; [ResonanceRuntime] reconnects the audio engine.
+signal native_engine_reinit_requested(property_name: StringName)
+## Emitted when a field can be patched on the running server without reinit.
+signal runtime_live_config_changed(property_name: StringName)
+## Emitted when Godot bus routing fields change.
+signal runtime_routing_changed(property_name: StringName)
+
+var _suppress_runtime_config_notifications: bool = false
+
+const _RUNTIME_CONFIG_CUSTOM_SETTER_PROPERTIES: Array[StringName] = [
+	&"reflection_type",
+	&"realtime_rays",
+	&"pathing_enabled",
+	&"direct_sim_interval",
+	&"reflections_sim_interval",
+	&"pathing_sim_interval",
+	&"scene_type",
+	&"realtime_reflection_max_distance",
+]
 
 # --- Output & Routing ---
 @export_group("Output & Routing")
@@ -19,34 +39,6 @@ signal audio_frame_size_changed(new_size: int)
 @export var bus: StringName = ResonancePaths.DEFAULT_OUTPUT_BUS_NAME
 ## Bus that hosts [ResonanceAudioEffect] (convolution / TAN wet) and the reverb activator. Empty = ResonanceReverb. Godot send for this bus follows [method get_bus_effective] (same as Direct+Pathing runtime bus).
 @export var reverb_bus_name: StringName = ResonancePaths.DEFAULT_REVERB_BUS_NAME
-
-# --- Audio Engine ---
-@export_group("Audio Engine")
-## Sample rate override. Use Godot Mix Rate to follow Project Settings.
-## Only override when you know the whole project runs at that rate; there is no resampling and mismatches can cause artifacts.
-@export_enum(
-	"Use Godot Mix Rate:0",
-	"22050 Hz:22050",
-	"44100 Hz:44100",
-	"48000 Hz:48000",
-	"96000 Hz:96000",
-	"192000 Hz:192000"
-)
-var sample_rate_override: int = 0
-## Steam Audio processing block size in samples per channel per [code]iplAudioEffectApply[/code] call.
-## For stable routing it should match Godot's mix buffer size (reverb bus frame_count).
-## Auto picks the closest of 256/512/1024/2048 from [code]audio/driver/output_latency[/code] and the current mix rate.
-var _audio_frame_size: int = 0
-@export_enum("Auto:0", "256:256", "512:512", "1024:1024", "2048:2048")
-## Audio processing block size (samples per channel per apply call).
-## Auto is recommended. Use Manual only when you're tuning latency vs CPU and know your mix buffer size.
-var audio_frame_size: int:
-	get:
-		return _audio_frame_size
-	set(v):
-		if _audio_frame_size != v:
-			_audio_frame_size = v
-			audio_frame_size_changed.emit(v)
 
 # --- HRTF & Spatialization ---
 @export_group("Spatialization")
@@ -79,9 +71,9 @@ var audio_frame_size: int:
 @export var hrtf_interpolation_bilinear: bool = false
 
 @export_subgroup("Third-person Perspective", "")
-## Enable perspective correction for spatialized sound in third-person.
+## Enable perspective correction for spatialized sound in third-person. Patches the running server at runtime (no reinit).
 @export var perspective_correction_enabled: bool = false
-## Perspective correction factor. 1.0 = calibrated for a 30–32 inch desktop monitor.
+## Perspective correction factor. 1.0 = calibrated for a 30–32 inch desktop monitor. Live-patched with [member perspective_correction_enabled].
 @export_range(0.5, 2.0, 0.1) var perspective_correction_factor: float = 1.0
 
 # --- Reflections & Reverb ---
@@ -92,7 +84,7 @@ var audio_frame_size: int:
 @export_enum("Baked:0", "Realtime:1") var default_reflections_mode: int = 0
 var _reflection_type: int = Constants.REFLECTION_TYPE_CONVOLUTION
 ## Reverb algorithm. Parametric (fastest). Convolution uses ReflectionMixer (bundled convolutions).
-## Hybrid = convolution + parametric tail (no mixer; can be slower than Convolution – reduce hybrid_reverb_transition_time and ambisonic_order for better perf).
+## Hybrid = convolution + parametric tail (no mixer; can be slower than Convolution – reduce hybrid_reverb_transition_time and realtime_ambisonic_order for better perf).
 ## TrueAudio Next: Steam Audio supports TAN on 64-bit Windows only; other platforms fall back to Convolution with a warning.
 @export_enum("Convolution:0", "Parametric:1", "Hybrid:2", "TrueAudio Next (AMD GPU):3")
 var reflection_type: int:
@@ -103,12 +95,36 @@ var reflection_type: int:
 			_reflection_type = v
 			reflection_type_changed.emit(v)
 			notify_property_list_changed()
-## Ambisonic order for reverb playback (convolution effect channels, mixer/decode, pathing order)
-## and for realtime reflection simulation ([code]IPLSimulationSettings.maxOrder[/code]).
-@export_enum("1st Order:1", "2nd Order:2", "3rd Order:3") var ambisonic_order: int = 1
-## Upper bound for reverb IR allocation (seconds). Higher values increase memory/CPU.
-## This is an allocation/mixer cap, not the per-tick realtime simulation length (see [member realtime_simulation_duration]).
-@export_range(0.1, 10.0, 0.1) var max_reverb_duration: float = 2.0
+			_notify_runtime_config_property_changed(&"reflection_type")
+var _ambisonic_order: int = 1
+## Realtime Ambisonic Order for reverb playback (convolution channels, mixer/decode, pathing order)
+## and realtime reflection simulation ([code]IPLSimulationSettings.maxOrder[/code]). Not the bake order.
+@export_enum("1st Order:1", "2nd Order:2", "3rd Order:3")
+var realtime_ambisonic_order: int:
+	get:
+		return _ambisonic_order
+	set(v):
+		var clamped := clampi(int(v), 1, 3)
+		if _ambisonic_order != clamped:
+			_ambisonic_order = clamped
+			_notify_runtime_config_property_changed(&"ambisonic_order")
+## Script / C++ / legacy .tres alias for [member realtime_ambisonic_order] (engine dict key [code]ambisonic_order[/code]).
+var ambisonic_order: int:
+	get:
+		return _ambisonic_order
+	set(v):
+		realtime_ambisonic_order = v
+var _bake_ambisonic_order: int = 1
+## Bake Ambisonic Order for probe reflection IRs. Per-volume override: [ResonanceBakeConfig] bake_ambisonics_order (Use Global / 1st–3rd).
+@export_enum("1st Order:1", "2nd Order:2", "3rd Order:3")
+var bake_ambisonic_order: int:
+	get:
+		return _bake_ambisonic_order
+	set(v):
+		var clamped := clampi(int(v), 1, 3)
+		if _bake_ambisonic_order != clamped:
+			_bake_ambisonic_order = clamped
+			bake_ambisonic_order_changed.emit(_bake_ambisonic_order)
 var _realtime_rays: int = 0
 ## Ray count for realtime reflection simulation. Off disables realtime reflections (cheapest).
 ## Higher values improve quality but cost more CPU; depends strongly on [member scene_type].
@@ -133,31 +149,24 @@ var realtime_rays: int:
 		if _realtime_rays != v:
 			_realtime_rays = v
 			notify_property_list_changed()
+			_notify_runtime_config_property_changed(&"realtime_rays")
 ## Min distance for irradiance sampling. Lower = finer detail at close range, more CPU. Only when Realtime Rays > 0.
 @export_range(0.05, 10.0, 0.01) var realtime_irradiance_min_distance: float = 0.1
 ## Diffuse samples per reflection point. Higher = smoother reverb, more CPU. Only when Realtime Rays > 0.
 @export_range(8, 64, 1) var realtime_num_diffuse_samples: int = 32
 ## Realtime reflection bounces per ray. Higher = longer reverb, more CPU.
 @export_range(1, 64, 1) var realtime_bounces: int = 4
-## Impulse response length (seconds) simulated each realtime tick. Longer increases CPU/memory.
-## Distinct from [member max_reverb_duration] (allocation cap).
+## Impulse response length (seconds): single source of truth for simulation shared inputs, effect IR allocation, and EOS tail drain. Longer increases CPU/memory.
 @export_range(0.1, 10.0, 0.1) var realtime_simulation_duration: float = 2.0
 ## Hybrid reverb: length (seconds) of IR used for convolution before parametric tail. Lower = less CPU (e.g. 0.2–0.3 s for better hybrid performance). Only when reflection_type is Hybrid.
 @export_range(0.1, 2.0, 0.1) var hybrid_reverb_transition_time: float = 1.0
 ## Hybrid reverb: overlap percent (0–100) for crossfade between convolution and parametric parts.
 @export_range(0, 100, 1) var hybrid_reverb_overlap_percent: int = 25
 
-# --- Baked Reverb & Pathing ---
-@export_group("Baked Reverb & Pathing")
-## Probes beyond this radius (m) do not affect listener.
-@export var reverb_influence_radius: float = 10000.0
-## [b]Reflections sampling mode[/b]. This controls where baked REVERB chooses its probe from.
-## [br][b]Listener-centric[/b] = pick the probe nearest the listener (recommended for room reverb).
-## [br][b]Source-centric[/b] = pick the probe nearest the source (legacy behavior).
-## [br][br]Note: currently this only affects baked REVERB probe lookup. Steam Audio realtime reflections trace rays from the listener in the core API, so this mode does not yet change realtime ray origin.
-@export_enum("Listener-centric:0", "Source-centric:1") var reflections_sampling_mode: int = 0
+@export_group("Pathing")
 var _pathing_enabled: bool = false
 ## Enable pathing (multi-path sound propagation). Requires baked pathing in Probe Volumes.
+## Live-togglable when the simulator was created with pathing; enabling after a pathing-off start reinits the engine.
 @export var pathing_enabled: bool:
 	get:
 		return _pathing_enabled
@@ -166,21 +175,28 @@ var _pathing_enabled: bool = false
 			_pathing_enabled = v
 			pathing_enabled_changed.emit(v)
 			notify_property_list_changed()
-## Pathing: normalize EQ on path effect output. Prevents pathing from sounding too bright.
-@export var pathing_normalize_eq: bool = true
-## Runtime pathing: Steam Audio [code]numVisSamples[/code] (probe visibility rays per pathing update). 1–16. Lower = less CPU; higher ≈ closer to bake density ([ResonanceBakeConfig] [code]bake_pathing_num_samples[/code] is bake-only). With path validation / alternate paths on, this dominates pathing cost (Embree or Default tracer).
-@export_range(1, 16, 1) var pathing_num_vis_samples: int = 4
-## Default when a [ResonancePlayer] uses **Use Global** for path validation: re-check baked paths for occlusion by dynamic geometry each update (higher CPU).
+			_notify_runtime_config_property_changed(&"pathing_enabled")
+## Pathing: normalize EQ on path effect output. Prevents pathing from sounding too bright. Live-patchable.
+@export var pathing_normalize_eq: bool = false
+## Pathing visibility samples for bake and runtime ([code]IPLPathBakeParams.numSamples[/code] /
+## [code]IPLSimulationSettings.numVisSamples[/code]). 1-16. Default 4.
+## With path validation / alternate paths on, this dominates pathing cost.
+## Changing at runtime reinits the audio engine ([code]numVisSamples[/code] is fixed at simulator create).
+@export_range(1, 16, 1) var pathing_num_samples: int = 4
+## Baking Visibility Range (m). Probes farther apart are not mutually visible. Used for bake and runtime path validation
+## ([code]IPLPathBakeParams.visRange[/code] / [code]IPLSimulationInputs.visRange[/code]). Default 1000.
+@export_range(0.0, 1000.0, 1.0) var pathing_vis_range: float = 1000.0
+## Baking Path Range (m). Max path length between probes at bake ([code]IPLPathBakeParams.pathRange[/code]). Bake-only; not a runtime input. Default 1000.
+@export_range(0.0, 1000.0, 1.0) var pathing_path_range: float = 1000.0
+## Baking Visibility Radius (m). Probe sphere radius for visibility tests at bake and runtime. Default 1.0.
+@export_range(0.0, 2.0, 0.1) var pathing_vis_radius: float = 1.0
+## Baking Visibility Threshold. Fraction of unoccluded rays required to link probes (bake + runtime). Default 0.1.
+@export_range(0.0, 1.0, 0.01) var pathing_vis_threshold: float = 0.1
+## Default when a [ResonancePlayer] uses **Use Global** for path validation: re-check baked paths for occlusion by dynamic geometry each update (higher CPU). Live-patchable.
 @export var path_validation_enabled: bool = true
 ## Default when a player uses **Use Global** for alternate paths: search realtime routes when a baked path is occluded.
-## Very CPU-heavy; only effective if validation is enabled.
+## Very CPU-heavy; only effective if validation is enabled. Live-patchable.
 @export var find_alternate_paths: bool = false
-## How much transmission damps reverb (0–1). 0 = no damping. 1 = full damping (reverb scaled by wall transparency).
-## Only consulted for baked REVERB paths (see [member apply_occlusion_to_baked_reflections]); realtime reflections and
-## STATICSOURCE/STATICLISTENER already encode source→listener occlusion in the IR.
-@export_range(0.0, 1.0, 0.01) var reverb_transmission_amount: float = 1.0
-## Baked REVERB: multiply wet by direct-path occlusion/transmission. Default [code]false[/code] - LOS occlusion does not separate “same room, blocked sight” from “sealed source”; enabling dampens both and can kill plausible diffraction. Prefer realtime reflections or STATICSOURCE bakes for hard cases; see [code]docs/baked-reflections-and-outdoor-sources.md[/code].
-@export var apply_occlusion_to_baked_reflections: bool = false
 # --- Occlusion & Transmission ---
 @export_group("Occlusion & Transmission")
 ## Occlusion model: Raycast (binary hit) or Volumetric (fractional occlusion from samples; Steam Audio [code]numOcclusionSamples[/code]). Volumetric only affects how occlusion is computed, not how transmission coefficients are banded. Pair with [member ResonancePlayerConfig.occlusion_samples] and [member ResonancePlayerConfig.source_radius] on each source.
@@ -189,8 +205,10 @@ var _pathing_enabled: bool = false
 @export_range(1, 128, 1) var max_occlusion_samples: int = 64
 ## Direct-effect frequency mode for transmission (Steam Audio [code]IPLTransmissionType[/code] on the direct processor): FreqIndependent (one blended coefficient) or FreqDependent (low/mid/high). This does not add “softer” material boundaries or a volumetric transmission path; Steam Audio [code]IPLSimulationInputs[/code] exposes [code]numTransmissionRays[/code] for path depth only, not an occlusion-style Raycast/Volumetric switch for transmission.
 @export_enum("FreqIndependent:0", "FreqDependent:1") var transmission_type: int = 1
-## Default max surfaces along the transmission path ([code]numTransmissionRays[/code]) when a [ResonancePlayerConfig] omits [member ResonancePlayerConfig.max_transmission_surfaces] or for initial simulator source state. Same range as per-source (1–256). Matches [member ResonancePlayerConfig.max_transmission_surfaces] default.
-@export_range(1, 256, 1) var max_transmission_surfaces: int = 16
+## Default [code]numTransmissionRays[/code]: max surfaces along the transmission path (closest to the listener first).
+## [code]1[/code] = nearest surface only (Steam Audio default). Higher values multiply each additional hit and can silence
+## transmission quickly. Used when a player uses Use Global, or for initial simulator source state (1–256).
+@export_range(1, 256, 1) var max_transmission_surfaces: int = 1
 # --- Performance & Scheduling ---
 @export_group("Performance & Scheduling")
 var _performance_schedule_selector: int = 0
@@ -223,6 +241,7 @@ var apply_performance_schedule_preset: int = 0:
 				direct_sim_interval = 0.1
 		_applying_performance_schedule_preset = false
 		notify_property_list_changed()
+		_emit_runtime_live_config_after_performance_preset()
 
 ## Fraction of CPU cores for Steam Audio simulation threads (0–1). 0.15 ≈ 15% of logical cores; raise for heavier realtime reflections/pathing.
 @export_range(0.0, 1.0, 0.01) var simulation_cpu_cores_percent: float = 0.15
@@ -233,24 +252,33 @@ var _direct_sim_interval: float = 0.0
 	get:
 		return _direct_sim_interval
 	set(v):
+		if _direct_sim_interval == v:
+			return
 		_direct_sim_interval = v
 		_on_performance_knob_changed()
+		_notify_runtime_config_property_changed(&"direct_sim_interval")
 var _reflections_sim_interval: float = 0.1
 ## [b]Reflections Sim Interval[/b] - Minimum seconds between scheduling reflection-heavy simulation ([code]iplSimulatorRunReflections[/code]). [code]0[/code] = every worker tick (highest CPU). [code]0.1[/code] ≈ 100 ms default. Does not throttle direct occlusion/transmission - see [member direct_sim_interval].
 @export_range(0.0, 1.0, 0.01) var reflections_sim_interval: float:
 	get:
 		return _reflections_sim_interval
 	set(v):
+		if _reflections_sim_interval == v:
+			return
 		_reflections_sim_interval = v
 		_on_performance_knob_changed()
+		_notify_runtime_config_property_changed(&"reflections_sim_interval")
 var _pathing_sim_interval: float = 0.1
 ## [b]Pathing Sim Interval[/b] - Minimum seconds between scheduling pathing-heavy simulation ([code]iplSimulatorRunPathing[/code]). Same semantics as [member reflections_sim_interval]; set higher to stagger expensive pathing from reflections.
 @export_range(0.0, 1.0, 0.01) var pathing_sim_interval: float:
 	get:
 		return _pathing_sim_interval
 	set(v):
+		if _pathing_sim_interval == v:
+			return
 		_pathing_sim_interval = v
 		_on_performance_knob_changed()
+		_notify_runtime_config_property_changed(&"pathing_sim_interval")
 ## Maximum simultaneous sources for realtime reflection simulation (Steam Audio [code]maxNumSources[/code]). Higher values use more CPU and memory.
 @export_range(8, 128, 1) var max_simulation_sources: int = 32
 ## Minimum seconds between worker applications of queued dynamic geometry transforms to Steam Audio (scene commit cost control).
@@ -272,6 +300,7 @@ var scene_type: int:
 		if _scene_type != v:
 			_scene_type = v
 			notify_property_list_changed()
+			_notify_runtime_config_property_changed(&"scene_type")
 ## Collision mask for Godot [code]PhysicsRayQueryParameters3D[/code] when [member scene_type] is Custom. [code]-1[/code] = all physics layers.
 @export_flags_3d_physics var physics_ray_collision_mask: int = -1
 ## Rays per Phonon job when [member scene_type] is Custom. Values > 1 enable batched Godot ray callbacks.
@@ -311,11 +340,32 @@ var _realtime_reflection_max_distance_m: float = 0.0
 	get:
 		return _realtime_reflection_max_distance_m
 	set(v):
+		if _realtime_reflection_max_distance_m == v:
+			return
 		_realtime_reflection_max_distance_m = v
+		_notify_runtime_config_property_changed(&"realtime_reflection_max_distance")
+
+
+func _get(property: StringName) -> Variant:
+	# Legacy .tres / C++ Object.get("ambisonic_order") without a script member lookup path.
+	if property == &"ambisonic_order":
+		return _ambisonic_order
+	return null
+
+
+func _set(property: StringName, value: Variant) -> bool:
+	# Migrate old resources that serialized ambisonic_order before realtime_ambisonic_order existed.
+	if property == &"ambisonic_order":
+		realtime_ambisonic_order = int(value)
+		return true
+	return false
 
 
 func _validate_property(property: Dictionary) -> void:
-	if property.name in ["hybrid_reverb_transition_time", "hybrid_reverb_overlap_percent"]:
+	if property.name == "ambisonic_order":
+		# Prefer realtime_ambisonic_order in the inspector; keep storage for legacy .tres.
+		property["usage"] = PROPERTY_USAGE_STORAGE
+	elif property.name in ["hybrid_reverb_transition_time", "hybrid_reverb_overlap_percent"]:
 		if reflection_type != Constants.REFLECTION_TYPE_HYBRID:
 			property["usage"] = property["usage"] | PROPERTY_USAGE_READ_ONLY
 	elif property.name in ["opencl_device_type", "opencl_device_index"]:
@@ -339,7 +389,11 @@ func _validate_property(property: Dictionary) -> void:
 		property.name
 		in [
 			"pathing_normalize_eq",
-			"pathing_num_vis_samples",
+			"pathing_num_samples",
+			"pathing_vis_range",
+			"pathing_path_range",
+			"pathing_vis_radius",
+			"pathing_vis_threshold",
 			"path_validation_enabled",
 			"find_alternate_paths"
 		]
@@ -390,8 +444,8 @@ func get_hrtf_sofa_effective() -> ResonanceSOFAAsset:
 
 
 ## Returns realtime_rays unchanged for all platforms. [param os_name] is reserved for future per-OS caps; callers should pass [method OS.get_name].
-static func get_effective_realtime_rays(realtime_rays: int, _os_name: String) -> int:
-	return realtime_rays
+static func get_effective_realtime_rays(p_realtime_rays: int, _os_name: String) -> int:
+	return p_realtime_rays
 
 
 ## Derives Godot mix buffer size from Project Settings (audio/driver/output_latency). Matches reverb bus frame_count.
@@ -410,7 +464,7 @@ static func _get_audio_frame_size_from_project() -> int:
 	var best := 512
 	var best_dist := 999999
 	for c in candidates:
-		var d := abs(raw - c)
+		var d := absi(raw - c)
 		if d < best_dist:
 			best_dist = d
 			best = c
@@ -423,35 +477,68 @@ func _migrate_spatial_binaural_if_needed() -> void:
 	if resource_path.is_empty():
 		_spatial_binaural_config_version = 2
 		return
+	_suppress_runtime_config_notifications = true
 	direct_binaural = reverb_binaural
 	pathing_binaural = reverb_binaural
+	_suppress_runtime_config_notifications = false
 	_spatial_binaural_config_version = 2
 	emit_changed()
+
+
+func _notify_runtime_config_property_changed(property: StringName) -> void:
+	if _suppress_runtime_config_notifications or _applying_performance_schedule_preset:
+		return
+	if not ClassDB.class_exists("ResonanceServer"):
+		return
+	if ResonanceServer.runtime_config_property_requires_engine_reinit(property):
+		native_engine_reinit_requested.emit(property)
+	elif ResonanceServer.runtime_config_property_is_live_patchable(property):
+		runtime_live_config_changed.emit(property)
+	elif ResonanceServer.runtime_config_property_requires_routing_refresh(property):
+		runtime_routing_changed.emit(property)
+
+
+func _emit_runtime_live_config_after_performance_preset() -> void:
+	# One notify after batched interval writes; apply_runtime_live_config reads full get_config().
+	_notify_runtime_config_property_changed(&"reflections_sim_interval")
+
+
+@warning_ignore("native_method_override")
+func set(property: StringName, value: Variant) -> void:
+	if _suppress_runtime_config_notifications:
+		super.set(property, value)
+		return
+	if not ClassDB.class_exists("ResonanceServer"):
+		super.set(property, value)
+		return
+	var tracked := (
+		ResonanceServer.runtime_config_property_requires_engine_reinit(property)
+		or ResonanceServer.runtime_config_property_is_live_patchable(property)
+		or ResonanceServer.runtime_config_property_requires_routing_refresh(property)
+	)
+	if _RUNTIME_CONFIG_CUSTOM_SETTER_PROPERTIES.has(property):
+		super.set(property, value)
+		return
+	if not tracked:
+		super.set(property, value)
+		return
+	var prev = get(property)
+	super.set(property, value)
+	if prev != value:
+		_notify_runtime_config_property_changed(property)
 
 
 ## Returns config dictionary for [method ResonanceServer.init_audio_engine] when merged by [method ResonanceRuntime.get_config_dict]. Does not include [member bus] / [member reverb_bus_name]; the runtime node adds [code]context_simd_level[/code] / [code]context_validation[/code] there.
 func get_config() -> Dictionary:
 	_migrate_spatial_binaural_if_needed()
 	var rays := get_effective_realtime_rays(realtime_rays, OS.get_name())
-	var mix_rate := int(AudioServer.get_mix_rate())
-	var rate := sample_rate_override if sample_rate_override > 0 else mix_rate
-	if sample_rate_override > 0 and sample_rate_override != mix_rate:
-		push_warning(
-			(
-				"Nexus Resonance: sample_rate_override (%d) differs from Godot mix rate (%d). No resampling; audio may be affected."
-				% [sample_rate_override, mix_rate]
-			)
-		)
-	var frame_size := (
-		audio_frame_size if audio_frame_size > 0 else _get_audio_frame_size_from_project()
-	)
+	# Host mixer only: no sample-rate or frame-size overrides.
 	return {
-		"sample_rate": rate,
-		"audio_frame_size": frame_size,
-		"audio_frame_size_was_auto": audio_frame_size == 0,
+		"sample_rate": int(AudioServer.get_mix_rate()),
+		"audio_frame_size": _get_audio_frame_size_from_project(),
+		"audio_frame_size_was_auto": true,
 		"ambisonic_order": ambisonic_order,
 		"simulation_cpu_cores_percent": simulation_cpu_cores_percent,
-		"max_reverb_duration": max_reverb_duration,
 		"realtime_rays": rays,
 		"realtime_bounces": realtime_bounces,
 		"scene_type": scene_type,
@@ -474,15 +561,14 @@ func get_config() -> Dictionary:
 		"hrtf_normalization_type": hrtf_normalization_type,
 		"hrtf_sofa_asset": get_hrtf_sofa_effective(),
 		"hrtf_interpolation_bilinear": hrtf_interpolation_bilinear,
-		"reverb_influence_radius": reverb_influence_radius,
-		"reverb_transmission_amount": reverb_transmission_amount,
-		"apply_occlusion_to_baked_reflections": apply_occlusion_to_baked_reflections,
-		# Native engine flag used for baked-REVERB probe selection (Phase 4). Keep the config key stable even if we
-		# later extend reflections_sampling_mode to realtime ray origin.
-		"baked_reverb_use_listener_probe": reflections_sampling_mode == 0,
+		# Baked REVERB always uses listener-centric probe lookup.
+		"baked_reverb_use_listener_probe": true,
 		"pathing_enabled": pathing_enabled,
 		"pathing_normalize_eq": pathing_normalize_eq,
-		"pathing_num_vis_samples": pathing_num_vis_samples,
+		"pathing_num_samples": pathing_num_samples,
+		"pathing_vis_range": pathing_vis_range,
+		"pathing_vis_radius": pathing_vis_radius,
+		"pathing_vis_threshold": pathing_vis_threshold,
 		"path_validation_enabled": path_validation_enabled,
 		"find_alternate_paths": find_alternate_paths,
 		"transmission_type": transmission_type,

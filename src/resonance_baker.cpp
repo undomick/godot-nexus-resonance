@@ -1,8 +1,13 @@
 #include "resonance_baker.h"
+#include "resonance_baker_ipl_policy.h"
 #include "resonance_constants.h"
+#include "resonance_energy_field_query_policy.h"
 #include "resonance_ipl_guard.h"
 #include "resonance_log.h"
+#include "resonance_probe_baked_query.h"
+#include "resonance_probe_interpolation_policy.h"
 #include "resonance_reflection_ir_fingerprint.h"
+#include "resonance_server.h"
 #include <atomic>
 #include <cmath>
 #include <godot_cpp/classes/dir_access.hpp>
@@ -12,6 +17,8 @@
 #include <godot_cpp/classes/project_settings.hpp>
 #include <godot_cpp/classes/resource_saver.hpp>
 #include <godot_cpp/classes/resource_uid.hpp>
+#include <godot_cpp/variant/dictionary.hpp>
+#include <godot_cpp/variant/packed_float32_array.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 #include <vector>
 
@@ -144,12 +151,14 @@ static String _build_tres_content(const PackedByteArray& pba, Ref<ResonanceProbe
     int64_t ssp = probe_data_res->get_static_source_params_hash();
     int64_t slp = probe_data_res->get_static_listener_params_hash();
     int64_t ssc = probe_data_res->get_static_scene_params_hash();
+    int64_t bao = probe_data_res->get_baked_ambisonics_order();
     String data_str = UtilityFunctions::var_to_str(pba);
     String probe_pos_str = UtilityFunctions::var_to_str(probe_data_res->get_probe_positions());
     return "[gd_resource type=\"ResonanceProbeData\" format=3]\n\n[resource]\ndata = " + data_str +
            "\nprobe_positions = " + probe_pos_str +
            "\nbake_params_hash = " + String::num_int64(bph) +
            "\nbaked_reflection_type = " + String::num_int64(reflection_type) +
+           "\nbaked_ambisonics_order = " + String::num_int64(bao) +
            "\npathing_params_hash = " + String::num_int64(pph) +
            "\nstatic_source_params_hash = " + String::num_int64(ssp) +
            "\nstatic_listener_params_hash = " + String::num_int64(slp) +
@@ -212,7 +221,53 @@ static String _resolve_save_path(Ref<ResonanceProbeData> probe_data_res) {
 struct AdapterData {
     void (*cb)(float, void*);
     void* ud;
+    resonance::BakerProgressState* progress = nullptr;
 };
+
+static bool _bake_cancel_requested(void* user_data) {
+    if (!user_data)
+        return false;
+    return static_cast<ResonanceServer*>(user_data)->is_bake_cancel_requested();
+}
+
+static IPLBakedDataIdentifier _reflections_bake_identifier(IPLBakedDataVariation variation, const Vector3* endpoint_position,
+                                                           float influence_radius) {
+    IPLBakedDataIdentifier id{};
+    id.type = IPL_BAKEDDATATYPE_REFLECTIONS;
+    id.variation = variation;
+    if (endpoint_position && influence_radius > 0.0f) {
+        id.endpointInfluence.center = ResonanceUtils::to_ipl_vector3(*endpoint_position);
+        id.endpointInfluence.radius = influence_radius;
+    }
+    return id;
+}
+
+static IPLBakedDataIdentifier _pathing_bake_identifier() {
+    IPLBakedDataIdentifier id{};
+    id.type = IPL_BAKEDDATATYPE_PATHING;
+    id.variation = IPL_BAKEDDATAVARIATION_DYNAMIC;
+    return id;
+}
+
+static bool _bake_outcome_ok(IPLProbeBatch batch, const IPLBakedDataIdentifier& layer_id, resonance::BakerProgressState& progress,
+                             void* progress_user_data, const char* bake_label) {
+    const bool cancel_flag = _bake_cancel_requested(progress_user_data);
+    const resonance::BakerOutcome outcome = resonance::baker_outcome_after_void_bake(progress, cancel_flag);
+    if (resonance::baker_outcome_to_ipl_status(outcome) != IPL_STATUS_SUCCESS) {
+        if (outcome == resonance::BakerOutcome::Cancelled)
+            _baker_push_error(String("Nexus Resonance Bake: ") + bake_label + " was cancelled.");
+        else
+            _baker_push_error(String("Nexus Resonance Bake: ") + bake_label + " failed.");
+        return false;
+    }
+    if (!resonance::baker_probe_layer_has_data(batch, layer_id)) {
+        _baker_push_error(String("Nexus Resonance Bake: ") + bake_label +
+                          " produced no probe-batch data. Possible causes: missing scene geometry, invalid probe positions, "
+                          "or invalid bake parameters. Check Steam Audio log (Godot Output) for details.");
+        return false;
+    }
+    return true;
+}
 
 PackedVector3Array ResonanceBaker::generate_manual_grid(const Transform3D& volume_transform, Vector3 extents, float spacing,
                                                         int generation_type, float height_above_floor) {
@@ -288,7 +343,11 @@ PackedVector3Array ResonanceBaker::generate_manual_grid(const Transform3D& volum
 
 static void IPLCALL _ipl_progress_adapter(IPLfloat32 progress, void* userData) {
     AdapterData* ad = static_cast<AdapterData*>(userData);
-    if (ad && ad->cb)
+    if (!ad)
+        return;
+    if (ad->progress)
+        resonance::baker_progress_note(*ad->progress, static_cast<float>(progress), _bake_cancel_requested(ad->ud));
+    if (ad->cb)
         ad->cb(static_cast<float>(progress), ad->ud);
 }
 
@@ -334,7 +393,7 @@ bool ResonanceBaker::bake_with_probe_array(IPLContext context, IPLScene scene, I
             PackedVector3Array points = generate_manual_grid(volume_transform, extents, spacing, generation_type, height_above_floor);
             if (!points.is_empty()) {
                 return bake_manual_grid(context, scene, scene_type, opencl_device, radeon_rays_device,
-                                        points, num_bounces, num_rays, reflection_type, probe_data_res, progress_callback, progress_user_data, pathing_scheduled, num_threads, ambisonics_order);
+                                        points, spacing, num_bounces, num_rays, reflection_type, probe_data_res, progress_callback, progress_user_data, pathing_scheduled, num_threads, ambisonics_order);
             }
         }
         _baker_push_error("ResonanceBaker: Steam probe array generated 0 probes. Check volume and scene geometry.");
@@ -361,10 +420,12 @@ bool ResonanceBaker::bake_with_probe_array(IPLContext context, IPLScene scene, I
     IPLReflectionsBakeParams bakeParams{};
     _fill_reflections_bake_params(bakeParams, scene, probeBatch, scene_type, opencl_device, radeon_rays_device,
                                   IPL_BAKEDDATAVARIATION_REVERB, num_rays, num_bounces, reflection_type, num_threads, ambisonics_order);
-    AdapterData adapter = {progress_callback, progress_user_data};
-    iplReflectionsBakerBake(context, &bakeParams,
-                            (progress_callback && progress_user_data) ? _ipl_progress_adapter : nullptr,
-                            (progress_callback && progress_user_data) ? &adapter : nullptr);
+    resonance::BakerProgressState bake_progress{};
+    AdapterData adapter = {progress_callback, progress_user_data, &bake_progress};
+    iplReflectionsBakerBake(context, &bakeParams, _ipl_progress_adapter, &adapter);
+    const IPLBakedDataIdentifier layer_id = _reflections_bake_identifier(IPL_BAKEDDATAVARIATION_REVERB, nullptr, 0.0f);
+    if (!_bake_outcome_ok(probeBatch, layer_id, bake_progress, progress_user_data, "iplReflectionsBakerBake"))
+        return false;
     IPLSerializedObjectSettings serialSettings{};
     IPLSerializedObject serializedObject = nullptr;
     if (iplSerializedObjectCreate(context, &serialSettings, &serializedObject) != IPL_STATUS_SUCCESS) {
@@ -376,7 +437,7 @@ bool ResonanceBaker::bake_with_probe_array(IPLContext context, IPLScene scene, I
     IPLsize size = iplSerializedObjectGetSize(serializedObject);
     IPLbyte* data = iplSerializedObjectGetData(serializedObject);
     if (size == 0 || !data) {
-        _baker_push_error("Nexus Resonance Bake: iplReflectionsBakerBake produced no data. Possible causes: missing scene geometry, invalid probe positions, or invalid bake parameters. Check Steam Audio log (Godot Output) for details.");
+        _baker_push_error("Nexus Resonance Bake: iplReflectionsBakerBake serialization produced no data.");
         return false;
     }
     PackedByteArray pba;
@@ -385,6 +446,7 @@ bool ResonanceBaker::bake_with_probe_array(IPLContext context, IPLScene scene, I
     probe_data_res->set_data(pba);
     probe_data_res->set_probe_positions(positions_for_viz);
     probe_data_res->set_baked_reflection_type(reflection_type);
+    probe_data_res->set_baked_ambisonics_order(ambisonics_order);
     String path = _resolve_save_path(probe_data_res);
     if (!_save_probe_data_to_disk(probe_data_res, path, pba, reflection_type, size, pathing_scheduled)) {
         return false;
@@ -400,7 +462,7 @@ bool ResonanceBaker::bake_with_probe_array(IPLContext context, IPLScene scene, I
     return true;
 }
 
-bool ResonanceBaker::bake_manual_grid(IPLContext context, IPLScene scene, IPLSceneType scene_type, IPLOpenCLDevice opencl_device, IPLRadeonRaysDevice radeon_rays_device, const PackedVector3Array& probe_positions, int num_bounces, int num_rays, int reflection_type, Ref<ResonanceProbeData> probe_data_res, void (*progress_callback)(float, void*), void* progress_user_data, bool pathing_scheduled, int num_threads, int ambisonics_order) {
+bool ResonanceBaker::bake_manual_grid(IPLContext context, IPLScene scene, IPLSceneType scene_type, IPLOpenCLDevice opencl_device, IPLRadeonRaysDevice radeon_rays_device, const PackedVector3Array& probe_positions, float spacing, int num_bounces, int num_rays, int reflection_type, Ref<ResonanceProbeData> probe_data_res, void (*progress_callback)(float, void*), void* progress_user_data, bool pathing_scheduled, int num_threads, int ambisonics_order) {
     Engine* eng = Engine::get_singleton();
     if (eng && eng->is_editor_hint()) {
         const char* refl_name = (reflection_type == resonance::kReflectionConvolution) ? "Convolution" : (reflection_type == resonance::kReflectionParametric) ? "Parametric"
@@ -437,7 +499,8 @@ bool ResonanceBaker::bake_manual_grid(IPLContext context, IPLScene scene, IPLSce
     for (int i = 0; i < probe_positions.size(); i++) {
         IPLSphere sphere{};
         sphere.center = ResonanceUtils::to_ipl_vector3(probe_positions[i]);
-        sphere.radius = resonance::kBakerStaticEndpointSphereRadius;
+        // Steam UniformFloor: influence.radius = spacing (hard cutoff for getInfluencingProbes).
+        sphere.radius = resonance::probe_grid_influence_radius(spacing);
         iplProbeBatchAddProbe(probeBatch, sphere);
     }
     iplProbeBatchCommit(probeBatch);
@@ -451,10 +514,14 @@ bool ResonanceBaker::bake_manual_grid(IPLContext context, IPLScene scene, IPLSce
     _fill_reflections_bake_params(bakeParams, scene, probeBatch, scene_type, opencl_device, radeon_rays_device,
                                   IPL_BAKEDDATAVARIATION_REVERB, num_rays, num_bounces, reflection_type, num_threads, ambisonics_order);
 
-    AdapterData adapter = {progress_callback, progress_user_data};
-    iplReflectionsBakerBake(context, &bakeParams,
-                            (progress_callback && progress_user_data) ? _ipl_progress_adapter : nullptr,
-                            (progress_callback && progress_user_data) ? &adapter : nullptr);
+    resonance::BakerProgressState bake_progress{};
+    AdapterData adapter = {progress_callback, progress_user_data, &bake_progress};
+    iplReflectionsBakerBake(context, &bakeParams, _ipl_progress_adapter, &adapter);
+    const IPLBakedDataIdentifier layer_id = _reflections_bake_identifier(IPL_BAKEDDATAVARIATION_REVERB, nullptr, 0.0f);
+    if (!_bake_outcome_ok(probeBatch, layer_id, bake_progress, progress_user_data, "iplReflectionsBakerBake")) {
+        iplProbeBatchRelease(&probeBatch);
+        return false;
+    }
 
     IPLScopedRelease<IPLProbeBatch> probeBatchGuard(probeBatch, iplProbeBatchRelease);
     IPLSerializedObjectSettings serialSettings{};
@@ -469,7 +536,7 @@ bool ResonanceBaker::bake_manual_grid(IPLContext context, IPLScene scene, IPLSce
     IPLsize size = iplSerializedObjectGetSize(serializedObject);
     IPLbyte* data = iplSerializedObjectGetData(serializedObject);
     if (size == 0 || !data) {
-        _baker_push_error("Nexus Resonance Bake: iplReflectionsBakerBake produced no data. Possible causes: missing scene geometry (add ResonanceGeometry nodes), invalid probe positions, or invalid bake parameters. Check Steam Audio log (Godot Output) for details.");
+        _baker_push_error("Nexus Resonance Bake: iplReflectionsBakerBake serialization produced no data.");
         return false;
     }
 
@@ -480,6 +547,7 @@ bool ResonanceBaker::bake_manual_grid(IPLContext context, IPLScene scene, IPLSce
     probe_data_res->set_data(pba);
     probe_data_res->set_probe_positions(probe_positions);
     probe_data_res->set_baked_reflection_type(reflection_type);
+    probe_data_res->set_baked_ambisonics_order(ambisonics_order);
 
     String path = _resolve_save_path(probe_data_res);
     if (!_save_probe_data_to_disk(probe_data_res, path, pba, reflection_type, size, pathing_scheduled)) {
@@ -528,10 +596,12 @@ bool ResonanceBaker::bake_pathing(IPLContext context, IPLScene scene, Ref<Resona
     pathParams.pathRange = path_range;
     pathParams.numThreads = (num_threads < 1) ? 1 : num_threads;
 
-    AdapterData adapter = {progress_callback, progress_user_data};
-    iplPathBakerBake(context, &pathParams,
-                     (progress_callback && progress_user_data) ? _ipl_progress_adapter : nullptr,
-                     (progress_callback && progress_user_data) ? &adapter : nullptr);
+    resonance::BakerProgressState bake_progress{};
+    AdapterData adapter = {progress_callback, progress_user_data, &bake_progress};
+    iplPathBakerBake(context, &pathParams, _ipl_progress_adapter, &adapter);
+    const IPLBakedDataIdentifier layer_id = _pathing_bake_identifier();
+    if (!_bake_outcome_ok(batch, layer_id, bake_progress, progress_user_data, "iplPathBakerBake"))
+        return false;
 
     IPLSerializedObjectSettings serialSettings{};
     IPLSerializedObject serializedObject = nullptr;
@@ -545,7 +615,7 @@ bool ResonanceBaker::bake_pathing(IPLContext context, IPLScene scene, Ref<Resona
     IPLsize size = iplSerializedObjectGetSize(serializedObject);
     IPLbyte* data = iplSerializedObjectGetData(serializedObject);
     if (size == 0 || !data) {
-        _baker_push_error("Nexus Resonance: bake_pathing produced no data. Possible causes: insufficient probes, scene geometry blocking paths, or invalid pathing parameters (vis_range, path_range). Check Steam Audio log (Godot Output) for details.");
+        _baker_push_error("Nexus Resonance: bake_pathing serialization produced no data.");
         return false;
     }
     PackedByteArray newPba;
@@ -592,10 +662,12 @@ bool ResonanceBaker::_bake_static_endpoint(IPLContext context, IPLScene scene, I
                                   variation, num_rays, num_bounces, refl_type, num_threads, ambisonics_order,
                                   &endpoint_position, influence_radius);
 
-    AdapterData adapter = {progress_callback, progress_user_data};
-    iplReflectionsBakerBake(context, &bakeParams,
-                            (progress_callback && progress_user_data) ? _ipl_progress_adapter : nullptr,
-                            (progress_callback && progress_user_data) ? &adapter : nullptr);
+    resonance::BakerProgressState bake_progress{};
+    AdapterData adapter = {progress_callback, progress_user_data, &bake_progress};
+    iplReflectionsBakerBake(context, &bakeParams, _ipl_progress_adapter, &adapter);
+    const IPLBakedDataIdentifier layer_id = _reflections_bake_identifier(variation, &endpoint_position, influence_radius);
+    if (!_bake_outcome_ok(batch, layer_id, bake_progress, progress_user_data, "iplReflectionsBakerBake"))
+        return false;
 
     IPLSerializedObjectSettings serialSettings{};
     IPLSerializedObject serializedObject = nullptr;
@@ -609,7 +681,7 @@ bool ResonanceBaker::_bake_static_endpoint(IPLContext context, IPLScene scene, I
     IPLsize size = iplSerializedObjectGetSize(serializedObject);
     IPLbyte* data = iplSerializedObjectGetData(serializedObject);
     if (size == 0 || !data) {
-        _baker_push_error("Nexus Resonance: " + prefix + " produced no data. Possible causes: endpoint outside probe influence, missing scene geometry, or invalid parameters. Check Steam Audio log (Godot Output) for details.");
+        _baker_push_error("Nexus Resonance: " + prefix + " serialization produced no data.");
         return false;
     }
     PackedByteArray newPba;
@@ -782,7 +854,7 @@ float ResonanceBaker::probe_data_static_source_interpolated_energy(IPLContext co
 
     IPLEnergyFieldSettings ef_settings{};
     ef_settings.duration = resonance::kBakerSimulatedDuration;
-    ef_settings.order = resonance::clamp_bake_ambisonics_order(resonance::kBakeDefaultAmbisonicsOrder);
+    ef_settings.order = resonance::clamp_bake_ambisonics_order(probe_data_res->get_baked_ambisonics_order());
     IPLEnergyField temp_field = nullptr;
     if (iplEnergyFieldCreate(context, &ef_settings, &temp_field) != IPL_STATUS_SUCCESS)
         return 0.0f;
@@ -792,28 +864,25 @@ float ResonanceBaker::probe_data_static_source_interpolated_energy(IPLContext co
     const int32_t batch_probe_count = iplProbeBatchGetNumProbes(batch);
     const int32_t count = static_cast<int32_t>(std::min(probe_positions.size(), static_cast<int64_t>(batch_probe_count)));
 
-    struct Neighbor {
-        int32_t index;
-        float weight;
-    };
-    std::vector<Neighbor> neighbors;
-    neighbors.reserve(16);
-    float weight_sum = 0.0f;
+    std::vector<float> xyz;
+    xyz.resize(static_cast<size_t>(count) * 3);
     for (int32_t i = 0; i < count; ++i) {
-        const float dist = probe_positions[i].distance_to(listener_position);
-        if (dist > neighbor_radius_m)
-            continue;
-        const float w = 1.0f / std::max(dist, 0.1f);
-        neighbors.push_back({i, w * w});
-        weight_sum += neighbors.back().weight;
+        xyz[static_cast<size_t>(i) * 3 + 0] = probe_positions[i].x;
+        xyz[static_cast<size_t>(i) * 3 + 1] = probe_positions[i].y;
+        xyz[static_cast<size_t>(i) * 3 + 2] = probe_positions[i].z;
     }
+
+    std::vector<resonance::ProbeNeighborWeight> neighbors;
+    float weight_sum = 0.0f;
+    resonance::probe_neighbors_inverse_distance_squared(xyz.data(), count, listener_position.x, listener_position.y, listener_position.z,
+                                                        neighbor_radius_m, neighbors, weight_sum);
     if (weight_sum <= 1e-8f || neighbors.empty())
         return 0.0f;
 
     double weighted_energy = 0.0;
     int with_data = 0;
     int missing = 0;
-    for (const Neighbor& n : neighbors) {
+    for (const resonance::ProbeNeighborWeight& n : neighbors) {
         iplEnergyFieldReset(temp_field);
         iplProbeBatchGetEnergyField(batch, &id, n.index, temp_field);
         const float probe_energy = reflection_energy_field_total(temp_field);
@@ -829,4 +898,181 @@ float ResonanceBaker::probe_data_static_source_interpolated_energy(IPLContext co
     if (out_probes_missing)
         *out_probes_missing = missing;
     return static_cast<float>(weighted_energy);
+}
+
+static IPLBakedDataVariation _baked_variation_from_export(int baked_variation) {
+    switch (baked_variation) {
+    case 1:
+        return IPL_BAKEDDATAVARIATION_STATICSOURCE;
+    case 2:
+        return IPL_BAKEDDATAVARIATION_STATICLISTENER;
+    case 3:
+        return IPL_BAKEDDATAVARIATION_DYNAMIC;
+    default:
+        return IPL_BAKEDDATAVARIATION_REVERB;
+    }
+}
+
+static IPLBakedDataIdentifier _probe_query_reflections_identifier(int baked_variation, Vector3 endpoint_position, float influence_radius) {
+    const IPLBakedDataVariation variation = _baked_variation_from_export(baked_variation);
+    Vector3* endpoint_ptr = nullptr;
+    if (variation == IPL_BAKEDDATAVARIATION_STATICSOURCE || variation == IPL_BAKEDDATAVARIATION_STATICLISTENER) {
+        endpoint_ptr = &endpoint_position;
+        if (influence_radius <= 0.0f)
+            influence_radius = resonance::kBakerStaticEndpointInfluenceFallback;
+    }
+    return _reflections_bake_identifier(variation, endpoint_ptr, influence_radius);
+}
+
+static bool _probe_data_create_energy_field(IPLContext context, int ambisonics_order, IPLEnergyField* out_field) {
+    if (!out_field)
+        return false;
+    IPLEnergyFieldSettings ef_settings{};
+    ef_settings.duration = resonance::kBakerSimulatedDuration;
+    ef_settings.order = resonance::clamp_bake_ambisonics_order(ambisonics_order);
+    return iplEnergyFieldCreate(context, &ef_settings, out_field) == IPL_STATUS_SUCCESS;
+}
+
+static void _probe_query_pack_reverb_times(Dictionary& result, IPLProbeBatch batch, IPLBakedDataIdentifier& id, int32_t probe_index) {
+    IPLfloat32 reverb_times[3] = {0.0f, 0.0f, 0.0f};
+    iplProbeBatchGetReverb(batch, &id, probe_index, reverb_times);
+    PackedFloat32Array rt;
+    rt.resize(3);
+    rt.set(0, reverb_times[0]);
+    rt.set(1, reverb_times[1]);
+    rt.set(2, reverb_times[2]);
+    result["parametric_reverb_times"] = rt;
+}
+
+static void _probe_query_maybe_pack_ir(Dictionary& result, IPLContext context, IPLEnergyField field, int ambisonics_order, bool reconstruct_ir,
+                                       int sampling_rate, float total) {
+    if (!resonance::energy_field_should_reconstruct_ir(reconstruct_ir, total))
+        return;
+    const int sr = sampling_rate > 0 ? sampling_rate : 48000;
+    IPLImpulseResponseSettings ir_settings{};
+    ir_settings.duration = resonance::kBakerSimulatedDuration;
+    ir_settings.order = resonance::clamp_bake_ambisonics_order(ambisonics_order);
+    ir_settings.samplingRate = sr;
+    IPLImpulseResponse ir = nullptr;
+    if (iplImpulseResponseCreate(context, &ir_settings, &ir) != IPL_STATUS_SUCCESS)
+        return;
+    IPLScopedRelease<IPLImpulseResponse> ir_guard(ir, iplImpulseResponseRelease);
+    if (probe_baked_reconstruct_ir(context, field, ambisonics_order, sr, ir_settings.duration, ir))
+        result["impulse_response"] = probe_baked_pack_impulse_response(ir);
+}
+
+Dictionary ResonanceBaker::probe_data_query_baked_at_probe_index(IPLContext context, Ref<ResonanceProbeData> probe_data_res,
+                                                                 int32_t probe_index, int baked_variation, Vector3 endpoint_position,
+                                                                 float influence_radius, bool reconstruct_ir, int sampling_rate) const {
+    if (!context || probe_data_res.is_null() || probe_data_res->get_data().is_empty())
+        return probe_query_failure(resonance::kProbeQueryErrInvalidContextOrProbeData);
+    IPLProbeBatch batch = _load_probe_batch_from_resource(context, probe_data_res);
+    if (!batch)
+        return probe_query_failure(resonance::kProbeQueryErrProbeBatchLoadFailed);
+    IPLScopedRelease<IPLProbeBatch> batch_guard(batch, iplProbeBatchRelease);
+
+    const int32_t batch_probe_count = iplProbeBatchGetNumProbes(batch);
+    if (probe_index < 0 || probe_index >= batch_probe_count)
+        return probe_query_failure(resonance::kProbeQueryErrProbeIndexOutOfRange);
+
+    const int ambisonics_order = probe_data_res->get_baked_ambisonics_order();
+    IPLEnergyField field = nullptr;
+    if (!_probe_data_create_energy_field(context, ambisonics_order, &field))
+        return probe_query_failure(resonance::kProbeQueryErrEnergyFieldCreateFailed);
+    IPLScopedRelease<IPLEnergyField> field_guard(field, iplEnergyFieldRelease);
+
+    IPLBakedDataIdentifier id = _probe_query_reflections_identifier(baked_variation, endpoint_position, influence_radius);
+    iplEnergyFieldReset(field);
+    iplProbeBatchGetEnergyField(batch, &id, probe_index, field);
+
+    const float total = reflection_energy_field_total(field);
+    Dictionary result;
+    result["ok"] = true;
+    result["probe_index"] = probe_index;
+    result["total_energy"] = total;
+    result["energy_q16"] = static_cast<int>(reflection_baked_energy_to_q16(total));
+    result["energy_field"] = probe_baked_pack_energy_field(field);
+    _probe_query_pack_reverb_times(result, batch, id, probe_index);
+    _probe_query_maybe_pack_ir(result, context, field, ambisonics_order, reconstruct_ir, sampling_rate, total);
+    return result;
+}
+
+Dictionary ResonanceBaker::probe_data_query_baked_at_point(IPLContext context, Ref<ResonanceProbeData> probe_data_res, Vector3 world_position,
+                                                           int baked_variation, Vector3 endpoint_position, float influence_radius,
+                                                           float neighbor_radius_m, bool reconstruct_ir, int sampling_rate) const {
+    if (!context || probe_data_res.is_null() || probe_data_res->get_data().is_empty())
+        return probe_query_failure(resonance::kProbeQueryErrInvalidContextOrProbeData);
+    if (neighbor_radius_m <= 0.0f)
+        neighbor_radius_m = resonance::kStaticSourceProbeNeighborRadiusM;
+
+    IPLProbeBatch batch = _load_probe_batch_from_resource(context, probe_data_res);
+    if (!batch)
+        return probe_query_failure(resonance::kProbeQueryErrProbeBatchLoadFailed);
+    IPLScopedRelease<IPLProbeBatch> batch_guard(batch, iplProbeBatchRelease);
+
+    const PackedVector3Array probe_positions = probe_data_res->get_probe_positions();
+    const int32_t batch_probe_count = iplProbeBatchGetNumProbes(batch);
+    const int32_t count = static_cast<int32_t>(std::min(probe_positions.size(), static_cast<int64_t>(batch_probe_count)));
+    if (count <= 0)
+        return probe_query_failure(resonance::kProbeQueryErrNoProbes);
+
+    std::vector<float> xyz;
+    xyz.resize(static_cast<size_t>(count) * 3);
+    for (int32_t i = 0; i < count; ++i) {
+        xyz[static_cast<size_t>(i) * 3 + 0] = probe_positions[i].x;
+        xyz[static_cast<size_t>(i) * 3 + 1] = probe_positions[i].y;
+        xyz[static_cast<size_t>(i) * 3 + 2] = probe_positions[i].z;
+    }
+
+    std::vector<resonance::ProbeNeighborWeight> neighbors;
+    float weight_sum = 0.0f;
+    resonance::probe_neighbors_inverse_distance_squared(xyz.data(), count, world_position.x, world_position.y, world_position.z,
+                                                        neighbor_radius_m, neighbors, weight_sum);
+    if (weight_sum <= 1e-8f || neighbors.empty())
+        return probe_query_failure(resonance::kProbeQueryErrNoNeighborsInRadius);
+
+    const int ambisonics_order = probe_data_res->get_baked_ambisonics_order();
+    IPLEnergyField accum = nullptr;
+    if (!_probe_data_create_energy_field(context, ambisonics_order, &accum))
+        return probe_query_failure(resonance::kProbeQueryErrEnergyFieldCreateFailed);
+    IPLScopedRelease<IPLEnergyField> accum_guard(accum, iplEnergyFieldRelease);
+
+    IPLEnergyField temp = nullptr;
+    if (!_probe_data_create_energy_field(context, ambisonics_order, &temp))
+        return probe_query_failure(resonance::kProbeQueryErrEnergyFieldCreateFailed);
+    IPLScopedRelease<IPLEnergyField> temp_guard(temp, iplEnergyFieldRelease);
+    iplEnergyFieldReset(accum);
+
+    IPLBakedDataIdentifier id = _probe_query_reflections_identifier(baked_variation, endpoint_position, influence_radius);
+    int32_t nearest_index = neighbors[0].index;
+    float nearest_dist_sq = 1e30f;
+    int probes_with_data = 0;
+    for (const resonance::ProbeNeighborWeight& n : neighbors) {
+        iplEnergyFieldReset(temp);
+        iplProbeBatchGetEnergyField(batch, &id, n.index, temp);
+        const float probe_energy = reflection_energy_field_total(temp);
+        if (probe_energy > 1e-9f)
+            probes_with_data++;
+        const float scale = n.weight / weight_sum;
+        iplEnergyFieldScaleAccum(temp, scale, accum);
+        const Vector3 pos = probe_positions[n.index];
+        const float d_sq = pos.distance_squared_to(world_position);
+        if (d_sq < nearest_dist_sq) {
+            nearest_dist_sq = d_sq;
+            nearest_index = n.index;
+        }
+    }
+
+    const float total = reflection_energy_field_total(accum);
+    Dictionary result;
+    result["ok"] = true;
+    result["num_probes_used"] = static_cast<int>(neighbors.size());
+    result["probes_with_data"] = probes_with_data;
+    result["nearest_probe_index"] = nearest_index;
+    result["total_energy"] = total;
+    result["energy_q16"] = static_cast<int>(reflection_baked_energy_to_q16(total));
+    result["energy_field"] = probe_baked_pack_energy_field(accum);
+    _probe_query_pack_reverb_times(result, batch, id, nearest_index);
+    _probe_query_maybe_pack_ir(result, context, accum, ambisonics_order, reconstruct_ir, sampling_rate, total);
+    return result;
 }

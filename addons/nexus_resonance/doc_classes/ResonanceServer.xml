@@ -1,141 +1,158 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <class name="ResonanceServer" inherits="Object" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../class.xsd">
 	<brief_description>
-		Singleton managing Steam Audio context, scene, and simulation. Driven by ResonanceRuntime.
+		Singleton owning Steam Audio context, scene, and simulation. Driven by ResonanceRuntime.
 	</brief_description>
 	<description>
-		ResonanceServer is the low-level Steam Audio engine. Typically accessed via [ResonanceRuntime] and [ResonancePlayer]. Use get_singleton() for advanced scripting. Controls listener position, geometry, probe batches, and simulation tick. Debug flags (debug_occlusion, debug_reflections, debug_pathing) enable ray visualization; output_direct and output_reverb gate direct/reverb output for debugging.
+		Low-level Steam Audio engine. Prefer [ResonanceRuntime] and [ResonancePlayer] for gameplay. Use [method Engine.get_singleton] / scripting for advanced control (listener, geometry, probes, bake, instrumentation). For play-mode static rebuild, prefer [url=#ResonanceRuntimeExporter]ResonanceRuntimeExporter[/url]. [member debug_occlusion] / [member debug_reflections] gate the per-player HUD; F3 toggles them when [member ResonanceRuntime.enable_debug] is true.
 	</description>
 	<tutorials>
 	</tutorials>
+	<signals>
+		<signal name="bake_progress">
+			<param index="0" name="progress" type="float" />
+			<description>
+				Emitted during bake with progress in [code]0..1[/code] (or status-dependent range). Prefer polling [method get_bake_progress] from GDScript threads without signals.
+			</description>
+		</signal>
+	</signals>
 	<methods>
-		<method name="get_ambisonic_order" qualifiers="const">
-			<return type="int" />
-			<description>
-				Returns the active ambisonics order (1–3) used for simulation and reverb decode.
-			</description>
-		</method>
-		<method name="get_default_reflections_mode" qualifiers="const">
-			<return type="int" />
-			<description>
-				Returns the runtime default reflections mode for players using [i]Use Global[/i]: [code]0[/code] = Baked, [code]1[/code] = Realtime (see [member ResonanceRuntimeConfig.default_reflections_mode]). Values [code]2[/code] and above from older configs are treated as Realtime.
-			</description>
-		</method>
-		<method name="get_sample_rate" qualifiers="const">
-			<return type="int" />
-			<description>
-				Returns the current sample rate from AudioServer.
-			</description>
-		</method>
-		<method name="get_version">
-			<return type="String" />
-			<description>
-				Returns Nexus Resonance version string.
-			</description>
-		</method>
-		<method name="is_initialized" qualifiers="const">
+		<method name="runtime_config_property_requires_engine_reinit" qualifiers="static">
 			<return type="bool" />
+			<param index="0" name="property" type="StringName" />
 			<description>
-				Returns true if the Steam Audio engine is initialized.
+				True when changing this [url=#ResonanceRuntimeConfig]ResonanceRuntimeConfig[/url] property needs [method reinit_audio_engine].
 			</description>
 		</method>
-		<method name="is_simulating" qualifiers="const">
+		<method name="runtime_config_property_is_live_patchable" qualifiers="static">
 			<return type="bool" />
+			<param index="0" name="property" type="StringName" />
 			<description>
-				Returns true when the server can run acoustic simulation: static triangle count &gt; 0 for normal tracers, or [code]scene_type[/code] Custom with a valid [World3D] from [method set_physics_world].
+				True when the property can be applied via [method patch_live_runtime_config] without full reinit.
+			</description>
+		</method>
+		<method name="runtime_config_property_requires_routing_refresh" qualifiers="static">
+			<return type="bool" />
+			<param index="0" name="property" type="StringName" />
+			<description>
+				True when the property only needs Godot bus routing refresh (not engine reinit).
+			</description>
+		</method>
+		<method name="init_audio_engine">
+			<return type="void" />
+			<param index="0" name="config" type="Dictionary" />
+			<description>
+				Creates Steam Audio context, scene, simulator, and HRTF from [param config] ([method ResonanceRuntime.get_config_dict]).
+			</description>
+		</method>
+		<method name="reinit_audio_engine">
+			<return type="void" />
+			<param index="0" name="config" type="Dictionary" />
+			<description>
+				Tears down and recreates the engine for config fields that cannot live-patch. Follow with [method ResonanceRuntime.reload_after_reinit].
+			</description>
+		</method>
+		<method name="patch_live_runtime_config">
+			<return type="void" />
+			<param index="0" name="config" type="Dictionary" />
+			<description>
+				Applies live-patchable settings without full teardown (intervals, pathing toggles, perspective, etc.).
 			</description>
 		</method>
 		<method name="shutdown">
 			<return type="void" />
 			<description>
-				Ordered teardown of Steam Audio (worker join, drain audio-thread IPL clients under [AudioServer] lock, then release simulator/scene/context). Idempotent. [ResonanceRuntime] calls this from [code]_exit_tree[/code] before the FMOD bridge; the GDExtension terminator also invokes it. Use when quitting the game to avoid use-after-free on the audio mix thread.
+				Ordered teardown (worker join, drain audio-thread IPL clients, release simulator/scene/context). Idempotent. Called by [ResonanceRuntime] and GDExtension exit.
 			</description>
 		</method>
-		<method name="notify_geometry_changed">
-			<return type="void" />
-			<param index="0" name="triangle_delta" type="int" />
+		<method name="get_version">
+			<return type="String" />
 			<description>
-				Notifies the server of geometry change (triangle count delta). Called when dynamic geometry is added/removed.
+				Nexus Resonance version string.
 			</description>
 		</method>
-		<method name="refresh_all_geometry_from_scene_tree">
-			<return type="void" />
-			<description>
-				Traverses the active scene tree and calls [method ResonanceGeometry.refresh_geometry] on every [ResonanceGeometry] node. Call from the main thread after [method load_scene_data] replaces the Phonon scene (the server also schedules this automatically when a load succeeds). Rebuilds [ResonanceDynamicGeometry] instanced meshes and static runtime handles so occlusion, reflections, and pathing see the new scene.
-			</description>
-		</method>
-		<method name="load_scene_data">
-			<return type="void" />
-			<param index="0" name="filename" type="String" />
-			<description>
-				Loads serialized Steam Audio scene data from disk into the runtime scene. On success, defers [method refresh_all_geometry_from_scene_tree] so [ResonanceDynamicGeometry] and other geometry nodes re-register against the new IPL scene.
-			</description>
-		</method>
-		<method name="save_scene_data">
-			<return type="void" />
-			<param index="0" name="filename" type="String" />
-			<description>
-				Saves the current Steam Audio scene to a serialized file ([code]IPL_SCENETYPE_DEFAULT[/code] only; see Steam Audio docs).
-			</description>
-		</method>
-		<method name="tick">
-			<return type="void" />
-			<param index="0" name="delta" type="float" />
-			<description>
-				Advances simulation (pathing, reflections). Called each frame by ResonanceRuntime. When [code]scene_type[/code] is Custom, runs Steam Audio [code]iplSimulatorRun*[/code] on the main thread (no background worker).
-			</description>
-		</method>
-		<method name="set_physics_world">
-			<return type="void" />
-			<param index="0" name="world" type="World3D" />
-			<description>
-				Sets the Godot [World3D] for Custom-scene physics raycasts. [ResonanceRuntime] updates this from the viewport each frame when the server is initialized.
-			</description>
-		</method>
-		<method name="set_physics_ray_exclude_rids">
-			<return type="void" />
-			<param index="0" name="exclude" type="Array" />
-			<description>
-				User list of [RID]s excluded from Custom-scene ray queries (same as [code]PhysicsRayQueryParameters3D.exclude[/code]). The server merges this with [method set_listener_physics_ray_exclude_rids] and auto-registered source colliders from [member ResonancePlayer.auto_exclude_colliders] before passing the combined array to Godot.
-			</description>
-		</method>
-		<method name="set_listener_physics_ray_exclude_rids">
-			<return type="void" />
-			<param index="0" name="rids" type="Array" />
-			<description>
-				Replaces the listener-side exclude list (typically [code]CollisionObject3D[/code] RIDs on the camera parent chain and nodes in the [code]resonance_listener[/code] group). [ResonanceRuntime] sets this each frame when [method uses_custom_ray_tracer] is true. Merged with [method set_physics_ray_exclude_rids] and source auto-excludes.
-			</description>
-		</method>
-		<method name="get_simulation_worker_timing" qualifiers="const">
-			<return type="Dictionary" />
-			<description>
-				Returns profiling timings from the [b]last[/b] simulation step only (microseconds): [code]us_run_direct[/code], [code]us_run_reflections[/code], [code]us_run_pathing[/code], [code]us_sync_fetch[/code] ([code]_worker_sync_fetch_caches[/code]), [code]us_simulator_commit[/code] ([code]iplSimulatorCommit[/code], required after [code]SetSharedInputs[/code] per Steam Audio). Breakdown inside sync (last tick only): [code]us_sync_fetch_occlusion[/code], [code]us_sync_fetch_reflections[/code], [code]us_sync_fetch_pathing[/code] (subset of [code]us_sync_fetch[/code]; zero when that phase did not run or was skipped). Normally updated from the background worker; when [code]scene_type[/code] is Custom, updated from the main-thread [method tick] instead. Large [code]us_run_reflections[/code] with small sync/commit usually indicates cost inside the Phonon library, not this wrapper. Cleared by [method reset_pathing_instrumentation].
-			</description>
-		</method>
-		<method name="peek_reverb_params_likely_available" qualifiers="const">
+		<method name="is_initialized" qualifiers="const">
 			<return type="bool" />
-			<param index="0" name="source_handle" type="int" />
 			<description>
-				Returns whether the last worker reflection cache sync (or a successful [code]fetch_reverb_params[/code] with [code]simulation_mutex[/code]) had usable reflection outputs for this source handle. Does [i]not[/i] acquire [code]simulation_mutex[/code] or call Steam Audio — cheap for main-thread state (e.g. [code]has_valid_reverb[/code] in [code]ResonancePlayer[/code]). May be [code]false[/code] briefly after source creation until the next sync; call [code]fetch_reverb_params[/code] when full [code]IPLReflectionEffectParams[/code] are required.
+				True when the Steam Audio engine is initialized.
 			</description>
 		</method>
-		<method name="get_convolution_audio_timing" qualifiers="const">
-			<return type="Dictionary" />
+		<method name="is_simulating" qualifiers="const">
+			<return type="bool" />
 			<description>
-				[b]Convolution reflection type only[/b] (audio mix thread): last measured block times in microseconds — [code]us_reflection_apply_last[/code] ([code]iplReflectionEffectApply[/code] feeding the shared mixer from the most recent [code]ResonancePlayer[/code] path that ran it), [code]us_reverb_bus_last[/code] ([code]iplReflectionMixerApply[/code] plus ambisonic decode and output sanitize in [code]ResonanceAudioEffect[/code] / [code]ResonanceMixerProcessor[/code]). Subset of the reverb-bus path (last block only): [code]us_mixer_sanitize_ambi_last[/code] and [code]us_mixer_sanitize_stereo_last[/code] are the two [code]_sanitize_audio_buffer[/code] passes on ambisonic mixer output vs. stereo after decode (compare at high ambisonic order). Compare to [method get_simulation_worker_timing] ([code]us_run_reflections[/code]) to separate Phonon simulation work from per-block convolution on the audio thread. With multiple wet sources, [code]us_reflection_apply_last[/code] reflects the [i]last[/i] source that mixed in that window, not a sum. Cleared to zero by [method reset_reverb_bus_instrumentation].
+				True when acoustic simulation can run (static triangles &gt; 0, or Custom scene with a valid [World3D]).
 			</description>
 		</method>
-		<method name="get_simulation_tracer_profile" qualifiers="const">
-			<return type="Dictionary" />
+		<method name="is_spatial_audio_output_ready" qualifiers="const">
+			<return type="bool" />
 			<description>
-				For profiling and setup checks: [code]scene_type[/code] (runtime config 0–3), [code]ipl_scene_type[/code] (Steam Audio enum), [code]ray_batch_size_effective[/code] passed to [code]IPLSimulationSettings.rayBatchSize[/code] (Custom: clamped [member ResonanceRuntimeConfig.physics_ray_batch_size]; otherwise [code]1[/code]). [code]custom_batched_callbacks_registered[/code] and [code]phonon_batched_reflection_sim_path[/code] are [code]true[/code] only when Custom and effective batch [code]&gt; 1[/code] (batched Godot trace callbacks; Phonon BatchedReflectionSimulator). Default/Embree/Radeon keep batch [code]1[/code] from Nexus regardless of the config property.
+				True when the spatial output gate is open (warmup done and scene committed). Until then players may mute spatial DSP.
 			</description>
 		</method>
-		<method name="set_listener_valid">
+		<method name="arm_spatial_audio_output_gate">
 			<return type="void" />
-			<param index="0" name="valid" type="bool" />
 			<description>
-				Set whether the listener is valid for pathing. When false, RunPathing is skipped (saves CPU). On Windows, iplSimulatorRunPathing is wrapped in SEH—crashes from unreachable listener (ghost through walls, noclip) are caught; pathing skips that frame and continues.
+				Arms the spatial mute gate (cold start / full reload). Incremental geometry adds into a non-empty scene do not re-arm.
+			</description>
+		</method>
+		<method name="reset_spatial_audio_warmup_passes">
+			<return type="void" />
+			<description>
+				Resets remaining warmup passes before spatial output opens.
+			</description>
+		</method>
+		<method name="get_sample_rate" qualifiers="const">
+			<return type="int" />
+			<description>
+				Current sample rate from AudioServer / engine init.
+			</description>
+		</method>
+		<method name="get_audio_frame_size" qualifiers="const">
+			<return type="int" />
+			<description>
+				Steam Audio processing block size in samples.
+			</description>
+		</method>
+		<method name="get_audio_frame_size_was_auto" qualifiers="const">
+			<return type="bool" />
+			<description>
+				True when frame size was chosen automatically from Project Settings latency.
+			</description>
+		</method>
+		<method name="get_direct_speaker_channels" qualifiers="const">
+			<return type="int" />
+			<description>
+				Active non-HRTF direct speaker channel count.
+			</description>
+		</method>
+		<method name="consume_pending_reinit_frame_size">
+			<return type="int" />
+			<description>
+				Returns and clears a pending post-reinit frame size hint for audio clients. Scripts rarely call this.
+			</description>
+		</method>
+		<method name="get_ambisonic_order" qualifiers="const">
+			<return type="int" />
+			<description>
+				Active ambisonics order (1-3) for simulation and reverb decode.
+			</description>
+		</method>
+		<method name="get_default_reflections_mode" qualifiers="const">
+			<return type="int" />
+			<description>
+				Default reflections mode for players using Use Global: [code]0[/code] Baked, [code]1[/code] Realtime.
+			</description>
+		</method>
+		<method name="get_reflection_type" qualifiers="const">
+			<return type="int" />
+			<description>
+				Active reflection algorithm (Convolution / Parametric / Hybrid / TAN).
+			</description>
+		</method>
+		<method name="get_realtime_rays" qualifiers="const">
+			<return type="int" />
+			<description>
+				Active realtime reflection ray count ([code]0[/code] = off).
 			</description>
 		</method>
 		<method name="update_listener">
@@ -144,31 +161,612 @@
 			<param index="1" name="dir" type="Vector3" />
 			<param index="2" name="up" type="Vector3" />
 			<description>
-				Updates listener position and orientation. Called by ResonanceListener or ResonanceRuntime fallback.
+				Updates listener pose. Called by [ResonanceListener] or [ResonanceRuntime] fallback.
+			</description>
+		</method>
+		<method name="set_listener_valid">
+			<return type="void" />
+			<param index="0" name="valid" type="bool" />
+			<description>
+				When false, RunPathing is skipped (saves CPU / avoids bad listener poses).
+			</description>
+		</method>
+		<method name="notify_listener_changed">
+			<return type="void" />
+			<description>
+				Notifies that the active listener node changed; runtime refreshes exclude lists / pose source.
+			</description>
+		</method>
+		<method name="notify_listener_changed_to">
+			<return type="void" />
+			<param index="0" name="listener_node" type="Node" />
+			<description>
+				Same as [method notify_listener_changed] with an explicit listener node.
+			</description>
+		</method>
+		<method name="tick">
+			<return type="void" />
+			<param index="0" name="delta" type="float" />
+			<description>
+				Advances simulation each frame ([ResonanceRuntime]). Custom scene type runs Phonon on the main thread.
+			</description>
+		</method>
+		<method name="set_physics_world">
+			<return type="void" />
+			<param index="0" name="world" type="World3D" />
+			<description>
+				[World3D] for Custom-scene raycasts. Runtime sets this each frame when initialized.
+			</description>
+		</method>
+		<method name="refresh_physics_materials">
+			<return type="void" />
+			<description>
+				Reloads [ResonanceMaterial] presets for Custom-scene meta. Main thread only.
+			</description>
+		</method>
+		<method name="set_physics_ray_exclude_rids">
+			<return type="void" />
+			<param index="0" name="exclude" type="Array" />
+			<description>
+				User RID exclude list for Custom-scene rays. Merged with listener and source auto-excludes.
+			</description>
+		</method>
+		<method name="set_listener_physics_ray_exclude_rids">
+			<return type="void" />
+			<param index="0" name="rids" type="Array" />
+			<description>
+				Replaces the listener-side Custom-scene exclude list. Runtime updates this each frame.
+			</description>
+		</method>
+		<method name="flush_pending_source_updates">
+			<return type="void" />
+			<description>
+				Applies any batched deferred source simulation updates immediately.
+			</description>
+		</method>
+		<method name="create_source_handle">
+			<return type="int" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="radius" type="float" />
+			<param index="2" name="pathing_owner_path" type="String" default="" />
+			<param index="3" name="pathing_enabled_override" type="int" default="-1" />
+			<description>
+				Allocates a simulation source. Returns handle or [code]-1[/code] on failure. Prefer [ResonancePlayer] for gameplay.
+			</description>
+		</method>
+		<method name="set_source_pathing_owner_path">
+			<return type="void" />
+			<param index="0" name="handle" type="int" />
+			<param index="1" name="owner_path" type="String" />
+			<description>
+				Sets the pathing probe-volume owner path for a source handle.
+			</description>
+		</method>
+		<method name="destroy_source_handle">
+			<return type="void" />
+			<param index="0" name="handle" type="int" />
+			<description>
+				Releases a simulation source handle.
+			</description>
+		</method>
+		<method name="update_source">
+			<return type="void" />
+			<param index="0" name="handle" type="int" />
+			<param index="1" name="position" type="Vector3" />
+			<param index="2" name="radius" type="float" />
+			<param index="3" name="use_sim_distance_attenuation" type="bool" default="false" />
+			<param index="4" name="min_distance" type="float" default="1.0" />
+			<description>
+				Updates source pose / radius for simulation (and optional Phonon distance model).
+			</description>
+		</method>
+		<method name="get_source_occlusion_data">
+			<return type="Dictionary" />
+			<param index="0" name="handle" type="int" />
+			<description>
+				Last published occlusion/transmission data for the source (audio-thread cache).
+			</description>
+		</method>
+		<method name="get_source_occlusion_linear_gain">
+			<return type="float" />
+			<param index="0" name="handle" type="int" />
+			<description>
+				Linear occlusion gain for the source from the last cache sync.
+			</description>
+		</method>
+		<method name="notify_geometry_changed">
+			<return type="void" />
+			<param index="0" name="triangle_delta" type="int" />
+			<description>
+				Notifies geometry triangle count change (dynamic add/remove).
+			</description>
+		</method>
+		<method name="refresh_all_geometry_from_scene_tree">
+			<return type="void" />
+			<description>
+				Calls [method ResonanceGeometry.refresh_geometry] on every geometry node. Main thread; after [method load_scene_data].
+			</description>
+		</method>
+		<method name="load_scene_data">
+			<return type="void" />
+			<param index="0" name="filename" type="String" />
+			<description>
+				Loads serialized Steam Audio scene data. On success, defers [method refresh_all_geometry_from_scene_tree].
+			</description>
+		</method>
+		<method name="save_scene_data">
+			<return type="void" />
+			<param index="0" name="filename" type="String" />
+			<description>
+				Saves the current Steam Audio scene ([code]IPL_SCENETYPE_DEFAULT[/code] only).
+			</description>
+		</method>
+		<method name="save_scene_obj">
+			<return type="int" />
+			<param index="0" name="file_base_name" type="String" />
+			<description>
+				Exports the current scene as OBJ+MTL (path without extension). Returns [enum Error].
+			</description>
+		</method>
+		<method name="load_static_scene_from_asset">
+			<return type="void" />
+			<param index="0" name="p_asset" type="ResonanceGeometryAsset" />
+			<param index="1" name="p_transform" type="Transform3D" default="Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)" />
+			<description>
+				Clears static packs and loads one asset at [param p_transform].
+			</description>
+		</method>
+		<method name="add_static_scene_from_asset">
+			<return type="void" />
+			<param index="0" name="p_asset" type="ResonanceGeometryAsset" />
+			<param index="1" name="p_transform" type="Transform3D" default="Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)" />
+			<description>
+				Adds a static pack without clearing existing ones.
+			</description>
+		</method>
+		<method name="add_or_replace_static_pack">
+			<return type="void" />
+			<param index="0" name="object_id" type="int" />
+			<param index="1" name="p_asset" type="ResonanceGeometryAsset" />
+			<param index="2" name="p_transform" type="Transform3D" />
+			<description>
+				Inserts or replaces a static pack keyed by [param object_id] (e.g. [ResonanceStaticScene] instance id).
+			</description>
+		</method>
+		<method name="remove_static_pack">
+			<return type="void" />
+			<param index="0" name="object_id" type="int" />
+			<description>
+				Removes one static pack by [param object_id].
+			</description>
+		</method>
+		<method name="clear_static_scenes">
+			<return type="void" />
+			<description>
+				Removes all loaded static packs.
+			</description>
+		</method>
+		<method name="replace_static_scenes_from_assets">
+			<return type="void" />
+			<param index="0" name="assets" type="ResonanceGeometryAsset[]" />
+			<param index="1" name="transforms" type="Transform3D[]" />
+			<description>
+				Clears all static packs then loads each asset. No-op with warning when [code]scene_type[/code] is Custom. Prefer [url=#ResonanceRuntimeExporter]ResonanceRuntimeExporter[/url].
+			</description>
+		</method>
+		<method name="export_static_scene_to_geometry_asset">
+			<return type="ResonanceGeometryAsset" />
+			<param index="0" name="scene_root" type="Node" />
+			<description>
+				Merges visible static geometry under [param scene_root] into an in-memory asset. Prefer the runtime exporter for assign + reload.
+			</description>
+		</method>
+		<method name="export_static_scene_to_asset">
+			<return type="int" />
+			<param index="0" name="scene_root" type="Node" />
+			<param index="1" name="path" type="String" />
+			<description>
+				Same merge as [method export_static_scene_to_geometry_asset], written to [param path]. Returns [enum Error].
+			</description>
+		</method>
+		<method name="export_static_scene_to_obj">
+			<return type="int" />
+			<param index="0" name="scene_root" type="Node" />
+			<param index="1" name="file_base_name" type="String" />
+			<description>
+				Exports static geometry under [param scene_root] as OBJ+MTL. Returns [enum Error].
+			</description>
+		</method>
+		<method name="get_static_scene_hash">
+			<return type="int" />
+			<param index="0" name="scene_root" type="Node" />
+			<description>
+				Hash of exportable static geometry under [param scene_root] (skip re-export when unchanged).
+			</description>
+		</method>
+		<method name="get_geometry_asset_hash">
+			<return type="int" />
+			<param index="0" name="asset" type="ResonanceGeometryAsset" />
+			<description>
+				Hash of asset mesh bytes (detect static scene changes for probe rebake).
+			</description>
+		</method>
+		<method name="set_bake_params">
+			<return type="void" />
+			<param index="0" name="params" type="Dictionary" />
+			<description>
+				Sets bake quality parameters for the next bake call.
+			</description>
+		</method>
+		<method name="set_bake_static_scene_asset">
+			<return type="void" />
+			<param index="0" name="p_asset" type="ResonanceGeometryAsset" />
+			<description>
+				Sets a single static asset for the isolated bake scene.
+			</description>
+		</method>
+		<method name="set_bake_static_scenes_from_assets">
+			<return type="void" />
+			<param index="0" name="assets" type="Array" />
+			<param index="1" name="transforms" type="Array" />
+			<description>
+				Sets multiple static packs for the isolated bake scene.
+			</description>
+		</method>
+		<method name="set_bake_pipeline_pathing">
+			<return type="void" />
+			<param index="0" name="pathing" type="bool" />
+			<description>
+				Hint that pathing will follow reflections in this bake pipeline.
+			</description>
+		</method>
+		<method name="set_bake_pipeline_active">
+			<return type="void" />
+			<param index="0" name="active" type="bool" />
+			<description>
+				True while the editor bake pipeline runs (skips mid-pipeline probe reload validation).
+			</description>
+		</method>
+		<method name="is_bake_pipeline_active">
+			<return type="bool" />
+			<description>
+				True while [method set_bake_pipeline_active] is set.
+			</description>
+		</method>
+		<method name="generate_manual_grid">
+			<return type="PackedVector3Array" />
+			<param index="0" name="tr" type="Transform3D" />
+			<param index="1" name="ext" type="Vector3" />
+			<param index="2" name="sp" type="float" />
+			<param index="3" name="generation_type" type="int" default="2" />
+			<param index="4" name="height_above_floor" type="float" default="1.5" />
+			<description>
+				Generates probe positions in a volume (manual grid / centroid / etc.).
+			</description>
+		</method>
+		<method name="generate_probes_scene_aware">
+			<return type="PackedVector3Array" />
+			<param index="0" name="volume_transform" type="Transform3D" />
+			<param index="1" name="extents" type="Vector3" />
+			<param index="2" name="spacing" type="float" />
+			<param index="3" name="generation_type" type="int" default="1" />
+			<param index="4" name="height_above_floor" type="float" default="1.5" />
+			<description>
+				Scene-aware probe placement inside the volume.
+			</description>
+		</method>
+		<method name="bake_manual_grid">
+			<return type="void" />
+			<param index="0" name="pts" type="PackedVector3Array" />
+			<param index="1" name="dat" type="ResonanceProbeData" />
+			<param index="2" name="spacing" type="float" default="2.0" />
+			<description>
+				Bakes reflections into [param dat] at the given probe points.
+			</description>
+		</method>
+		<method name="bake_probes_for_volume">
+			<return type="void" />
+			<param index="0" name="volume_transform" type="Transform3D" />
+			<param index="1" name="extents" type="Vector3" />
+			<param index="2" name="spacing" type="float" />
+			<param index="3" name="generation_type" type="int" />
+			<param index="4" name="height_above_floor" type="float" />
+			<param index="5" name="probe_data" type="ResonanceProbeData" />
+			<param index="6" name="exclusion_boxes" type="Array" default="[]" />
+			<description>
+				Full reflections bake for a probe volume (generate + bake). Prefer the editor bake runner / [url=#ResonanceRuntimeBaker]ResonanceRuntimeBaker[/url].
+			</description>
+		</method>
+		<method name="bake_pathing">
+			<return type="void" />
+			<param index="0" name="dat" type="ResonanceProbeData" />
+			<description>
+				Bakes the pathing layer into [param dat] (requires prior reflections bake).
+			</description>
+		</method>
+		<method name="bake_static_source">
+			<return type="void" />
+			<param index="0" name="dat" type="ResonanceProbeData" />
+			<param index="1" name="endpoint_position" type="Vector3" />
+			<param index="2" name="influence_radius" type="float" />
+			<description>
+				Bakes a STATICSOURCE layer at [param endpoint_position].
+			</description>
+		</method>
+		<method name="bake_static_listener">
+			<return type="void" />
+			<param index="0" name="dat" type="ResonanceProbeData" />
+			<param index="1" name="endpoint_position" type="Vector3" />
+			<param index="2" name="influence_radius" type="float" />
+			<description>
+				Bakes a STATICLISTENER layer at [param endpoint_position].
+			</description>
+		</method>
+		<method name="cancel_reflections_bake">
+			<return type="void" />
+			<description>
+				Requests cancel of an in-progress reflections bake.
+			</description>
+		</method>
+		<method name="cancel_pathing_bake">
+			<return type="void" />
+			<description>
+				Requests cancel of an in-progress pathing bake.
+			</description>
+		</method>
+		<method name="get_bake_progress">
+			<return type="float" />
+			<description>
+				Atomic bake progress poll ([code]0..1[/code]). Safe from bake threads without Godot signals.
+			</description>
+		</method>
+		<method name="load_probe_batch">
+			<return type="int" />
+			<param index="0" name="dat" type="ResonanceProbeData" />
+			<description>
+				Loads baked probe data into the simulator. Returns batch handle or [code]-1[/code].
+			</description>
+		</method>
+		<method name="remove_probe_batch">
+			<return type="void" />
+			<param index="0" name="handle" type="int" />
+			<description>
+				Unloads a probe batch by handle.
+			</description>
+		</method>
+		<method name="clear_probe_batches">
+			<return type="void" />
+			<description>
+				Unloads all probe batches. Do not call while volumes still hold handles unless intentional.
+			</description>
+		</method>
+		<method name="revalidate_probe_batches_with_config">
+			<return type="void" />
+			<description>
+				Re-checks loaded batches against current runtime reflection/pathing settings.
+			</description>
+		</method>
+		<method name="editor_probe_data_get_num_probes">
+			<return type="int" />
+			<param index="0" name="dat" type="ResonanceProbeData" />
+			<description>
+				Number of probes in [param dat] (editor tooling).
+			</description>
+		</method>
+		<method name="editor_probe_data_remove_probe">
+			<return type="void" />
+			<param index="0" name="dat" type="ResonanceProbeData" />
+			<param index="1" name="index" type="int" />
+			<description>
+				Removes one probe from [param dat] (editor tooling).
+			</description>
+		</method>
+		<method name="editor_probe_data_remove_baked_layer">
+			<return type="void" />
+			<param index="0" name="dat" type="ResonanceProbeData" />
+			<param index="1" name="baked_data_type" type="int" />
+			<param index="2" name="variation" type="int" />
+			<param index="3" name="endpoint" type="Vector3" default="Vector3(0, 0, 0)" />
+			<param index="4" name="influence_radius" type="float" default="0.0" />
+			<description>
+				Removes a baked data layer from [param dat] (editor tooling).
+			</description>
+		</method>
+		<method name="probe_data_static_source_energy_at">
+			<return type="Dictionary" />
+			<param index="0" name="dat" type="ResonanceProbeData" />
+			<param index="1" name="endpoint" type="Vector3" />
+			<param index="2" name="listener" type="Vector3" />
+			<param index="3" name="influence_radius" type="float" />
+			<param index="4" name="neighbor_radius" type="float" default="0.0" />
+			<description>
+				Queries baked static-source energy between endpoint and listener (tooling).
+			</description>
+		</method>
+		<method name="probe_data_query_baked_at_point">
+			<return type="Dictionary" />
+			<param index="0" name="dat" type="ResonanceProbeData" />
+			<param index="1" name="world_position" type="Vector3" />
+			<param index="2" name="baked_variation" type="int" default="0" />
+			<param index="3" name="endpoint" type="Vector3" default="Vector3(0, 0, 0)" />
+			<param index="4" name="influence_radius" type="float" default="0.0" />
+			<param index="5" name="neighbor_radius" type="float" default="0.0" />
+			<param index="6" name="reconstruct_ir" type="bool" default="false" />
+			<description>
+				Interpolates baked energy at [param world_position]. Variation: 0 Reverb, 1 Static Source, 2 Static Listener. Optional IR reconstruction. Main-thread tooling only.
+			</description>
+		</method>
+		<method name="probe_data_query_baked_at_probe">
+			<return type="Dictionary" />
+			<param index="0" name="dat" type="ResonanceProbeData" />
+			<param index="1" name="probe_index" type="int" />
+			<param index="2" name="baked_variation" type="int" default="0" />
+			<param index="3" name="endpoint" type="Vector3" default="Vector3(0, 0, 0)" />
+			<param index="4" name="influence_radius" type="float" default="0.0" />
+			<param index="5" name="reconstruct_ir" type="bool" default="false" />
+			<description>
+				Reads baked energy for one probe index without spatial interpolation.
+			</description>
+		</method>
+		<method name="set_pathing_deviation_callable">
+			<return type="void" />
+			<param index="0" name="callable" type="Callable" />
+			<param index="1" name="samples_per_band" type="int" default="64" />
+			<description>
+				Builds a pathing deviation LUT from [code]callable(angle_rad, band) -&gt; float[/code] on the main thread. Do not call into [ResonanceServer] from the Callable while this runs.
+			</description>
+		</method>
+		<method name="clear_pathing_deviation_callback">
+			<return type="void" />
+			<description>
+				Restores default UTD pathing deviation.
+			</description>
+		</method>
+		<method name="is_pathing_deviation_custom_enabled">
+			<return type="bool" />
+			<description>
+				True when a custom deviation Callable/LUT is active.
+			</description>
+		</method>
+		<method name="get_pathing_visualization_segments">
+			<return type="PackedVector3Array" />
+			<description>
+				Path vis segments when [member debug_pathing] is on. Not drawn by F3; for scripts.
+			</description>
+		</method>
+		<method name="get_ray_debug_segments">
+			<return type="PackedVector3Array" />
+			<description>
+				Last debug reflection ray segments (when realtime rays / debug reflections are active).
+			</description>
+		</method>
+		<method name="get_ray_debug_segments_at">
+			<return type="PackedVector3Array" />
+			<param index="0" name="origin" type="Vector3" />
+			<description>
+				Debug reflection rays from [param origin].
+			</description>
+		</method>
+		<method name="uses_custom_ray_tracer" qualifiers="const">
+			<return type="bool" />
+			<description>
+				True when [code]scene_type[/code] is Custom (Godot physics).
+			</description>
+		</method>
+		<method name="wants_debug_reflection_viz" qualifiers="const">
+			<return type="bool" />
+			<description>
+				True when reflection ray visualization should be sampled this frame.
+			</description>
+		</method>
+		<method name="is_pathing_enabled" qualifiers="const">
+			<return type="bool" />
+			<description>
+				Whether runtime pathing simulation is enabled.
+			</description>
+		</method>
+		<method name="set_pathing_enabled">
+			<return type="void" />
+			<param index="0" name="p_enabled" type="bool" />
+			<description>
+				Enables or disables runtime pathing (live when the simulator supports it).
+			</description>
+		</method>
+		<method name="peek_reverb_params_likely_available" qualifiers="const">
+			<return type="bool" />
+			<param index="0" name="source_handle" type="int" />
+			<description>
+				Cheap check whether reflection cache likely has usable params for [param source_handle]. Does not lock simulation.
+			</description>
+		</method>
+		<method name="get_simulation_worker_timing" qualifiers="const">
+			<return type="Dictionary" />
+			<description>
+				Last sim step timings (us): [code]us_run_direct[/code], [code]us_run_reflections[/code], [code]us_run_pathing[/code], [code]us_sync_fetch[/code], commit keys. Cleared by [method reset_pathing_instrumentation].
+			</description>
+		</method>
+		<method name="get_convolution_audio_timing" qualifiers="const">
+			<return type="Dictionary" />
+			<description>
+				Convolution-only mix-thread timings (us): [code]us_reflection_apply_last[/code], [code]us_reverb_bus_last[/code], sanitize splits. Cleared by [method reset_reverb_bus_instrumentation].
+			</description>
+		</method>
+		<method name="get_simulation_tracer_profile" qualifiers="const">
+			<return type="Dictionary" />
+			<description>
+				Setup profile: [code]scene_type[/code], [code]ipl_scene_type[/code], [code]ray_batch_size_effective[/code], batched Custom flags.
+			</description>
+		</method>
+		<method name="get_reverb_bus_instrumentation">
+			<return type="Dictionary" />
+			<description>
+				Reverb bus debug counters (click guard, underrun, etc.).
+			</description>
+		</method>
+		<method name="reset_reverb_bus_instrumentation">
+			<return type="void" />
+			<description>
+				Clears reverb bus instrumentation and convolution timing fields.
+			</description>
+		</method>
+		<method name="get_pathing_instrumentation">
+			<return type="Dictionary" />
+			<description>
+				Pathing debug counters.
+			</description>
+		</method>
+		<method name="reset_pathing_instrumentation">
+			<return type="void" />
+			<description>
+				Clears pathing instrumentation and worker timing fields.
+			</description>
+		</method>
+		<method name="get_active_source_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Number of live simulation sources.
+			</description>
+		</method>
+		<method name="get_active_probe_batch_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Number of loaded probe batches.
+			</description>
+		</method>
+		<method name="get_source_lifecycle_epoch" qualifiers="const">
+			<return type="int" />
+			<description>
+				Increments on source-handle lifecycle recycle (reinit). Players invalidate stale handles against this.
 			</description>
 		</method>
 	</methods>
 	<members>
-		<member name="debug_occlusion" type="bool" setter="set_debug_occlusion" getter="is_debug_occlusion_enabled" default="true">
-			Enable occlusion ray visualization (source rays).
+		<member name="debug_occlusion" type="bool" setter="set_debug_occlusion" getter="is_debug_occlusion_enabled" default="false">
+			Show the per-player 3D HUD label (with [member debug_reflections]). F3 sets this with the player overlay.
 		</member>
-		<member name="debug_reflections" type="bool" setter="set_debug_reflections" getter="is_debug_reflections_enabled" default="true">
-			Enable reflection ray visualization. Requires Realtime Rays > 0 in ResonanceRuntimeConfig.
+		<member name="debug_reflections" type="bool" setter="set_debug_reflections" getter="is_debug_reflections_enabled" default="false">
+			Show the per-player debug label (occlusion, transmission, signal meters).
 		</member>
 		<member name="debug_pathing" type="bool" setter="set_debug_pathing" getter="is_debug_pathing_enabled" default="false">
-			Enable pathing segment visualization (green = unoccluded, red = occluded).
+			Records path vis segments for [method get_pathing_visualization_segments]. Not drawn in the viewport; F3 does not toggle this.
 		</member>
 		<member name="output_direct" type="bool" setter="set_output_direct_enabled" getter="is_output_direct_enabled" default="false">
-			Enable direct sound output. For debugging; normally true via config.
+			Enable direct sound output. Normally true via config; useful for debug A/B.
 		</member>
 		<member name="output_reverb" type="bool" setter="set_output_reverb_enabled" getter="is_output_reverb_enabled" default="true">
-			Enable reverb output. For debugging; normally true via config.
+			Master wet-path gate for reflections and pathing. Direct uses [member output_direct].
 		</member>
 		<member name="reverb_bus_click_guard_enabled" type="bool" setter="set_reverb_bus_click_guard_enabled" getter="is_reverb_bus_click_guard_enabled" default="true">
-			When true, the convolution reverb bus applies a short linear ramp when wet peak collapses in one callback (Godot scheduling edge). Disable for A/B wet-tail tests; see [method get_reverb_bus_instrumentation] key [code]effect_click_guard_triggers[/code].
+			Short ramp on the convolution bus when wet peak collapses in one callback. Disable for A/B wet-tail tests.
 		</member>
 		<member name="reverb_bus_wet_ring_underrun_zero_fill" type="bool" setter="set_reverb_bus_wet_ring_underrun_zero_fill" getter="is_reverb_bus_wet_ring_underrun_zero_fill" default="false">
-			When true, split-reverb ring underrun fills missing samples with silence instead of hold x cosine taper (ablation for wet-tail tests).
+			On split-reverb ring underrun, fill with silence instead of hold x cosine taper.
+		</member>
+		<member name="perspective_correction_enabled" type="bool" setter="set_perspective_correction_enabled" getter="is_perspective_correction_enabled" default="false">
+			Third-person perspective correction for spatialized sources. Live from runtime config.
+		</member>
+		<member name="perspective_correction_factor" type="float" setter="set_perspective_correction_factor" getter="get_perspective_correction_factor" default="1.0">
+			Perspective correction factor when [member perspective_correction_enabled] is true.
 		</member>
 	</members>
 </class>

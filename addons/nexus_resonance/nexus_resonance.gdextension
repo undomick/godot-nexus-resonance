@@ -91,6 +91,7 @@ ios.release.arm64 = {
 
 [icons]
 ResonanceProbeVolume = "res://addons/nexus_resonance/ui/icons/probe_volume_3d_icon.svg"
+ResonanceReverbDataPoint = "res://addons/nexus_resonance/ui/icons/probe_volume_3d_icon.svg"
 ResonanceGeometry = "res://addons/nexus_resonance/ui/icons/resonance_geometry_icon.svg"
 ResonanceStaticGeometry = "res://addons/nexus_resonance/ui/icons/resonance_static_geometry_icon.svg"
 ResonanceDynamicGeometry = "res://addons/nexus_resonance/ui/icons/resonance_dyn_geometry.svg"

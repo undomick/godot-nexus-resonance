@@ -5,7 +5,7 @@
 
 namespace resonance {
 
-/// Maps a channel count to Steam Audio's standard layouts (same mapping as Steam Audio FMOD/Unity helpers).
+/// Maps a channel count to Steam Audio's standard layouts (same mapping as Steam Audio spatialize helpers).
 /// Unsupported counts fall back to stereo. Use for IPLPanningEffectSettings / IPLAmbisonicsPanningEffectSettings.
 inline IPLSpeakerLayout speaker_layout_for_channel_count(int num_channels) {
     IPLSpeakerLayout layout{};

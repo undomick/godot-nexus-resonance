@@ -25,11 +25,19 @@ class ResonanceFmodEventEmitter : public Node3D {
         std::numeric_limits<float>::infinity(),
         std::numeric_limits<float>::infinity(),
         std::numeric_limits<float>::infinity());
+    Vector3 last_sync_forward = Vector3(
+        std::numeric_limits<float>::infinity(),
+        std::numeric_limits<float>::infinity(),
+        std::numeric_limits<float>::infinity());
+    Vector3 last_sync_up = Vector3(
+        std::numeric_limits<float>::infinity(),
+        std::numeric_limits<float>::infinity(),
+        std::numeric_limits<float>::infinity());
 
     static bool is_fmod_emitter_parent(Node* node);
     Object* find_runtime_fmod_bridge();
     void warn_if_parent_not_fmod_emitter();
-    void sync_fmod_source_position(const Vector3& world_pos);
+    void sync_fmod_source_pose(const Transform3D& world_xform);
     void register_fmod_source();
     void release_fmod_source_handles();
     void try_push_simulation_handle_to_fmod(int32_t fmod_plugin_handle);

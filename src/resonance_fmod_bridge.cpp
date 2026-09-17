@@ -154,6 +154,8 @@ bool ResonanceFMODBridge::init_bridge() {
     }
 
     if (!ctx || !hrtf || !sim_settings) {
+        if (reverb_src)
+            iplSourceRelease(&reverb_src);
         UtilityFunctions::push_warning("ResonanceFMODBridge: ResonanceServer context, HRTF or simulation settings not ready.");
         unload_plugin();
         return false;
@@ -164,6 +166,7 @@ bool ResonanceFMODBridge::init_bridge() {
     fn_iplFMODSetSimulationSettings_(*sim_settings);
     if (reverb_src) {
         fn_iplFMODSetReverbSource_(reverb_src);
+        iplSourceRelease(&reverb_src);
     }
 
     initialized_ = true;
@@ -202,6 +205,7 @@ int32_t ResonanceFMODBridge::add_fmod_source(int32_t resonance_source_handle) {
         return -1;
 
     int32_t handle = fn_iplFMODAddSource_(src);
+    iplSourceRelease(&src);
     return handle;
 }
 

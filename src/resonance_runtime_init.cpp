@@ -1,13 +1,19 @@
+#include "resonance_audio_effect.h"
 #include "resonance_geometry_asset.h"
+#include "resonance_probe_data.h"
+#include "resonance_probe_volume.h"
+#include "resonance_reflection_type_policy.h"
 #include "resonance_runtime.h"
 #include "resonance_server.h"
 
+#include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/node3d.hpp>
 #include <godot_cpp/classes/resource_loader.hpp>
 #include <godot_cpp/classes/scene_tree.hpp>
 #include <godot_cpp/classes/script.hpp>
 #include <godot_cpp/classes/time.hpp>
 #include <godot_cpp/classes/window.hpp>
+#include <godot_cpp/variant/packed_string_array.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 
 using namespace godot;
@@ -29,6 +35,29 @@ void collect_static_scenes(Node* node, TypedArray<Node>& out) {
         collect_static_scenes(Object::cast_to<Node>(children[i]), out);
     }
 }
+
+String join_packed_names(const PackedStringArray& names) {
+    String out;
+    for (int i = 0; i < names.size(); i++) {
+        if (i > 0) {
+            out += ", ";
+        }
+        out += names[i];
+    }
+    return out;
+}
+
+int runtime_global_bake_ambisonic_order(const Ref<Resource>& runtime) {
+    if (runtime.is_null()) {
+        return resonance::kBakeDefaultAmbisonicsOrder;
+    }
+    Variant bao = runtime->get("bake_ambisonic_order");
+    if (bao.get_type() == Variant::INT || bao.get_type() == Variant::FLOAT) {
+        return resonance::clamp_bake_ambisonics_order((int)bao);
+    }
+    return resonance::clamp_bake_ambisonics_order((int)runtime->get("ambisonic_order"));
+}
+
 } // namespace
 
 Dictionary ResonanceRuntime::get_config_dict() const {
@@ -37,14 +66,16 @@ Dictionary ResonanceRuntime::get_config_dict() const {
         cfg = runtime->call("get_config");
     }
     cfg["debug_occlusion"] = player_overlay_visible;
+    cfg["debug_reflections"] = player_overlay_visible;
     cfg["context_simd_level"] = context_simd_level;
     cfg["context_validation"] = context_validation;
     return cfg;
 }
 
 // Bake params from the first probe volume with a bake_config, else defaults. Set before init so pathing visibility
-// params are available.
+// params are available. bake_reflection_type always follows this runtime's reflection_type (TAN -> Convolution).
 Dictionary ResonanceRuntime::get_bake_params_for_runtime() {
+    Dictionary params;
     if (is_inside_tree()) {
         if (SceneTree* tree = get_tree()) {
             TypedArray<Node> volumes = tree->get_nodes_in_group("resonance_probe_volume");
@@ -55,21 +86,29 @@ Dictionary ResonanceRuntime::get_bake_params_for_runtime() {
                 }
                 Object* bc = Object::cast_to<Object>(vol->get("bake_config"));
                 if (bc && bc->has_method("get_bake_params")) {
-                    return bc->call("get_bake_params");
+                    params = bc->call("get_bake_params");
+                    break;
                 }
             }
         }
     }
-    Ref<Script> bake_script = ResourceLoader::get_singleton()->load(BAKE_CONFIG_PATH);
-    if (bake_script.is_valid()) {
-        // Keep the Variant alive: create_default() returns a RefCounted; a temporary would free it.
-        Variant def_variant = bake_script->call("create_default");
-        Object* def = Object::cast_to<Object>(def_variant);
-        if (def && def->has_method("get_bake_params")) {
-            return def->call("get_bake_params");
+    if (params.is_empty()) {
+        Ref<Script> bake_script = ResourceLoader::get_singleton()->load(BAKE_CONFIG_PATH);
+        if (bake_script.is_valid()) {
+            // Keep the Variant alive: create_default() returns a RefCounted; a temporary would free it.
+            Variant def_variant = bake_script->call("create_default");
+            Object* def = Object::cast_to<Object>(def_variant);
+            if (def && def->has_method("get_bake_params")) {
+                params = def->call("get_bake_params");
+            }
         }
     }
-    return Dictionary();
+    if (runtime.is_valid()) {
+        const int rt_refl = (int)runtime->get("reflection_type");
+        params["bake_reflection_type"] = resonance::bake_reflection_type_from_runtime(rt_refl);
+        params["bake_ambisonics_order"] = runtime_global_bake_ambisonic_order(runtime);
+    }
+    return params;
 }
 
 // Loads every ResonanceStaticScene under tree_root into the server (one simulation_mutex batch).
@@ -115,13 +154,16 @@ void ResonanceRuntime::apply_primary_handoff_without_reinit() {
     }
     if (is_inside_tree()) {
         if (SceneTree* tree = get_tree()) {
+            // Static packs only. Do not deferred refresh_geometry: Geometry/_ready retry already
+            // registers once; a second rebuild breaks Embree dynamic occlusion (same as F3 path).
             reload_static_scenes_from_tree(tree->get_root());
-            tree->call_group_flags(SceneTree::GROUP_CALL_DEFERRED, "resonance_geometry", "refresh_geometry");
         }
     }
     apply_debug_flags();
-    apply_perspective_correction();
+    apply_runtime_live_config();
     call_deferred("deferred_reset_spatial_audio_warmup_passes");
+    // Same as fresh init: probe volumes may still be loading; warn after settle.
+    call_deferred("warn_probe_volume_runtime_mismatches");
     sync_physics_process_for_custom_tracer();
 }
 
@@ -156,14 +198,16 @@ void ResonanceRuntime::initialize_server() {
         init_coda_bridge();
     }
     if (is_inside_tree()) {
+        // Static packs only. Geometry nodes register via _ready retry after server init;
+        // deferred refresh_geometry would double-register and break Embree occlusion.
         reload_static_scenes_from_tree(get_tree()->get_root());
-        get_tree()->call_group_flags(
-            SceneTree::GROUP_CALL_DEFERRED, "resonance_geometry", "refresh_geometry");
     }
     apply_debug_flags();
-    apply_perspective_correction();
+    apply_runtime_live_config();
     // Mute spatialized output until several worker RunDirect ticks after scene/geometry settle.
     call_deferred("deferred_reset_spatial_audio_warmup_passes");
+    // Probe volumes load batches in their own _ready; warn after the tree settles.
+    call_deferred("warn_probe_volume_runtime_mismatches");
     sync_physics_process_for_custom_tracer();
 }
 
@@ -251,13 +295,18 @@ void ResonanceRuntime::reload_after_reinit() {
     }
     tree->call_group_flags(SceneTree::GROUP_CALL_DEFERRED, "resonance_geometry", "refresh_geometry");
     call_deferred("deferred_reset_spatial_audio_warmup_passes");
+    call_deferred("warn_probe_volume_runtime_mismatches");
+    ResonanceAudioEffectInstance::try_prewarm_all_live_instances();
     sync_physics_process_for_custom_tracer();
 }
 
 void ResonanceRuntime::deferred_reset_spatial_audio_warmup_passes() {
     ResonanceServer* srv = ResonanceServer::get_singleton();
     if (srv && srv->is_initialized()) {
-        srv->arm_spatial_audio_output_gate();
+        // Geometry 0->N already armed the gate; re-arm would clear ready and re-dirty after mesh _ready.
+        if (srv->get_global_triangle_count() <= 0)
+            srv->arm_spatial_audio_output_gate();
+        srv->finish_cold_start_settle();
     }
 }
 
@@ -306,28 +355,65 @@ void ResonanceRuntime::apply_debug_flags() {
 }
 
 void ResonanceRuntime::apply_perspective_correction() {
+    apply_runtime_live_config();
+}
+
+void ResonanceRuntime::apply_runtime_live_config() {
+    if (!is_inside_tree() || !is_primary_runtime()) {
+        return;
+    }
     ResonanceServer* srv = ResonanceServer::get_singleton();
     if (srv == nullptr || !srv->is_initialized() || runtime.is_null()) {
         return;
     }
-    srv->set_perspective_correction_enabled((bool)runtime->get("perspective_correction_enabled"));
-    srv->set_perspective_correction_factor((double)runtime->get("perspective_correction_factor"));
-    srv->set_reverb_transmission_amount((double)runtime->get("reverb_transmission_amount"));
-    srv->set_apply_occlusion_to_baked_reflections((bool)runtime->get("apply_occlusion_to_baked_reflections"));
+    Dictionary cfg = get_config_dict();
+    if (cfg.is_empty()) {
+        return;
+    }
+    if (srv->patch_live_runtime_config(cfg)) {
+        // Pathing on requires iplSimulatorCreate with PATHING when the live simulator lacks it.
+        // Current init always includes PATHING, so this reinit path is unused.
+        reinit_for_config_change();
+    }
+}
+
+void ResonanceRuntime::on_runtime_live_config_changed(const Variant& arg) {
+    apply_runtime_live_config();
+    // Gizmo / mismatch UI follows pathing on/off without treating leftover baked layers as errors.
+    if (arg.get_type() == Variant::STRING_NAME || arg.get_type() == Variant::STRING) {
+        const StringName prop = arg;
+        if (prop == StringName("pathing_enabled")) {
+            notify_volumes_runtime_config_changed();
+        }
+    }
+}
+
+void ResonanceRuntime::apply_runtime_routing_refresh() {
+    if (!is_inside_tree() || !is_primary_runtime()) {
+        return;
+    }
+    apply_bus_to_players();
 }
 
 void ResonanceRuntime::connect_runtime_signals() {
     if (runtime.is_null()) {
         return;
     }
-    if (runtime->has_signal("reflection_type_changed") && !runtime->is_connected("reflection_type_changed", Callable(this, "on_reflection_type_changed"))) {
-        runtime->connect("reflection_type_changed", Callable(this, "on_reflection_type_changed"));
+    const Callable reinit_cb(this, "on_native_engine_reinit_requested");
+    if (runtime->has_signal("native_engine_reinit_requested") && !runtime->is_connected("native_engine_reinit_requested", reinit_cb)) {
+        runtime->connect("native_engine_reinit_requested", reinit_cb);
     }
-    if (runtime->has_signal("pathing_enabled_changed") && !runtime->is_connected("pathing_enabled_changed", Callable(this, "on_runtime_affecting_probes_changed"))) {
-        runtime->connect("pathing_enabled_changed", Callable(this, "on_runtime_affecting_probes_changed"));
+    const Callable live_cb(this, "on_runtime_live_config_changed");
+    if (runtime->has_signal("runtime_live_config_changed") && !runtime->is_connected("runtime_live_config_changed", live_cb)) {
+        runtime->connect("runtime_live_config_changed", live_cb);
     }
-    if (runtime->has_signal("audio_frame_size_changed") && !runtime->is_connected("audio_frame_size_changed", Callable(this, "on_audio_frame_size_changed"))) {
-        runtime->connect("audio_frame_size_changed", Callable(this, "on_audio_frame_size_changed"));
+    const Callable routing_cb(this, "on_runtime_routing_changed");
+    if (runtime->has_signal("runtime_routing_changed") && !runtime->is_connected("runtime_routing_changed", routing_cb)) {
+        runtime->connect("runtime_routing_changed", routing_cb);
+    }
+    const Callable bake_amb_cb(this, "on_bake_ambisonic_order_changed");
+    if (runtime->has_signal("bake_ambisonic_order_changed") && !runtime->is_connected("bake_ambisonic_order_changed", bake_amb_cb)) {
+        runtime->connect("bake_ambisonic_order_changed", bake_amb_cb);
     }
 }
 
@@ -335,23 +421,38 @@ void ResonanceRuntime::disconnect_runtime_signals() {
     if (runtime.is_null()) {
         return;
     }
-    if (runtime->has_signal("reflection_type_changed") && runtime->is_connected("reflection_type_changed", Callable(this, "on_reflection_type_changed"))) {
-        runtime->disconnect("reflection_type_changed", Callable(this, "on_reflection_type_changed"));
+    const Callable reinit_cb(this, "on_native_engine_reinit_requested");
+    if (runtime->has_signal("native_engine_reinit_requested") && runtime->is_connected("native_engine_reinit_requested", reinit_cb)) {
+        runtime->disconnect("native_engine_reinit_requested", reinit_cb);
     }
-    if (runtime->has_signal("pathing_enabled_changed") && runtime->is_connected("pathing_enabled_changed", Callable(this, "on_runtime_affecting_probes_changed"))) {
-        runtime->disconnect("pathing_enabled_changed", Callable(this, "on_runtime_affecting_probes_changed"));
+    const Callable live_cb(this, "on_runtime_live_config_changed");
+    if (runtime->has_signal("runtime_live_config_changed") && runtime->is_connected("runtime_live_config_changed", live_cb)) {
+        runtime->disconnect("runtime_live_config_changed", live_cb);
     }
-    if (runtime->has_signal("audio_frame_size_changed") && runtime->is_connected("audio_frame_size_changed", Callable(this, "on_audio_frame_size_changed"))) {
-        runtime->disconnect("audio_frame_size_changed", Callable(this, "on_audio_frame_size_changed"));
+    const Callable routing_cb(this, "on_runtime_routing_changed");
+    if (runtime->has_signal("runtime_routing_changed") && runtime->is_connected("runtime_routing_changed", routing_cb)) {
+        runtime->disconnect("runtime_routing_changed", routing_cb);
+    }
+    const Callable bake_amb_cb(this, "on_bake_ambisonic_order_changed");
+    if (runtime->has_signal("bake_ambisonic_order_changed") && runtime->is_connected("bake_ambisonic_order_changed", bake_amb_cb)) {
+        runtime->disconnect("bake_ambisonic_order_changed", bake_amb_cb);
     }
 }
 
 void ResonanceRuntime::reinit_for_config_change() {
-    if (!is_inside_tree() || !is_primary_runtime()) {
+    if (!is_inside_tree()) {
+        return;
+    }
+    // Editor never claims primary; still refresh gizmos / mismatch warnings.
+    if (!is_primary_runtime()) {
+        if (editor_hint()) {
+            notify_volumes_runtime_config_changed();
+        }
         return;
     }
     ResonanceServer* srv = ResonanceServer::get_singleton();
     if (srv == nullptr || !srv->is_initialized()) {
+        notify_volumes_runtime_config_changed();
         return;
     }
     Dictionary cfg = get_config_dict();
@@ -365,19 +466,16 @@ void ResonanceRuntime::reinit_for_config_change() {
     notify_volumes_runtime_config_changed();
 }
 
-void ResonanceRuntime::on_reflection_type_changed(const Variant&) {
+void ResonanceRuntime::on_native_engine_reinit_requested(const Variant&) {
     reinit_for_config_change();
 }
 
-void ResonanceRuntime::on_audio_frame_size_changed(const Variant&) {
-    reinit_for_config_change();
+void ResonanceRuntime::on_runtime_routing_changed(const Variant&) {
+    apply_runtime_routing_refresh();
 }
 
-void ResonanceRuntime::on_runtime_affecting_probes_changed(const Variant&) {
-    // Pathing internals exist only when PATHING was set at iplSimulatorCreate.
-    // Flipping the config flag without recreate leaves RunPathing / probe attach
-    // calling into a null PathSimulator (Steam Audio crash). Mirror reflection_type.
-    reinit_for_config_change();
+void ResonanceRuntime::on_bake_ambisonic_order_changed(const Variant&) {
+    notify_volumes_runtime_config_changed();
 }
 
 void ResonanceRuntime::notify_volumes_runtime_config_changed() {
@@ -386,8 +484,72 @@ void ResonanceRuntime::notify_volumes_runtime_config_changed() {
     }
     const int refl = (int)runtime->get("reflection_type");
     const bool pathing = (bool)runtime->get("pathing_enabled");
-    get_tree()->call_group_flags(
-        SceneTree::GROUP_CALL_DEFERRED, "resonance_probe_volume", "notify_runtime_config_changed", refl, pathing);
+    const int bake_amb = runtime_global_bake_ambisonic_order(runtime);
+    get_tree()->call_group_flags(SceneTree::GROUP_CALL_DEFERRED, "resonance_probe_volume",
+                                 "notify_runtime_config_changed", refl, pathing, bake_amb);
+    warn_probe_volume_runtime_mismatches();
+}
+
+void ResonanceRuntime::warn_probe_volume_runtime_mismatches() {
+    if (!is_inside_tree() || runtime.is_null()) {
+        return;
+    }
+    SceneTree* tree = get_tree();
+    if (!tree) {
+        return;
+    }
+    const int refl = (int)runtime->get("reflection_type");
+    const bool pathing = (bool)runtime->get("pathing_enabled");
+    const int global_bake_amb = runtime_global_bake_ambisonic_order(runtime);
+
+    TypedArray<Node> volumes = tree->get_nodes_in_group("resonance_probe_volume");
+    PackedStringArray refl_names;
+    PackedStringArray amb_details;
+    PackedStringArray path_names;
+
+    for (int i = 0; i < volumes.size(); i++) {
+        ResonanceProbeVolume* vol = Object::cast_to<ResonanceProbeVolume>(volumes[i]);
+        if (vol == nullptr) {
+            continue;
+        }
+        Ref<ResonanceProbeData> pd = vol->get_probe_data();
+        if (pd.is_null() || pd->get_size() <= 0) {
+            continue;
+        }
+        const String name = vol->get_name();
+        if (!resonance::baked_reflection_type_matches_runtime(pd->get_baked_reflection_type(), refl)) {
+            refl_names.push_back(name);
+        }
+        const int setting_amb = vol->resolved_bake_ambisonic_order(global_bake_amb);
+        const int baked_amb = resonance::effective_baked_ambisonics_order(pd->get_baked_ambisonics_order());
+        if (resonance::ambisonics_order_mismatches_bake_setting(pd->get_baked_ambisonics_order(), setting_amb)) {
+            amb_details.push_back(name + String(" (setting ") + String::num_int64(setting_amb) + String(", baked ") +
+                                  String::num_int64(baked_amb) + String(")"));
+        }
+        const bool has_pathing = pd->get_pathing_params_hash() > 0;
+        // Runtime pathing off with leftover baked layer is intentional (CPU save); only warn when enabled without bake.
+        if (pathing && !has_pathing) {
+            path_names.push_back(name);
+        }
+    }
+
+    if (refl_names.is_empty() && amb_details.is_empty() && path_names.is_empty()) {
+        return;
+    }
+
+    String msg = "Probe Volume bake does not match settings.";
+    if (!refl_names.is_empty()) {
+        msg += " Reflection type mismatch (rebake required): " + join_packed_names(refl_names) + ".";
+    }
+    if (!amb_details.is_empty()) {
+        msg += " Ambisonics bake order mismatch (rebake or match the volume setting): " +
+               join_packed_names(amb_details) + ".";
+    }
+    if (!path_names.is_empty()) {
+        msg += " Pathing enabled but no pathing layer (pathing skipped): " + join_packed_names(path_names) + ".";
+    }
+    UtilityFunctions::print_rich("[color=orange]Nexus Resonance:[/color] " + msg);
+    UtilityFunctions::push_warning(String("Nexus Resonance: ") + msg);
 }
 
 void ResonanceRuntime::warn_restart_if_needed() {

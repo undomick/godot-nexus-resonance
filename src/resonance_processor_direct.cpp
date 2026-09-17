@@ -1,5 +1,7 @@
 #include "resonance_processor_direct.h"
+#include "resonance_direct_spatial_tail_policy.h"
 #include "resonance_log.h"
+#include "resonance_processor_hrtf_policy.h"
 #include "resonance_server.h"
 #include "resonance_speaker_layout.h"
 #include "resonance_utils.h"
@@ -22,12 +24,13 @@ void ResonanceDirectProcessor::initialize(IPLContext p_context, int p_sample_rat
 
     context = p_context;
     frame_size = p_frame_size;
+    sample_rate = p_sample_rate;
     ambisonic_order = p_ambisonic_order;
     use_ambisonics_encode = p_use_ambisonics_encode;
     speaker_channels = resonance::clamp_direct_speaker_channels(p_speaker_channels);
 
     IPLAudioSettings audioSettings{};
-    audioSettings.samplingRate = p_sample_rate;
+    audioSettings.samplingRate = sample_rate;
     audioSettings.frameSize = frame_size;
 
     // 1. Direct Effect (Mono physics)
@@ -40,18 +43,12 @@ void ResonanceDirectProcessor::initialize(IPLContext p_context, int p_sample_rat
     }
     init_flags |= DirectInitFlags::DIRECT_EFFECT;
 
-    // 2. Binaural Effect
+    // 2. Binaural + optional HOA path (skipped when HRTF unavailable at init; ensure_hrtf_effects_on_main later).
     ResonanceServer* srv = ResonanceServer::get_singleton();
     hrtf_handle = (srv) ? srv->get_hrtf_handle() : nullptr;
-
     if (hrtf_handle) {
-        IPLBinauralEffectSettings binSettings{};
-        binSettings.hrtf = hrtf_handle;
-        if (iplBinauralEffectCreate(context, &audioSettings, &binSettings, &binaural_effect) == IPL_STATUS_SUCCESS) {
-            init_flags |= DirectInitFlags::BINAURAL_EFFECT;
-        } else {
-            ResonanceLog::error("DirectProcessor: Failed to create IPLBinauralEffect");
-        }
+        if (!create_hrtf_bound_effects(hrtf_handle))
+            ResonanceLog::warn("DirectProcessor: Failed to create HRTF-bound effects.");
     } else {
         ResonanceLog::warn("DirectProcessor: No HRTF found. Binaural disabled.");
     }
@@ -65,64 +62,7 @@ void ResonanceDirectProcessor::initialize(IPLContext p_context, int p_sample_rat
         ResonanceLog::error("DirectProcessor: Failed to create IPLPanningEffect");
     }
 
-    // 4. Optional: Ambisonics Encode + Binaural path (for mixing scenarios)
-    if (use_ambisonics_encode && hrtf_handle) {
-        IPLAmbisonicsEncodeEffectSettings encSettings{};
-        encSettings.maxOrder = ambisonic_order;
-        if (iplAmbisonicsEncodeEffectCreate(context, &audioSettings, &encSettings, &ambisonics_encode_effect) != IPL_STATUS_SUCCESS) {
-            ResonanceLog::warn("DirectProcessor: Ambisonics Encode effect creation failed.");
-        }
-        IPLAmbisonicsBinauralEffectSettings ambBinSettings{};
-        ambBinSettings.hrtf = hrtf_handle;
-        ambBinSettings.maxOrder = ambisonic_order;
-        if (iplAmbisonicsBinauralEffectCreate(context, &audioSettings, &ambBinSettings, &ambisonics_binaural_effect) != IPL_STATUS_SUCCESS) {
-            ResonanceLog::warn("DirectProcessor: Ambisonics Binaural effect creation failed.");
-            if (ambisonics_encode_effect) {
-                iplAmbisonicsEncodeEffectRelease(&ambisonics_encode_effect);
-                ambisonics_encode_effect = nullptr;
-            }
-        }
-        if (ambisonics_encode_effect && ambisonics_binaural_effect) {
-            int num_ambi_channels = (ambisonic_order + 1) * (ambisonic_order + 1);
-            if (iplAudioBufferAllocate(context, num_ambi_channels, frame_size, &internal_ambi_buffer) == IPL_STATUS_SUCCESS && internal_ambi_buffer.data) {
-                init_flags |= DirectInitFlags::AMBISONICS_ENCODE;
-                if (iplAudioBufferAllocate(context, 2, frame_size, &internal_hoa_stereo_scratch) != IPL_STATUS_SUCCESS ||
-                    !internal_hoa_stereo_scratch.data || !internal_hoa_stereo_scratch.data[0] || !internal_hoa_stereo_scratch.data[1]) {
-                    ResonanceLog::warn("DirectProcessor: HOA stereo scratch allocation failed; spatial_blend blend with Ambisonics path unavailable.");
-                } else {
-                    init_flags |= DirectInitFlags::HOA_BINAURAL_STEREO_SCRATCH;
-                }
-                // Non-HRTF surround: decode Ambisonics to speakers (optional; stereo uses cheaper panning path).
-                if (speaker_channels > 2) {
-                    IPLAmbisonicsPanningEffectSettings ambiPanSettings{};
-                    ambiPanSettings.speakerLayout = resonance::speaker_layout_for_channel_count(speaker_channels);
-                    ambiPanSettings.maxOrder = ambisonic_order;
-                    if (iplAmbisonicsPanningEffectCreate(context, &audioSettings, &ambiPanSettings, &ambisonics_panning_effect) == IPL_STATUS_SUCCESS) {
-                        init_flags |= DirectInitFlags::AMBISONICS_PANNING;
-                    } else {
-                        ResonanceLog::warn("DirectProcessor: Ambisonics Panning effect creation failed; using IPLPanningEffect for non-HRTF.");
-                    }
-                }
-            } else {
-                iplAmbisonicsEncodeEffectRelease(&ambisonics_encode_effect);
-                iplAmbisonicsBinauralEffectRelease(&ambisonics_binaural_effect);
-                ambisonics_encode_effect = nullptr;
-                ambisonics_binaural_effect = nullptr;
-            }
-        }
-    }
-
-    // Binaural APIs expect a stereo output buffer; copy to FL/FR when the player uses a surround layout.
-    if (speaker_channels > 2 && hrtf_handle && (binaural_effect || ambisonics_binaural_effect)) {
-        if (iplAudioBufferAllocate(context, 2, frame_size, &internal_binaural_stereo_out) == IPL_STATUS_SUCCESS && internal_binaural_stereo_out.data &&
-            internal_binaural_stereo_out.data[0] && internal_binaural_stereo_out.data[1]) {
-            init_flags |= DirectInitFlags::BINAURAL_STEREO_SCRATCH;
-        } else {
-            ResonanceLog::warn("DirectProcessor: Binaural stereo scratch allocation failed; HRTF with surround direct_speaker_channels may be unstable.");
-        }
-    }
-
-    // 5. Buffers (separate in/out for iplDirectEffectApply per Steam Audio reference implementations)
+    // 4. Buffers (separate in/out for iplDirectEffectApply per Steam Audio reference implementations)
     if (iplAudioBufferAllocate(context, 1, frame_size, &internal_mono_buffer) != IPL_STATUS_SUCCESS ||
         !internal_mono_buffer.data) {
         ResonanceLog::error("DirectProcessor: Internal buffer allocation failed.");
@@ -189,8 +129,149 @@ void ResonanceDirectProcessor::cleanup() {
     memset(&internal_ambi_buffer, 0, sizeof(internal_ambi_buffer));
     memset(&internal_hoa_stereo_scratch, 0, sizeof(internal_hoa_stereo_scratch));
     hrtf_handle = nullptr;
+    bound_hrtf_ = nullptr;
     context = nullptr;
     init_flags = DirectInitFlags::NONE;
+}
+
+void ResonanceDirectProcessor::release_hrtf_bound_effects() {
+    if (binaural_effect) {
+        iplBinauralEffectRelease(&binaural_effect);
+        binaural_effect = nullptr;
+        init_flags = static_cast<DirectInitFlags>(static_cast<int>(init_flags) & ~static_cast<int>(DirectInitFlags::BINAURAL_EFFECT));
+    }
+    if (ambisonics_binaural_effect) {
+        iplAmbisonicsBinauralEffectRelease(&ambisonics_binaural_effect);
+        ambisonics_binaural_effect = nullptr;
+    }
+    if (ambisonics_encode_effect) {
+        iplAmbisonicsEncodeEffectRelease(&ambisonics_encode_effect);
+        ambisonics_encode_effect = nullptr;
+        init_flags = static_cast<DirectInitFlags>(static_cast<int>(init_flags) & ~static_cast<int>(DirectInitFlags::AMBISONICS_ENCODE));
+    }
+    if (ambisonics_panning_effect) {
+        iplAmbisonicsPanningEffectRelease(&ambisonics_panning_effect);
+        ambisonics_panning_effect = nullptr;
+        init_flags = static_cast<DirectInitFlags>(static_cast<int>(init_flags) & ~static_cast<int>(DirectInitFlags::AMBISONICS_PANNING));
+    }
+    if (context && internal_ambi_buffer.data != nullptr) {
+        iplAudioBufferFree(context, &internal_ambi_buffer);
+        memset(&internal_ambi_buffer, 0, sizeof(internal_ambi_buffer));
+    }
+    if (context && internal_hoa_stereo_scratch.data != nullptr) {
+        iplAudioBufferFree(context, &internal_hoa_stereo_scratch);
+        memset(&internal_hoa_stereo_scratch, 0, sizeof(internal_hoa_stereo_scratch));
+        init_flags = static_cast<DirectInitFlags>(static_cast<int>(init_flags) & ~static_cast<int>(DirectInitFlags::HOA_BINAURAL_STEREO_SCRATCH));
+    }
+    if (context && internal_binaural_stereo_out.data != nullptr) {
+        iplAudioBufferFree(context, &internal_binaural_stereo_out);
+        memset(&internal_binaural_stereo_out, 0, sizeof(internal_binaural_stereo_out));
+        init_flags = static_cast<DirectInitFlags>(static_cast<int>(init_flags) & ~static_cast<int>(DirectInitFlags::BINAURAL_STEREO_SCRATCH));
+    }
+    bound_hrtf_ = nullptr;
+}
+
+bool ResonanceDirectProcessor::create_hrtf_bound_effects(IPLHRTF hrtf) {
+    if (!context || !hrtf)
+        return false;
+
+    IPLAudioSettings audioSettings{};
+    audioSettings.samplingRate = sample_rate;
+    audioSettings.frameSize = frame_size;
+
+    IPLBinauralEffectSettings binSettings{};
+    binSettings.hrtf = hrtf;
+    if (iplBinauralEffectCreate(context, &audioSettings, &binSettings, &binaural_effect) != IPL_STATUS_SUCCESS) {
+        ResonanceLog::error("DirectProcessor: Failed to create IPLBinauralEffect");
+        return false;
+    }
+    init_flags |= DirectInitFlags::BINAURAL_EFFECT;
+
+    if (use_ambisonics_encode) {
+        IPLAmbisonicsEncodeEffectSettings encSettings{};
+        encSettings.maxOrder = ambisonic_order;
+        if (iplAmbisonicsEncodeEffectCreate(context, &audioSettings, &encSettings, &ambisonics_encode_effect) != IPL_STATUS_SUCCESS) {
+            ResonanceLog::warn("DirectProcessor: Ambisonics Encode effect creation failed.");
+        }
+        IPLAmbisonicsBinauralEffectSettings ambBinSettings{};
+        ambBinSettings.hrtf = hrtf;
+        ambBinSettings.maxOrder = ambisonic_order;
+        if (iplAmbisonicsBinauralEffectCreate(context, &audioSettings, &ambBinSettings, &ambisonics_binaural_effect) != IPL_STATUS_SUCCESS) {
+            ResonanceLog::warn("DirectProcessor: Ambisonics Binaural effect creation failed.");
+            if (ambisonics_encode_effect) {
+                iplAmbisonicsEncodeEffectRelease(&ambisonics_encode_effect);
+                ambisonics_encode_effect = nullptr;
+            }
+        }
+        if (ambisonics_encode_effect && ambisonics_binaural_effect) {
+            int num_ambi_channels = (ambisonic_order + 1) * (ambisonic_order + 1);
+            if (iplAudioBufferAllocate(context, num_ambi_channels, frame_size, &internal_ambi_buffer) == IPL_STATUS_SUCCESS && internal_ambi_buffer.data) {
+                init_flags |= DirectInitFlags::AMBISONICS_ENCODE;
+                if (iplAudioBufferAllocate(context, 2, frame_size, &internal_hoa_stereo_scratch) != IPL_STATUS_SUCCESS ||
+                    !internal_hoa_stereo_scratch.data || !internal_hoa_stereo_scratch.data[0] || !internal_hoa_stereo_scratch.data[1]) {
+                    ResonanceLog::warn("DirectProcessor: HOA stereo scratch allocation failed; spatial_blend blend with Ambisonics path unavailable.");
+                } else {
+                    init_flags |= DirectInitFlags::HOA_BINAURAL_STEREO_SCRATCH;
+                }
+                if (speaker_channels > 2) {
+                    IPLAmbisonicsPanningEffectSettings ambiPanSettings{};
+                    ambiPanSettings.speakerLayout = resonance::speaker_layout_for_channel_count(speaker_channels);
+                    ambiPanSettings.maxOrder = ambisonic_order;
+                    if (iplAmbisonicsPanningEffectCreate(context, &audioSettings, &ambiPanSettings, &ambisonics_panning_effect) == IPL_STATUS_SUCCESS) {
+                        init_flags |= DirectInitFlags::AMBISONICS_PANNING;
+                    } else {
+                        ResonanceLog::warn("DirectProcessor: Ambisonics Panning effect creation failed; using IPLPanningEffect for non-HRTF.");
+                    }
+                }
+            } else {
+                iplAmbisonicsEncodeEffectRelease(&ambisonics_encode_effect);
+                iplAmbisonicsBinauralEffectRelease(&ambisonics_binaural_effect);
+                ambisonics_encode_effect = nullptr;
+                ambisonics_binaural_effect = nullptr;
+            }
+        }
+    }
+
+    if (speaker_channels > 2 && (binaural_effect || ambisonics_binaural_effect)) {
+        if (iplAudioBufferAllocate(context, 2, frame_size, &internal_binaural_stereo_out) == IPL_STATUS_SUCCESS && internal_binaural_stereo_out.data &&
+            internal_binaural_stereo_out.data[0] && internal_binaural_stereo_out.data[1]) {
+            init_flags |= DirectInitFlags::BINAURAL_STEREO_SCRATCH;
+        } else {
+            ResonanceLog::warn("DirectProcessor: Binaural stereo scratch allocation failed; HRTF with surround direct_speaker_channels may be unstable.");
+        }
+    }
+
+    bound_hrtf_ = hrtf;
+    hrtf_handle = hrtf;
+    return true;
+}
+
+bool ResonanceDirectProcessor::hrtf_effects_need_main_sync(IPLHRTF runtime_hrtf) const {
+    if (!(init_flags & DirectInitFlags::DIRECT_EFFECT))
+        return false;
+    const bool has_binaural = (init_flags & DirectInitFlags::BINAURAL_EFFECT) && binaural_effect != nullptr;
+    return resonance::direct_needs_hrtf_main_sync(has_binaural, bound_hrtf_, runtime_hrtf);
+}
+
+void ResonanceDirectProcessor::ensure_hrtf_effects_on_main(IPLHRTF runtime_hrtf) {
+    if (!(init_flags & DirectInitFlags::DIRECT_EFFECT) || !context)
+        return;
+    if (!runtime_hrtf) {
+        hrtf_handle = nullptr;
+        return;
+    }
+
+    const bool has_binaural = (init_flags & DirectInitFlags::BINAURAL_EFFECT) && binaural_effect != nullptr;
+    if (resonance::direct_needs_hrtf_effect_create(has_binaural, bound_hrtf_, runtime_hrtf)) {
+        create_hrtf_bound_effects(runtime_hrtf);
+        return;
+    }
+    if (resonance::direct_needs_hrtf_effect_recreate(has_binaural, bound_hrtf_, runtime_hrtf)) {
+        release_hrtf_bound_effects();
+        create_hrtf_bound_effects(runtime_hrtf);
+        return;
+    }
+    hrtf_handle = runtime_hrtf;
 }
 
 void ResonanceDirectProcessor::process(
@@ -207,6 +288,9 @@ void ResonanceDirectProcessor::process(
     const IPLVector3& source_pos) {
 
     // --- PERFORMANCE CRITICAL SECTION ---
+
+    ResonanceServer* srv = ResonanceServer::get_singleton();
+    hrtf_handle = (srv) ? srv->get_hrtf_handle() : nullptr;
 
     // 1. Validation (InitFlags guard: only process when fully initialized, avoids partial-init crashes)
     bool has_spatialization = (init_flags & DirectInitFlags::BINAURAL_EFFECT) || (init_flags & DirectInitFlags::PANNING_EFFECT);
@@ -392,6 +476,7 @@ void ResonanceDirectProcessor::apply_spatialization(const IPLVector3& dir, const
             else
                 clear_surround_tail_after_direct_stereo_effect(out, binaural_out);
         } else if (have_hoa_blend_scratch) {
+            // Mid-range spatial_blend: manual stereo mix (AmbisonicsBinauralEffect has no spatialBlend).
             IPLAmbisonicsEncodeEffectParams encParams{};
             encParams.direction = dir;
             encParams.order = ambisonic_order;
@@ -463,6 +548,110 @@ void ResonanceDirectProcessor::apply_spatialization(const IPLVector3& dir, const
     }
 }
 
+bool ResonanceDirectProcessor::apply_spatialization_tail(IPLAudioBuffer& out) {
+    IPLAudioBuffer* binaural_out = &out;
+    if (out.numChannels > 2 && (init_flags & DirectInitFlags::BINAURAL_STEREO_SCRATCH) && internal_binaural_stereo_out.data &&
+        internal_binaural_stereo_out.data[0] && internal_binaural_stereo_out.data[1]) {
+        binaural_out = &internal_binaural_stereo_out;
+    }
+
+    if (last_use_ambisonics_encode_path && ambisonics_binaural_effect && last_use_binaural && hrtf_handle) {
+        float sb = last_spatial_blend;
+        if (sb < 0.0f)
+            sb = 0.0f;
+        else if (sb > 1.0f)
+            sb = 1.0f;
+        constexpr float k_spatial_blend_eps = 1e-5f;
+        const bool have_hoa_blend_scratch = (init_flags & DirectInitFlags::HOA_BINAURAL_STEREO_SCRATCH) &&
+                                            internal_hoa_stereo_scratch.data && internal_hoa_stereo_scratch.data[0] &&
+                                            internal_hoa_stereo_scratch.data[1];
+
+        if (sb <= k_spatial_blend_eps) {
+            if (!binaural_effect || iplBinauralEffectGetTailSize(binaural_effect) <= 0)
+                return false;
+            const IPLAudioEffectState state = iplBinauralEffectGetTail(binaural_effect, binaural_out);
+            if (binaural_out != &out)
+                copy_binaural_stereo_to_output(out);
+            else
+                clear_surround_tail_after_direct_stereo_effect(out, binaural_out);
+            return resonance::direct_spatial_tail_produced(state);
+        }
+        if (sb >= 1.0f - k_spatial_blend_eps) {
+            if (iplAmbisonicsBinauralEffectGetTailSize(ambisonics_binaural_effect) <= 0)
+                return false;
+            const IPLAudioEffectState state = iplAmbisonicsBinauralEffectGetTail(ambisonics_binaural_effect, binaural_out);
+            if (binaural_out != &out)
+                copy_binaural_stereo_to_output(out);
+            else
+                clear_surround_tail_after_direct_stereo_effect(out, binaural_out);
+            return resonance::direct_spatial_tail_produced(state);
+        }
+        if (!have_hoa_blend_scratch || !binaural_effect)
+            return false;
+
+        const bool bin_active = iplBinauralEffectGetTailSize(binaural_effect) > 0;
+        const bool hoa_active = iplAmbisonicsBinauralEffectGetTailSize(ambisonics_binaural_effect) > 0;
+        if (!bin_active && !hoa_active)
+            return false;
+
+        IPLAudioEffectState bin_state = IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
+        IPLAudioEffectState hoa_state = IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
+        if (bin_active)
+            bin_state = iplBinauralEffectGetTail(binaural_effect, binaural_out);
+        else if (binaural_out->data && binaural_out->data[0] && binaural_out->data[1]) {
+            memset(binaural_out->data[0], 0, frame_size * sizeof(float));
+            memset(binaural_out->data[1], 0, frame_size * sizeof(float));
+        }
+
+        if (hoa_active)
+            hoa_state = iplAmbisonicsBinauralEffectGetTail(ambisonics_binaural_effect, &internal_hoa_stereo_scratch);
+        else if (internal_hoa_stereo_scratch.data && internal_hoa_stereo_scratch.data[0] && internal_hoa_stereo_scratch.data[1]) {
+            memset(internal_hoa_stereo_scratch.data[0], 0, frame_size * sizeof(float));
+            memset(internal_hoa_stereo_scratch.data[1], 0, frame_size * sizeof(float));
+        }
+
+        const float w_hoa = sb;
+        const float w_bin = 1.0f - sb;
+        if (binaural_out->data && binaural_out->data[0] && binaural_out->data[1] && internal_hoa_stereo_scratch.data &&
+            internal_hoa_stereo_scratch.data[0] && internal_hoa_stereo_scratch.data[1]) {
+            for (int i = 0; i < frame_size; ++i) {
+                binaural_out->data[0][i] = w_bin * binaural_out->data[0][i] + w_hoa * internal_hoa_stereo_scratch.data[0][i];
+                binaural_out->data[1][i] = w_bin * binaural_out->data[1][i] + w_hoa * internal_hoa_stereo_scratch.data[1][i];
+            }
+        }
+        if (binaural_out != &out)
+            copy_binaural_stereo_to_output(out);
+        else
+            clear_surround_tail_after_direct_stereo_effect(out, binaural_out);
+        return resonance::direct_spatial_blend_tail_active(bin_state, hoa_state);
+    }
+
+    if (last_use_binaural && binaural_effect && hrtf_handle) {
+        if (iplBinauralEffectGetTailSize(binaural_effect) <= 0)
+            return false;
+        const IPLAudioEffectState state = iplBinauralEffectGetTail(binaural_effect, binaural_out);
+        if (binaural_out != &out)
+            copy_binaural_stereo_to_output(out);
+        else
+            clear_surround_tail_after_direct_stereo_effect(out, binaural_out);
+        return resonance::direct_spatial_tail_produced(state);
+    }
+
+    return false;
+}
+
+int ResonanceDirectProcessor::get_tail_size_samples() const {
+    if (!(init_flags & DirectInitFlags::DIRECT_EFFECT) || !direct_effect)
+        return 0;
+    const int direct_tail_samples = iplDirectEffectGetTailSize(direct_effect);
+    const bool use_hoa_binaural_path = last_use_ambisonics_encode_path && ambisonics_binaural_effect != nullptr;
+    const int binaural_tail_samples = (binaural_effect != nullptr) ? iplBinauralEffectGetTailSize(binaural_effect) : 0;
+    const int hoa_binaural_tail_samples =
+        (ambisonics_binaural_effect != nullptr) ? iplAmbisonicsBinauralEffectGetTailSize(ambisonics_binaural_effect) : 0;
+    return resonance::direct_spatial_tail_sample_budget(last_use_binaural, use_hoa_binaural_path, direct_tail_samples,
+                                                        binaural_tail_samples, hoa_binaural_tail_samples);
+}
+
 bool ResonanceDirectProcessor::process_tail(IPLAudioBuffer& out_buffer) {
     if (!(init_flags & DirectInitFlags::DIRECT_EFFECT) || !direct_effect) {
         if (out_buffer.data) {
@@ -475,20 +664,45 @@ bool ResonanceDirectProcessor::process_tail(IPLAudioBuffer& out_buffer) {
     }
     if (!out_buffer.data)
         return false;
-    if (iplDirectEffectGetTailSize(direct_effect) <= 0)
-        return false;
 
-    IPLAudioEffectState state = iplDirectEffectGetTail(direct_effect, &internal_direct_output);
-    if (state == IPL_AUDIOEFFECTSTATE_TAILCOMPLETE)
-        return false;
+    ResonanceServer* srv = ResonanceServer::get_singleton();
+    hrtf_handle = (srv) ? srv->get_hrtf_handle() : nullptr;
 
-    apply_spatialization(last_direction, internal_direct_output, out_buffer, last_use_ambisonics_encode_path, last_use_binaural,
-                         last_hrtf_bilinear, last_spatial_blend);
-    return true;
+    const int direct_tail_samples = iplDirectEffectGetTailSize(direct_effect);
+    const bool use_hoa_binaural_path = last_use_ambisonics_encode_path && ambisonics_binaural_effect != nullptr;
+    const int binaural_tail_samples = (binaural_effect != nullptr) ? iplBinauralEffectGetTailSize(binaural_effect) : 0;
+    const int hoa_binaural_tail_samples =
+        (ambisonics_binaural_effect != nullptr) ? iplAmbisonicsBinauralEffectGetTailSize(ambisonics_binaural_effect) : 0;
+
+    if (!resonance::direct_spatial_tail_active(last_use_binaural, use_hoa_binaural_path, direct_tail_samples,
+                                               binaural_tail_samples, hoa_binaural_tail_samples)) {
+        return false;
+    }
+
+    if (resonance::direct_spatial_tail_uses_apply_on_direct_mono(direct_tail_samples)) {
+        const IPLAudioEffectState direct_state = iplDirectEffectGetTail(direct_effect, &internal_direct_output);
+        if (!resonance::direct_spatial_tail_produced(direct_state))
+            return apply_spatialization_tail(out_buffer);
+        apply_spatialization(last_direction, internal_direct_output, out_buffer, last_use_ambisonics_encode_path, last_use_binaural,
+                             last_hrtf_bilinear, last_spatial_blend);
+        return true;
+    }
+
+    return apply_spatialization_tail(out_buffer);
 }
 
 void ResonanceDirectProcessor::reset_for_new_playback() {
     if (direct_effect)
         iplDirectEffectReset(direct_effect);
+    if (binaural_effect)
+        iplBinauralEffectReset(binaural_effect);
+    if (panning_effect)
+        iplPanningEffectReset(panning_effect);
+    if (ambisonics_encode_effect)
+        iplAmbisonicsEncodeEffectReset(ambisonics_encode_effect);
+    if (ambisonics_binaural_effect)
+        iplAmbisonicsBinauralEffectReset(ambisonics_binaural_effect);
+    if (ambisonics_panning_effect)
+        iplAmbisonicsPanningEffectReset(ambisonics_panning_effect);
 }
 } // namespace godot

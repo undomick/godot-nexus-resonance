@@ -1,4 +1,5 @@
 #include "resonance_runtime.h"
+#include "resonance_ambisonic_player.h"
 #include "resonance_audio_effect.h"
 #include "resonance_constants.h"
 #include "resonance_key_enum_hint.h"
@@ -6,11 +7,13 @@
 
 #include <godot_cpp/classes/audio_effect.hpp>
 #include <godot_cpp/classes/audio_server.hpp>
+#include <godot_cpp/classes/audio_stream_player.hpp>
 #include <godot_cpp/classes/audio_stream_player3d.hpp>
 #include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/resource_loader.hpp>
 #include <godot_cpp/classes/scene_tree.hpp>
 #include <godot_cpp/classes/script.hpp>
+#include <godot_cpp/classes/window.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/callable.hpp>
 
@@ -42,6 +45,10 @@ bool ResonanceRuntime::editor_hint() {
 
 bool ResonanceRuntime::is_primary_runtime() const {
     return primary_runtime_id == ObjectID(get_instance_id());
+}
+
+bool ResonanceRuntime::primary_runtime_syncs_viewport_listeners() {
+    return primary_runtime_id.is_valid();
 }
 
 void ResonanceRuntime::claim_primary_runtime() {
@@ -123,9 +130,7 @@ void ResonanceRuntime::_ready() {
     if (!editor) {
         setup_activator();
         call_deferred("apply_bus_to_players");
-        if (!is_connected("tree_exiting", Callable(this, "on_scene_tree_exiting"))) {
-            connect("tree_exiting", Callable(this, "on_scene_tree_exiting"));
-        }
+        _connect_quit_teardown_signals();
     }
     update_debug_overlay_visibility();
     if (!editor) {
@@ -133,14 +138,62 @@ void ResonanceRuntime::_ready() {
     }
 }
 
+void ResonanceRuntime::_connect_quit_teardown_signals() {
+    if (!is_connected("tree_exiting", Callable(this, "on_scene_tree_exiting"))) {
+        connect("tree_exiting", Callable(this, "on_scene_tree_exiting"));
+    }
+    SceneTree* tree = get_tree();
+    if (!tree)
+        return;
+    Window* win = tree->get_root();
+    if (!win)
+        return;
+    const Callable cb = Callable(this, "on_window_close_requested");
+    if (!win->is_connected("close_requested", cb))
+        win->connect("close_requested", cb);
+}
+
+void ResonanceRuntime::_disconnect_quit_teardown_signals() {
+    if (is_connected("tree_exiting", Callable(this, "on_scene_tree_exiting"))) {
+        disconnect("tree_exiting", Callable(this, "on_scene_tree_exiting"));
+    }
+    SceneTree* tree = get_tree();
+    if (!tree)
+        return;
+    Window* win = tree->get_root();
+    if (!win)
+        return;
+    const Callable cb = Callable(this, "on_window_close_requested");
+    if (win->is_connected("close_requested", cb))
+        win->disconnect("close_requested", cb);
+}
+
+void ResonanceRuntime::_arm_phonon_quit_teardown() {
+    if (editor_hint())
+        return;
+    prepare_for_shutdown();
+    ResonanceServer* srv = ResonanceServer::get_singleton();
+    if (srv && srv->is_initialized())
+        srv->begin_tree_teardown();
+}
+
+void ResonanceRuntime::on_window_close_requested() {
+    // Join worker before SceneTree tears down world Geometry/Probe nodes.
+    _arm_phonon_quit_teardown();
+}
+
 void ResonanceRuntime::on_scene_tree_exiting() {
+    // Last live game runtime only. Mesh/probe despawn must not mute mix or join the worker.
+    if (!editor_hint() && live_game_runtime_count <= 1)
+        _arm_phonon_quit_teardown();
     cleanup_reverb_activator();
 }
 
 void ResonanceRuntime::prepare_for_shutdown() {
-    // Godot frees GDExtension tables before ~AudioServer. Stop players (base stop, not soft)
-    // and detach ResonanceAudioEffect so AudioServer can unref them while our tables still
-    // exist. Needs further process frames after this call - sleep alone is not enough.
+    // T-10 (accepted hard cut): no soft tail drain here. Stops players immediately (not soft-stop)
+    // and removes bus effects before Godot frees GDExtension tables ahead of ~AudioServer.
+    // Wet tails may truncate unless the game soft-stopped earlier and processed frames.
+    // Needs further process frames after this call - sleep alone is not enough.
     SceneTree* tree = get_tree();
     if (!tree)
         return;
@@ -149,6 +202,11 @@ void ResonanceRuntime::prepare_for_shutdown() {
     for (int i = 0; i < players.size(); i++) {
         if (AudioStreamPlayer3D* p = Object::cast_to<AudioStreamPlayer3D>(players[i]))
             p->AudioStreamPlayer3D::stop();
+    }
+    TypedArray<Node> ambisonic_players = tree->get_nodes_in_group("resonance_ambisonic_player");
+    for (int i = 0; i < ambisonic_players.size(); i++) {
+        if (AudioStreamPlayer* p = Object::cast_to<AudioStreamPlayer>(ambisonic_players[i]))
+            p->AudioStreamPlayer::stop();
     }
 
     cleanup_reverb_activator();
@@ -168,9 +226,7 @@ void ResonanceRuntime::prepare_for_shutdown() {
 void ResonanceRuntime::_exit_tree() {
     disconnect_runtime_signals();
     reset_viewport_sync_cache();
-    if (is_connected("tree_exiting", Callable(this, "on_scene_tree_exiting"))) {
-        disconnect("tree_exiting", Callable(this, "on_scene_tree_exiting"));
-    }
+    _disconnect_quit_teardown_signals();
     unregister_nexus_performance_monitors();
     cleanup_reverb_activator();
     disable_performance_overlay_node();
@@ -252,6 +308,20 @@ void ResonanceRuntime::apply_bus_to_players() {
     bus->call("apply_bus_to_players", tree);
 }
 
+void ResonanceRuntime::apply_bus_to_player(Node* p_player) {
+    if (!is_inside_tree() || p_player == nullptr) {
+        return;
+    }
+    Object* bus = Object::cast_to<Object>(runtime_bus);
+    SceneTree* tree = get_tree();
+    if (!bus || !tree) {
+        return;
+    }
+    TypedArray<Node> players;
+    players.push_back(p_player);
+    bus->call("apply_bus_to_players", tree, players);
+}
+
 Dictionary ResonanceRuntime::get_activator_instrumentation() const {
     if (Object* activator = Object::cast_to<Object>(reverb_activator)) {
         return activator->get("instrumentation");
@@ -275,11 +345,13 @@ void ResonanceRuntime::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_reverb_bus_send"), &ResonanceRuntime::get_reverb_bus_send);
     ClassDB::bind_method(D_METHOD("refresh_player_bus_routing"), &ResonanceRuntime::refresh_player_bus_routing);
     ClassDB::bind_method(D_METHOD("apply_bus_to_players"), &ResonanceRuntime::apply_bus_to_players);
+    ClassDB::bind_method(D_METHOD("apply_bus_to_player", "player"), &ResonanceRuntime::apply_bus_to_player);
     ClassDB::bind_method(
         D_METHOD("get_activator_instrumentation"),
         &ResonanceRuntime::get_activator_instrumentation);
     ClassDB::bind_method(D_METHOD("get_frame_timings"), &ResonanceRuntime::get_frame_timings);
     ClassDB::bind_method(D_METHOD("on_scene_tree_exiting"), &ResonanceRuntime::on_scene_tree_exiting);
+    ClassDB::bind_method(D_METHOD("on_window_close_requested"), &ResonanceRuntime::on_window_close_requested);
     ClassDB::bind_method(D_METHOD("prepare_for_shutdown"), &ResonanceRuntime::prepare_for_shutdown);
 
     ClassDB::bind_method(D_METHOD("get_config_dict"), &ResonanceRuntime::get_config_dict);
@@ -294,15 +366,20 @@ void ResonanceRuntime::_bind_methods() {
     ClassDB::bind_method(
         D_METHOD("notify_volumes_runtime_config_changed"),
         &ResonanceRuntime::notify_volumes_runtime_config_changed);
+    ClassDB::bind_method(D_METHOD("warn_probe_volume_runtime_mismatches"),
+                         &ResonanceRuntime::warn_probe_volume_runtime_mismatches);
     ClassDB::bind_method(
-        D_METHOD("on_reflection_type_changed", "value"),
-        &ResonanceRuntime::on_reflection_type_changed);
+        D_METHOD("on_native_engine_reinit_requested", "property_name"),
+        &ResonanceRuntime::on_native_engine_reinit_requested);
     ClassDB::bind_method(
-        D_METHOD("on_audio_frame_size_changed", "value"),
-        &ResonanceRuntime::on_audio_frame_size_changed);
+        D_METHOD("on_runtime_live_config_changed", "property_name"),
+        &ResonanceRuntime::on_runtime_live_config_changed);
     ClassDB::bind_method(
-        D_METHOD("on_runtime_affecting_probes_changed", "value"),
-        &ResonanceRuntime::on_runtime_affecting_probes_changed);
+        D_METHOD("on_runtime_routing_changed", "property_name"),
+        &ResonanceRuntime::on_runtime_routing_changed);
+    ClassDB::bind_method(
+        D_METHOD("on_bake_ambisonic_order_changed", "new_order"),
+        &ResonanceRuntime::on_bake_ambisonic_order_changed);
     ClassDB::bind_method(D_METHOD("get_fmod_bridge"), &ResonanceRuntime::get_fmod_bridge);
     ClassDB::bind_method(D_METHOD("get_coda_bridge"), &ResonanceRuntime::get_coda_bridge);
 

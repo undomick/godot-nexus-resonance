@@ -49,6 +49,7 @@ void ResonancePlayer::_bind_methods() {
     ClassDB::bind_method(D_METHOD("reset_audio_instrumentation"), &ResonancePlayer::reset_audio_instrumentation);
     ClassDB::bind_method(D_METHOD("get_effective_volume_linear_cached"), &ResonancePlayer::get_effective_volume_linear_cached);
     ClassDB::bind_method(D_METHOD("_deferred_push_playback_parameters"), &ResonancePlayer::_deferred_push_playback_parameters);
+    ClassDB::bind_method(D_METHOD("_apply_process_mode_for_tracer"), &ResonancePlayer::_apply_process_mode_for_tracer);
     ClassDB::bind_method(D_METHOD("_nexus_deferred_spawn_anim_audio_helper"), &ResonancePlayer::_nexus_deferred_spawn_anim_audio_helper);
     ClassDB::bind_method(D_METHOD("_nexus_deferred_emit_finished"), &ResonancePlayer::_nexus_deferred_emit_finished);
     ClassDB::bind_method(D_METHOD("set_convert_anim_audio_runtime", "p_enable"), &ResonancePlayer::set_convert_anim_audio_runtime);
@@ -56,6 +57,8 @@ void ResonancePlayer::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_show_directivity_gizmo", "p_enable"), &ResonancePlayer::set_show_directivity_gizmo);
     ClassDB::bind_method(D_METHOD("get_show_directivity_gizmo"), &ResonancePlayer::get_show_directivity_gizmo);
     ClassDB::bind_method(D_METHOD("_on_player_config_changed_refresh_gizmo"), &ResonancePlayer::_on_player_config_changed_refresh_gizmo);
+    ClassDB::bind_method(D_METHOD("set_inputs", "flags"), &ResonancePlayer::set_inputs, DEFVAL(-1));
+    ClassDB::bind_method(D_METHOD("get_outputs"), &ResonancePlayer::get_outputs);
     ClassDB::bind_static_method("ResonancePlayer",
                                 D_METHOD("build_directivity_gizmo_lines", "enabled", "input_mode", "weight", "power", "user_value", "size"),
                                 &ResonancePlayer::build_directivity_gizmo_lines);

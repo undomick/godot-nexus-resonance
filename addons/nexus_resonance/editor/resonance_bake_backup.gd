@@ -1,6 +1,5 @@
 @tool
 extends RefCounted
-class_name ResonanceBakeBackup
 
 ## Backup/restore for probe data before bake.
 ##
@@ -79,6 +78,8 @@ static func _snapshot_probe_data(pd: Resource) -> Dictionary:
 		"bake_params_hash": pd.get("bake_params_hash") if "bake_params_hash" in pd else 0,
 		"baked_reflection_type":
 		pd.get("baked_reflection_type") if "baked_reflection_type" in pd else -1,
+		"baked_ambisonics_order":
+		pd.get("baked_ambisonics_order") if "baked_ambisonics_order" in pd else -1,
 		"pathing_params_hash": pd.get("pathing_params_hash") if "pathing_params_hash" in pd else 0,
 		"static_source_params_hash":
 		pd.get("static_source_params_hash") if "static_source_params_hash" in pd else 0,
@@ -96,6 +97,7 @@ static func _apply_probe_data_snapshot(pd: Resource, snap: Dictionary) -> void:
 		"probe_positions",
 		"bake_params_hash",
 		"baked_reflection_type",
+		"baked_ambisonics_order",
 		"pathing_params_hash",
 		"static_source_params_hash",
 		"static_listener_params_hash",
@@ -297,6 +299,7 @@ func _copy_probe_data_properties(dst: Resource, src: Resource) -> void:
 		"probe_positions",
 		"bake_params_hash",
 		"baked_reflection_type",
+		"baked_ambisonics_order",
 		"pathing_params_hash",
 		"static_source_params_hash",
 		"static_listener_params_hash",

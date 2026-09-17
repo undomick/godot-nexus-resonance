@@ -47,7 +47,7 @@ class ResonanceRuntime : public Node {
     bool context_validation = false;
 
     // Debug overlays + input (driven from resonance_runtime_debug.cpp). When enable_debug is off the overlay keys
-    // do nothing (hide dev tools from players). player_overlay_visible (F3) also feeds debug_occlusion.
+    // do nothing (hide dev tools from players). player_overlay_visible (F3) feeds debug_occlusion/debug_reflections via get_config_dict + apply_debug_flags.
     bool enable_debug = false;
     bool debug_overlay_visible = false;
     bool performance_overlay_visible = false;
@@ -121,11 +121,15 @@ class ResonanceRuntime : public Node {
     void reload_static_scenes_from_tree(Node* tree_root);
     void prepare_geometry_before_reinit();
     void reinit_for_config_change();
+    void apply_runtime_live_config();
+    void apply_runtime_routing_refresh();
     void apply_debug_flags();
     void apply_perspective_correction();
     void connect_runtime_signals();
     void disconnect_runtime_signals();
     void notify_volumes_runtime_config_changed();
+    /// One aggregated warning listing volumes whose bake does not match runtime pathing / ambisonics / reflection.
+    void warn_probe_volume_runtime_mismatches();
     void warn_restart_if_needed();
     void init_fmod_bridge();
     void init_coda_bridge();
@@ -180,6 +184,8 @@ class ResonanceRuntime : public Node {
 
     static int get_live_game_runtime_count();
     bool is_primary_runtime() const;
+    /// True when a primary ResonanceRuntime owns viewport listener sync (ResonanceListener skips duplicate pose push).
+    static bool primary_runtime_syncs_viewport_listeners();
 
     // Callable targets for ResonanceRuntimeBus and the debug overlay.
     StringName get_bus_effective() const;
@@ -188,6 +194,7 @@ class ResonanceRuntime : public Node {
 
     void refresh_player_bus_routing();
     void apply_bus_to_players();
+    void apply_bus_to_player(Node* p_player);
 
     Dictionary get_activator_instrumentation() const;
 
@@ -202,18 +209,26 @@ class ResonanceRuntime : public Node {
     void reload_after_reinit();
     void deferred_reset_spatial_audio_warmup_passes();
 
-    void on_reflection_type_changed(const Variant& arg);
-    void on_audio_frame_size_changed(const Variant& arg);
-    void on_runtime_affecting_probes_changed(const Variant& arg);
+    void on_native_engine_reinit_requested(const Variant& arg);
+    void on_runtime_live_config_changed(const Variant& arg);
+    void on_runtime_routing_changed(const Variant& arg);
+    void on_bake_ambisonic_order_changed(const Variant& arg);
 
     Ref<RefCounted> get_fmod_bridge() const;
     Ref<RefCounted> get_coda_bridge() const;
 
     void on_scene_tree_exiting();
+    void on_window_close_requested();
 
     // Hard-stop players + detach ResonanceAudioEffect so AudioServer can retire them before
     // GDExtension deinit. Call a few frames before SceneTree.quit(); _exit_tree is too late.
     void prepare_for_shutdown();
+
+  private:
+    void _connect_quit_teardown_signals();
+    void _disconnect_quit_teardown_signals();
+    /// Mute mix, stop players/bus effects, join Phonon worker. Quit / last-runtime only.
+    void _arm_phonon_quit_teardown();
 };
 
 } // namespace godot

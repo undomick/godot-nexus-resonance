@@ -10,7 +10,7 @@ namespace resonance {
 
 /// Version string (centralized; override via NEXUS_RESONANCE_VERSION when building)
 #ifndef NEXUS_RESONANCE_VERSION
-#define NEXUS_RESONANCE_VERSION "1.0.1"
+#define NEXUS_RESONANCE_VERSION "1.1.0"
 #endif
 constexpr const char* kVersion = NEXUS_RESONANCE_VERSION;
 
@@ -31,6 +31,8 @@ constexpr int kEosInputEndTaperMaxSamples = 4800; // ~100ms @ 48k
 constexpr float kPlaybackHostFadeInMs = 8.7f;   // ~384 samples @ 44.1 kHz
 constexpr float kPlaybackHostFadeOutMs = 17.4f; // ~768 samples @ 44.1 kHz
 /// Optional extra ramps on stop/start (default off-stack with EOS tapers and repeated `play()`).
+/// When enabled: soft-stop (`stop_requested`) keeps the armed fade-out through EOS partial dry; see
+/// `playback_host_fade_out_should_clear_stale` in `resonance_playback_host_fade_policy.h`.
 constexpr bool kPlaybackHostFadeOutEnabled = false;
 constexpr bool kPlaybackHostFadeInEnabled = false;
 
@@ -62,6 +64,11 @@ inline bool spatial_audio_geometry_notify_should_arm_gate(int triangle_count_bef
     return triangle_count_before <= 0 && triangle_count_after > 0;
 }
 
+/// Spatial decode hold: do not consume input rings while the geometry gate is closed.
+inline bool spatial_audio_geometry_gate_should_hold_decode(int source_handle, bool output_ready) {
+    return source_handle >= 0 && !output_ready;
+}
+
 /// Default reverb/IR duration in seconds (used for irSize = sample_rate * duration)
 constexpr float kDefaultReverbDurationSec = 2.0f;
 /// Hard max IR sample count (config clamp + worker sanity for convolution/TAN params).
@@ -72,9 +79,10 @@ constexpr int kReflectionIrChannelsHardMax = 64;
 /// Baker defaults for probe reflections bake
 constexpr float kBakerSimulatedDuration = 2.0f;
 constexpr float kBakerIrradianceMinDistance = 0.5f;
-constexpr int kBakerNumDiffuseSamples = 32;                    // IPL diffuse bands (low/mid/high)
-constexpr float kBakerMinSpacing = 0.1f;                       // Floor for probe spacing in generate_manual_grid
-constexpr float kBakerStaticEndpointSphereRadius = 1.0f;       // IPLSphere.radius when adding probes manually
+constexpr int kBakerNumDiffuseSamples = 32; // IPL diffuse bands (low/mid/high)
+constexpr float kBakerMinSpacing = 0.1f;    // Floor for probe spacing in generate_manual_grid
+/// Endpoint influence for STATICSOURCE/STATICLISTENER bake identifiers only - not probe grid spheres.
+constexpr float kBakerStaticEndpointSphereRadius = 1.0f;
 constexpr float kBakerStaticEndpointInfluenceFallback = 10.0f; // Fallback when influence_radius <= 0 for static endpoint bake
 
 /// Godot ProjectSettings path prefix for this addon (see EditorPlugin registration).
@@ -84,6 +92,9 @@ constexpr const char* kProjectSettingsBakeDefaultOutputDirectory = "bake/default
 constexpr const char* kProjectSettingsBakeOutputDirectoryLegacy = "bake/output_dir";
 /// Editor: probe batch file format (`0` = .tres, `1` = .res). See `resonance_probe_data_save_extension_from_settings()`.
 constexpr const char* kProjectSettingsProbeDataFormat = "export/probe_data_format";
+/// Custom scene: directories scanned for ResonanceMaterial .tres/.res (basename = preset name).
+constexpr const char* kProjectSettingsPhysicsMaterialSearchPaths = "physics/material_search_paths";
+constexpr const char* kDefaultPhysicsMaterialSearchPath = "res://addons/nexus_resonance/materials";
 
 /// Baker default parameters (ProjectSettings: bake_num_* / pathing / reflection type; ambisonics order comes from ResonanceBakeConfig or set_bake_params only)
 constexpr int kBakeDefaultNumRays = 4096;
@@ -93,6 +104,11 @@ constexpr int kBakeDefaultNumThreads = 2;
 constexpr int kBakeAmbisonicsOrderMin = 1;
 constexpr int kBakeAmbisonicsOrderMax = 3;
 constexpr int kBakeDefaultAmbisonicsOrder = 1;
+
+/// Matches [member ResonanceRuntimeConfig.realtime_rays] default when config dict omits the key.
+constexpr int kDefaultRealtimeRays = 0;
+/// Default baked endpoint influence radius for STATICSOURCE/STATICLISTENER when per-bake radius is unset.
+constexpr float kBakedEndpointRadius = 10000.0f;
 
 /// STATICSOURCE cliff audit: probe neighborhood radius for baked-energy readback.
 constexpr float kStaticSourceProbeNeighborRadiusM = 4.0f;
@@ -104,12 +120,44 @@ inline int clamp_bake_ambisonics_order(int order) {
         return kBakeAmbisonicsOrderMax;
     return order;
 }
-constexpr float kBakePathingDefaultVisRange = 500.0f;
-constexpr float kBakePathingDefaultPathRange = 100.0f;
-constexpr int kBakePathingDefaultNumSamples = 16;
-/// Default for IPLSimulationSettings::numVisSamples at runtime when pathing is on (1–16). Bake uses kBakePathingDefaultNumSamples.
-constexpr int kRuntimePathingDefaultNumVisSamples = 4;
-constexpr float kBakePathingDefaultRadius = 0.5f;
+
+/// Legacy probe data (-1) is treated as [kBakeDefaultAmbisonicsOrder] for runtime compatibility checks.
+inline int effective_baked_ambisonics_order(int stored_order) {
+    if (stored_order < 0)
+        return kBakeDefaultAmbisonicsOrder;
+    return clamp_bake_ambisonics_order(stored_order);
+}
+
+/// BakeConfig bake_ambisonics_order: 0 = Use Global, else 1-3. Resolves against RuntimeConfig global.
+inline int resolve_volume_bake_ambisonic_order(int bake_config_setting, int global_order) {
+    if (bake_config_setting <= 0)
+        return clamp_bake_ambisonics_order(global_order);
+    return clamp_bake_ambisonics_order(bake_config_setting);
+}
+
+/// Playback helper: use the lower of baked and realtime order (never invent HOA channels).
+inline int effective_ambisonics_order(int stored_baked_order, int runtime_order) {
+    const int baked = effective_baked_ambisonics_order(stored_baked_order);
+    const int runtime = clamp_bake_ambisonics_order(runtime_order);
+    return baked < runtime ? baked : runtime;
+}
+
+/// True when baked order differs from the configured bake setting (after legacy normalization).
+inline bool ambisonics_order_mismatches_bake_setting(int stored_baked_order, int configured_bake_order) {
+    return effective_baked_ambisonics_order(stored_baked_order) !=
+           clamp_bake_ambisonics_order(configured_bake_order);
+}
+
+/// True when baked and runtime orders differ (after legacy normalization). Used for playback clamp.
+inline bool ambisonics_order_mismatches_runtime(int stored_baked_order, int runtime_order) {
+    return effective_baked_ambisonics_order(stored_baked_order) != clamp_bake_ambisonics_order(runtime_order);
+}
+constexpr float kBakePathingDefaultVisRange = 1000.0f;
+constexpr float kBakePathingDefaultPathRange = 1000.0f;
+/// Default for bake numSamples and runtime IPLSimulationSettings::numVisSamples.
+constexpr int kBakePathingDefaultNumSamples = 4;
+constexpr int kRuntimePathingDefaultNumVisSamples = kBakePathingDefaultNumSamples;
+constexpr float kBakePathingDefaultRadius = 1.0f;
 constexpr float kBakePathingDefaultThreshold = 0.1f;
 
 /// Default CPU fraction for IPL simulation worker threads (`ResonanceRuntimeConfig.simulation_cpu_cores_percent`).
@@ -149,6 +197,7 @@ constexpr int kPlayerNoReverbWarnThreshold = 200;
 /// Ambisonics W-channel normalization (1/sqrt(2))
 constexpr float kAmbisonicWChannelScale = 0.7071067811865475f;
 /// Nominal Ambisonic decoder output scaling (1/sqrt(4*pi)) so a constant omnidirectional (W-only) field matches mono peak level.
+/// Used by ResonanceAmbisonicPlayer when apply_output_gain is on; ResonanceMixerProcessor wet decode intentionally omits it.
 constexpr float kAmbisonicDecoderOutputScalar = 0.28209479177387814f;
 /// Valid Ambisonic channel counts: 4 (1st order), 9 (2nd), 16 (3rd)
 inline bool is_valid_ambisonic_channel_count(int n) { return n == 4 || n == 9 || n == 16; }
@@ -183,9 +232,6 @@ constexpr int kRayDebugMaxSegments = 8192;
 /// RayTraceDebugContext: default ray length when no hit (miss)
 constexpr float kRayDebugDefaultMissRayLength = 1000.0f;
 
-/// Default baked endpoint influence radius for update_source (Reflection baked_var)
-constexpr float kBakedEndpointRadius = 10000.0f;
-
 /// Number of samples in attenuation callback curve (linear/custom modes)
 constexpr int kAttenuationCurveSamples = 64;
 
@@ -214,10 +260,11 @@ constexpr int kTransmissionFreqIndependent = 0;
 constexpr int kTransmissionFreqDependent = 1;
 /// Default occlusion samples for new sources
 constexpr int kDefaultOcclusionSamples = 64;
-/// Default transmission rays for new sources (server / create_source_handle)
-constexpr int kDefaultTransmissionRays = 32;
+/// Default transmission rays for new sources (server / create_source_handle).
+/// Phonon init uses 1 (closest surface to the listener); higher counts multiply every hit.
+constexpr int kDefaultTransmissionRays = 1;
 /// Default [code]max_transmission_surfaces[/code] when reading ResonancePlayerConfig (inspector default)
-constexpr int kDefaultPlayerConfigTransmissionRays = 16;
+constexpr int kDefaultPlayerConfigTransmissionRays = 1;
 
 /// FNV-1a 64-bit offset basis (for probe data hashing)
 constexpr uint64_t kFNVOffsetBasis = 14695981039346656037ULL;
@@ -233,7 +280,16 @@ inline uint64_t fnv1a_hash(const uint8_t* data, size_t size) {
     return h;
 }
 /// Inter-callback time threshold (us) above which _mix is counted as "late" for dropout diagnostics
+/// when expected gap is unknown (fallback). Prefer late_mix_gap_threshold_us(expected).
 constexpr uint64_t kLateMixThresholdUs = 15000;
+
+/// Late when gap exceeds 1.5x the expected mix period (Godot scheduling slack). Falls back to
+/// kLateMixThresholdUs when expected_us is 0.
+inline uint64_t late_mix_gap_threshold_us(uint64_t expected_us) {
+    if (expected_us == 0)
+        return kLateMixThresholdUs;
+    return expected_us + expected_us / 2u;
+}
 
 /// Max ResonancePlayer polyphony voices in the lock-free snapshot read by the audio thread.
 constexpr int kMaxPlayerPolyphonySnapshot = 32;
@@ -296,6 +352,15 @@ constexpr float kProbeSpacingMax = 100.0f;
 constexpr float kProbeVizScaleMin = 0.1f;
 constexpr float kProbeVizScaleMax = 3.0f;
 
+/// Steam UniformFloor: Probe.influence.radius = spacing (hard cutoff for Pathing/Reflection neighborhoods).
+inline float probe_grid_influence_radius(float spacing) {
+    if (spacing < kProbeSpacingMin)
+        return kProbeSpacingMin;
+    if (spacing > kProbeSpacingMax)
+        return kProbeSpacingMax;
+    return spacing;
+}
+
 /// ResonanceSOFAAsset: volume_db clamp range (matches Property hint -24..24, allows up to -60 for attenuation)
 constexpr float kHRTFVolumeDBMin = -60.0f;
 constexpr float kHRTFVolumeDBMax = 24.0f;
@@ -304,7 +369,7 @@ constexpr float kHRTFMinDB = -90.0f;
 
 /// ResonanceDebugDrawer: label update rate (5x per second), pixel size, offset, color
 constexpr double kDebugDrawerLabelUpdateRate = 0.2;
-/// After playback/sim pipeline stops, keep the player debug HUD (label + occlusion line) visible this long using last samples.
+/// After playback/sim pipeline stops, keep the player debug HUD label visible this long using last samples.
 constexpr double kDebugOverlayGraceSeconds = 2.0;
 constexpr float kDebugDrawerLabelPixelSize = 0.005f;
 constexpr float kDebugDrawerLabelOffsetY = 0.5f;
@@ -323,11 +388,6 @@ constexpr float kGeometryOverrideVizR = 0.2f;
 constexpr float kGeometryOverrideVizG = 0.9f;
 constexpr float kGeometryOverrideVizB = 0.2f;
 constexpr float kGeometryOverrideVizA = 0.5f;
-
-/// ResonanceListener: reflection ray debug viz (green lines)
-constexpr float kListenerReflectionRayR = 0.2f;
-constexpr float kListenerReflectionRayG = 1.0f;
-constexpr float kListenerReflectionRayB = 0.2f;
 
 /// Default IPLMaterial values for scene export and debug geometry (single source)
 constexpr float kSceneExportAbsorptionLow = 0.1f;

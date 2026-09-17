@@ -13,16 +13,19 @@ const BTN_EXPORT_MESH := "Export Mesh"
 const BTN_CLEAR := "Clear"
 const BTN_CANCEL := "Cancel"
 const BTN_CONTINUE := "Continue"
-const BTN_BAKE_ANYWAY := "Bake Anyway"
 const BTN_UNDO := "Undo"
 const BTN_DOCUMENTATION := "Documentation"
 const BTN_UPDATE_TARGETS := "Update Targets"
+const BTN_SAMPLE_REVERB_HERE := "Sample Reverb Here"
 
 # --- Menu (Project > Tools > Nexus Resonance) ---
-const MENU_EXPORT_ACTIVE_SCENE := "Export Active Scene"
-const MENU_EXPORT_ALL_OPEN_SCENES := "Export All Open Scenes"
+## Static export: Active creates/updates ResonanceStaticScene on the edited root and marks unsaved.
+## Re-Export In Build walks the main scene tree and updates scenes that already have a ResonanceStaticScene
+## (no auto-create). Dynamic exports save mesh assets and the scene when saved to disk.
+const MENU_EXPORT_ACTIVE_SCENE := "Export Active Scene (Marks Unsaved)"
+const MENU_EXPORT_STATIC_SCENES_IN_BUILD := "Re-Export Static Scenes In All Scenes In Build"
 const MENU_EXPORT_ACTIVE_SCENE_OBJ := "Export Active Scene To OBJ (Debug)"
-const MENU_EXPORT_DYNAMIC_OBJECTS_ACTIVE := "Export Dynamic Objects In Active Scene"
+const MENU_EXPORT_DYNAMIC_OBJECTS_ACTIVE := "Export Dynamic In Active Scene (Save Scene)"
 const MENU_EXPORT_DYNAMIC_OBJECTS_IN_BUILD := "Export Dynamic Objects In All Scenes In Build"
 const MENU_EXPORT_DYNAMIC_OBJECTS_IN_PROJECT := "Export All Dynamic Objects In Project"
 const MENU_CLEAR_UNREFERENCED_PROBE_DATA := "Clear Unreferenced Probe Data"
@@ -63,6 +66,10 @@ const ERR_EDITOR_FILESYSTEM_ROOT := "Could not scan res://."
 const ERR_GDEXTENSION_NOT_LOADED := "GDExtension not loaded."
 const ERR_EXPORT_FAILED := "Export failed with error %s"
 const ERR_SCENE_NOT_EXPORTED := "Scene not exported. Use Tools > Nexus Resonance > Export Active Scene before baking."
+const ERR_EXPORT_WHILE_PLAYING := "Stop play mode before exporting."
+const ERR_EXPORT_WHILE_PLAYING_DETAIL := (
+	"Stop the running scene before export. Export can change ResonanceStaticScene and export_hash on the edited root while play mode uses other packs."
+)
 const ERR_BAKE_RUNNER_NOT_INIT := "Bake runner not initialized."
 const ERR_SERVER_LACKS_EXPORT := "ResonanceServer lacks export_static_scene_to_asset. Update the addon."
 const ERR_SOFAAsset_UNAVAILABLE := "ResonanceSOFAAsset not available."
@@ -90,6 +97,9 @@ const WARN_RUNTIME_REQUIRED_EDITOR := (
 )
 const WARN_SERVER_INIT_FAILED := "Server init failed."
 const WARN_BAKE_RUNNER_NOT_SET := "Bake runner not set. Cannot bake."
+const WARN_REVERB_QUERY_NO_PROBE_DATA := (
+	"No probe_data assigned and no ancestor ResonanceProbeVolume with probe_data found."
+)
 const WARN_NO_RESONANCE_RUNTIME := "Scene has no ResonanceRuntime. Add ResonanceRuntime for export to make sense."
 const WARN_NO_EXPORTABLE_STATIC_CONTENT := "Scene has no ResonanceStaticGeometry or ResonanceStaticScene. Add ResonanceStaticGeometry for export."
 const WARN_STATIC_SCENE_NO_ASSET_EXCLUDED := (
@@ -97,7 +107,6 @@ const WARN_STATIC_SCENE_NO_ASSET_EXCLUDED := (
 	+ "Open and export that sub-scene first so the pack has an asset."
 )
 const INFO_STATIC_NOTHING_LOCAL := "No local static geometry to export (nested ResonanceStaticScene packs own their geometry). Nested packs unchanged."
-const WARN_NO_SCENES_OPEN := "No scenes open."
 const WARN_NO_SCENES_EXPORTED := "No scenes exported."
 const WARN_NO_SCENE_FILES := "No scene files found."
 const WARN_NO_DYNAMIC_EXPORTED := "No dynamic objects exported."
@@ -117,9 +126,12 @@ const INFO_DYNAMIC_OBJECTS_IN_PROJECT_EXPORTED := "Exported %d dynamic object(s)
 const INFO_UNLINK_DONE := "Cleared %d pathing_probe_volume reference(s). You can now delete the Probe Volume(s)."
 const INFO_PROBE_BATCHES_CLEARED := "Probe batches cleared."
 const INFO_SCENE_OBJ_EXPORTED := "Scene exported to OBJ: %s"
-const INFO_ALL_OPEN_SCENES_EXPORTED := "Exported %d open scene(s) to static assets."
+const INFO_STATIC_SCENES_IN_BUILD_EXPORTED := (
+	"Re-exported %d scene(s) that already have a ResonanceStaticScene in the build."
+)
 const INFO_UNREFERENCED_PROBE_DATA_CLEARED := "Cleared %d unreferenced probe data file(s)."
 const INFO_SCENES_FILTERED := "Skipped %d scene(s) without exportable static geometry."
+const INFO_STATIC_EXPORT_FAILED := "Failed to export %d scene(s)."
 const INFO_BACKUP_RESTORED := "Restored Probe Volume data from backup."
 const WARN_BACKUP_RESTORE_FAILED := "Could not restore Probe Volume data from backup. The .bak file may be missing or the resource path changed unexpectedly."
 const WARN_BACKUP_RESTORE_PARTIAL := "Restored some Probe Volume backups, but at least one failed. Remaining .bak files were kept."
@@ -147,12 +159,16 @@ const INFO_CONVERT_SKIPPED_BLEND := " Skipped %d audio track(s) with use blend -
 const TT_BAKE_PROBES := "Bake reflections, pathing, static source/listener. Skips up-to-date stages. Configure in bake_config."
 const TT_EXPORT_MESH := "Export this dynamic mesh to a ResonanceGeometryAsset (.tres or .res per Project Settings)."
 const TT_UPDATE_TARGETS := "Scan scan_targets roots for ResonancePlayer / ResonanceListener and replace bake_sources / bake_listeners."
+const TT_SAMPLE_REVERB_HERE := (
+	"Sample baked reverb at this node's position. Shows RT60 and energy. Initializes ResonanceServer in the editor when needed."
+)
 const TT_CANCEL_BAKE := "Stop the current bake and close."
 const TT_HELP := "Open documentation"
 
 # --- Gizmo (Probe Volume) ---
 const GIZMO_PROBE_VOLUME_CLASS := "ResonanceProbeVolume"
 const GIZMO_PROBE_EXCLUSION_CLASS := "ResonanceProbeExclusion"
+const GIZMO_REVERB_DATA_POINT_CLASS := "ResonanceReverbDataPoint"
 const ICON_PROBE_VOLUME_GIZMO := "res://addons/nexus_resonance/ui/icons/probe_volume_gizmo.svg"
 const ICON_PROBE_EXCLUSION_GIZMO := "res://addons/nexus_resonance/ui/icons/probe_exclusion_gizmo.svg"
 const ICON_FMOD_EVENT_EMITTER := "res://addons/nexus_resonance/ui/icons/fmod_emitter_icon.svg"

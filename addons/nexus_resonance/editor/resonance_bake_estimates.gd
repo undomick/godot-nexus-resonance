@@ -1,5 +1,4 @@
 extends Object
-class_name ResonanceBakeEstimates
 
 ## Rough probe counts and bake duration strings for the bake UI (no editor dependency).
 
@@ -110,8 +109,9 @@ static func _estimate_sample_points(
 	return points
 
 
-## [param bc] must be a [ResonanceBakeConfig]-like resource with bake_num_rays, pathing_enabled, etc.
-static func estimate_bake_time(vol: Node, bc: Resource) -> String:
+## [param bc] must be a [ResonanceBakeConfig]-like resource with bake_num_rays, etc.
+## [param pathing_enabled] comes from ResonanceRuntime (caller resolves); falls back to bc.
+static func estimate_bake_time(vol: Node, bc: Resource, pathing_enabled: bool = false) -> String:
 	if bc == null:
 		return ""
 	var count := estimate_probe_count(vol)
@@ -120,7 +120,9 @@ static func estimate_bake_time(vol: Node, bc: Resource) -> String:
 	var rays = bc.bake_num_rays
 	var bounces = bc.bake_num_bounces
 	var threads = bc.bake_num_threads
-	var pathing = bc.pathing_enabled
+	var pathing = pathing_enabled
+	if not pathing and "pathing_enabled" in bc:
+		pathing = bool(bc.pathing_enabled)
 	var sec_per_probe: float = (
 		BAKE_RAY_BASE_SEC_PER_PROBE
 		* (rays / float(BAKE_RAY_BASE_COUNT))

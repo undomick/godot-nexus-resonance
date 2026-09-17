@@ -1,6 +1,5 @@
 @tool
 extends RefCounted
-class_name ResonanceEditorJobProgress
 
 ## Generic editor progress dialog (export / project scan). Same cancel pattern as bake UI.
 

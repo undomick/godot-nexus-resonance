@@ -24,7 +24,7 @@ class ResonanceReflectionProcessor {
     IPLContext context = nullptr;
     IPLReflectionEffect reflection_effect = nullptr;
     /// Secondary IPLDirectEffect used purely as a 3-band air-absorption pre-EQ on the wet mono tap, so the baked
-    /// reverb tail picks up source→listener air absorption that the IR itself does not encode (parity with
+    /// reverb tail picks up source-listener air absorption that the IR itself does not encode (same as
     /// realtime ray-traced reflections, which include air absorption per ray).
     IPLDirectEffect air_absorption_effect = nullptr;
     IPLAudioBuffer sa_air_absorption_in_buffer{};
@@ -38,7 +38,7 @@ class ResonanceReflectionProcessor {
     int sample_rate = 48000;
     int num_channels = 4;                                    // Ambisonic channels for convolution, 1 for parametric
     int reflection_type = resonance::kReflectionConvolution; // 0=Convolution, 1=Parametric, 2=Hybrid, 3=TAN
-    /// IR length (seconds) used for iplReflectionEffectCreate and param sanitize; aligned with ResonanceServer max_reverb_duration.
+    /// IR length (seconds) used for iplReflectionEffectCreate and param sanitize; aligned with ResonanceServer realtime_simulation_duration.
     float effect_ir_duration_sec_ = resonance::kDefaultReverbDurationSec;
     /// 0 = no cap. Clamp applied IR length (convolution/hybrid/tan) to at most this and effect allocation.
     int convolution_ir_max_samples_ = 0;
@@ -56,12 +56,12 @@ class ResonanceReflectionProcessor {
     ResonanceReflectionProcessor(ResonanceReflectionProcessor&&) = delete;
     ResonanceReflectionProcessor& operator=(ResonanceReflectionProcessor&&) = delete;
 
-    /// `p_max_reverb_duration_sec` and optional `p_convolution_ir_max_samples` must stay consistent with ResonanceServer (IR allocation vs. sim).
+    /// `p_ir_duration_sec` and optional `p_convolution_ir_max_samples` must stay consistent with ResonanceServer (IR allocation vs. sim).
     void initialize(IPLContext p_context, int p_sample_rate, int p_frame_size, int p_ambisonic_order, int p_reflection_type,
-                    float p_max_reverb_duration_sec, int p_convolution_ir_max_samples = 0);
+                    float p_ir_duration_sec, int p_convolution_ir_max_samples = 0);
     void cleanup();
 
-    /// Downmix, ramp `reflections_mix_level` on mono (prev = -1: no ramp on first block), then `wet_extra_gain` (no cross-fade between blocks).
+    /// Downmix, ramp `reflections_mix_level` on mono (prev < 0: constant scale for legacy callers), then `wet_extra_gain`.
     /// When `apply_air_absorption` is true, run the mono tap through the air-absorption pre-EQ before Apply (per-block IPL targets).
     /// Returns false if convolution/hybrid IR is null so the caller’s ramp state stays aligned.
     bool process_mix(const IPLAudioBuffer& in_buffer,
@@ -74,7 +74,7 @@ class ResonanceReflectionProcessor {
                      const resonance::AudioBands3& air_absorption);
 
     /// Mixer bypass: Apply with `mixer=null`, HOA (or parametric) in `sa_temp_out_buffer` until the next call.
-    /// Parametric callers typically start `prev_reflections_mix_level` at 0 (ramp from silence); convolution uses `process_mix` with prev=-1.
+    /// Callers start `prev_reflections_mix_level` at 0 (ramp from silence).
     bool process_mix_direct(const IPLAudioBuffer& in_buffer, const IPLReflectionEffectParams& reverb_params,
                             float prev_reflections_mix_level, float reflections_mix_level,
                             bool apply_air_absorption,

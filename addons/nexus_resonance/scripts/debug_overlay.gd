@@ -1,9 +1,12 @@
 extends CanvasLayer
 
-## Runtime debug HUD (server, audio instrumentation, reverb). Alt+1–3 folds, Alt+R reset, Alt+A details.
-## Does not run in the editor. Reflection-line overlay needs realtime rays + debug flags on the player.
+## Runtime debug HUD (server, audio instrumentation, reverb). Alt+1–3 folds, Alt+R reset, Alt+A audio details, Alt+B reverb details.
+## Does not run in the editor.
 
 const Constants = preload("resonance_config_constants.gd")
+const ResonanceRuntimePerfMonitors = preload(
+	"res://addons/nexus_resonance/scripts/resonance_runtime_perf_monitors.gd"
+)
 
 ## Same order as ResonanceRuntimeConfig.scene_type export_enum.
 const _SCENE_TYPE_LABELS: Array[String] = [
@@ -43,6 +46,7 @@ var _audio_instrumentation_label: RichTextLabel
 var _reverb_compact_label: RichTextLabel
 var _update_timer: float = 0.0
 var _audio_show_details: bool = false
+var _reverb_show_details: bool = false
 var _worker_spike_hold_until_ms: int = 0
 var _worker_spike_hold_line: String = ""
 
@@ -114,7 +118,10 @@ func _build_ui() -> void:
 		+ "]Alt+R[/color] reset  "
 		+ "[color="
 		+ ch
-		+ "]Alt+A[/color] audio details\n"
+		+ "]Alt+A[/color] audio  "
+		+ "[color="
+		+ ch
+		+ "]Alt+B[/color] reverb details\n"
 	)
 	_vbox.add_child(_hint_label)
 
@@ -188,6 +195,9 @@ func _unhandled_input(event: InputEvent) -> void:
 			_reset_meters()
 		KEY_A:
 			_audio_show_details = not _audio_show_details
+			_update_timer = UPDATE_INTERVAL
+		KEY_B:
+			_reverb_show_details = not _reverb_show_details
 			_update_timer = UPDATE_INTERVAL
 		_:
 			handled = false
@@ -348,7 +358,7 @@ func _refresh_status() -> void:
 				)
 			)
 		)
-		# Show a quick breakdown when the worker spikes (helps diagnose "absurd" values).
+		# Worker wall-clock around iplSimulatorRunReflections / RunPathing (Phonon, not Nexus glue).
 		var now_ms: int = Time.get_ticks_msec()
 		var spike_line: String = ""
 		if w_sum >= 10000 and not wtim.is_empty():
@@ -369,16 +379,27 @@ func _refresh_status() -> void:
 					best_val = v
 					best_key = k
 			if best_key != "":
+				var top_label := best_key
+				if best_key == "us_run_reflections":
+					top_label = "iplSimulatorRunReflections"
+				elif best_key == "us_run_pathing":
+					top_label = "iplSimulatorRunPathing"
+				var refl_us := int(wtim.get("us_run_reflections", 0))
+				var interval_us := int(wtim.get("reflections_sim_interval_us", 0))
+				var lag_note := ""
+				if refl_us > 0 and interval_us > 0 and refl_us > interval_us:
+					lag_note = " | sim lag (refl %d µs > interval %d µs)" % [refl_us, interval_us]
 				spike_line = (
-					"[color=%s]Worker spike:[/color] top=%s %d µs | sceneCommit=%d µs | refl=%d µs | path=%d µs | sync=%d µs"
+					"[color=%s]Worker spike:[/color] top=%s %d µs | sceneCommit=%d µs | refl=%d µs | path=%d µs | sync=%d µs%s"
 					% [
 						COLOR_HINT,
-						best_key,
+						top_label,
 						best_val,
 						int(wtim.get("us_scene_graph_commit", 0)),
-						int(wtim.get("us_run_reflections", 0)),
+						refl_us,
 						int(wtim.get("us_run_pathing", 0)),
 						int(wtim.get("us_sync_fetch", 0)),
+						lag_note,
 					]
 				)
 				_worker_spike_hold_line = spike_line
@@ -388,22 +409,36 @@ func _refresh_status() -> void:
 			parts.append(spike_line)
 		elif _worker_spike_hold_line != "" and now_ms < _worker_spike_hold_until_ms:
 			parts.append(_worker_spike_hold_line)
-		# Diagnostics: explain whether we're actually tracing realtime reflection rays.
+		# IPL reflection handles vs ResonancePlayer node count (different quantities).
 		if not wtim.is_empty():
 			var nr := int(wtim.get("shared_num_rays", -1))
 			var art := int(wtim.get("shared_adaptive_num_rays_target", -1))
 			var ar := int(wtim.get("active_reflection_sources", -1))
 			var rr := int(wtim.get("active_realtime_reflection_sources", -1))
+			var ipl_src := int(wtim.get("active_source_count", -1))
 			if nr >= 0 or ar >= 0 or rr >= 0:
 				var extra := ""
 				if art >= 0:
 					extra = " | adaptive_target=%d" % maxi(art, 0)
+				var player_n := 0
+				if tree:
+					for pnode in tree.get_nodes_in_group("resonance_player"):
+						if pnode.get("exclude_from_debug") == true:
+							continue
+						player_n += 1
 				parts.append(
 					(
-						"[color=%s]Reflections:[/color] active=%d realtime=%d | shared numRays=%d%s"
-						% [COLOR_HINT, maxi(ar, 0), maxi(rr, 0), maxi(nr, 0), extra]
+						"[color=%s]Reflections:[/color] IPL handles=%d realtime=%d | players=%d | shared numRays=%d%s"
+						% [COLOR_HINT, maxi(ar, 0), maxi(rr, 0), player_n, maxi(nr, 0), extra]
 					)
 				)
+				if ipl_src >= 0:
+					parts.append(
+						(
+							"[color=%s]IPL sources:[/color] %d (handles with reflections flag may exceed playing players)"
+							% [COLOR_HINT, ipl_src]
+						)
+					)
 	else:
 		(
 			parts
@@ -500,6 +535,7 @@ func _classify_player_instrumentation(
 	var max_block_us := int(inst.get("max_block_time_us", 0))
 	var late_mix := int(inst.get("late_mix_count", 0))
 	var mix_calls := int(inst.get("mix_calls", 0))
+	var expected_gap_us := int(inst.get("expected_mix_gap_us", 0))
 	var buf_ok := input_dropped == 0 and output_underrun == 0 and output_blocked == 0
 	var late_rate_pct := 100.0 * float(late_mix) / float(max(1, mix_calls))
 
@@ -525,6 +561,9 @@ func _classify_player_instrumentation(
 	var c_late := _audio_inst_col_late_mix(late_mix, mix_calls, is_issue, late_rate_warn)
 	var c_max := _audio_inst_col_max_block_us(max_block_us, max_block_issue)
 	var max_ms := "%.1f" % (max_block_us / 1000.0)
+	var expected_ms := "?"
+	if expected_gap_us > 0:
+		expected_ms = "%.1f" % (expected_gap_us / 1000.0)
 
 	var passthrough := int(inst.get("passthrough_blocks", 0))
 	var reverb_miss := int(inst.get("reverb_miss_blocks", 0))
@@ -547,7 +586,7 @@ func _classify_player_instrumentation(
 		detail_lines
 		. append(
 			(
-				"[color=%s]%s[/color]  buf drop=[color=%s]%d[/color] underrun=[color=%s]%d[/color] blocked=[color=%s]%d[/color] | late=[color=%s]%d[/color] (%.2f%% of mix) max=[color=%s]%s[/color]ms"
+				"[color=%s]%s[/color]  buf drop=[color=%s]%d[/color] underrun=[color=%s]%d[/color] blocked=[color=%s]%d[/color] | late=[color=%s]%d[/color] (%.2f%% of mix, thresh≈1.5×%sms) max=[color=%s]%s[/color]ms"
 				% [
 					COLOR_NEUTRAL,
 					p.name,
@@ -560,6 +599,7 @@ func _classify_player_instrumentation(
 					c_late,
 					late_mix,
 					late_rate_pct,
+					expected_ms,
 					c_max,
 					max_ms,
 				]
@@ -644,6 +684,7 @@ func _refresh_audio_instrumentation() -> void:
 	var run_watch := 0
 	var problem_details: Array[Dictionary] = []
 	var watch_details: Array[Dictionary] = []
+	var max_polyphony_voices := 0
 
 	for p in players:
 		if p.get("exclude_from_debug") == true:
@@ -652,6 +693,10 @@ func _refresh_audio_instrumentation() -> void:
 			continue
 		var inst = p.get_audio_instrumentation()
 		var playing: bool = p.has_method("is_playing") and p.is_playing()
+		if playing and inst.has("polyphony_voice_count"):
+			max_polyphony_voices = maxi(
+				max_polyphony_voices, int(inst.get("polyphony_voice_count", 0))
+			)
 		var info := _classify_player_instrumentation(p, inst, playing)
 		var bkey: String = str(info.bucket)
 		if bkey == "idle":
@@ -679,11 +724,14 @@ func _refresh_audio_instrumentation() -> void:
 	)
 	var c_nd := COLOR_WARNING if run_no_data > 0 else COLOR_NEUTRAL
 	var c_iss := COLOR_ERROR if run_issue > 0 else COLOR_NEUTRAL
+	var poly_txt := ""
+	if max_polyphony_voices > 1:
+		poly_txt = " | poly voices max=%d" % max_polyphony_voices
 	(
 		parts
 		. append(
 			(
-				"[color=%s]Sources:[/color] %d total | idle %d | [color=%s]playing OK %d[/color] | [color=%s]playing no data %d[/color] | [color=%s]playing issues %d[/color] | %s"
+				"[color=%s]Sources:[/color] %d total | idle %d | [color=%s]playing OK %d[/color] | [color=%s]playing no data %d[/color] | [color=%s]playing issues %d[/color] | %s%s"
 				% [
 					COLOR_NEUTRAL,
 					total_n,
@@ -694,11 +742,19 @@ func _refresh_audio_instrumentation() -> void:
 					run_no_data,
 					c_iss,
 					run_issue,
-					bs_txt
+					bs_txt,
+					poly_txt
 				]
 			)
 		)
 	)
+	if run_issue > 0:
+		parts.append(
+			(
+				"[color=%s](issues = lifetime counters on this voice; Alt+R resets; transmitter-style loops latch until reset)[/color]"
+				% COLOR_HINT
+			)
+		)
 
 	if _audio_show_details:
 		if not problem_details.is_empty():
@@ -715,7 +771,8 @@ func _refresh_audio_instrumentation() -> void:
 					parts.append(line)
 		if not watch_details.is_empty():
 			parts.append(
-				"[color=%s]- watch: elevated late-mix rate (usually benign) -[/color]" % COLOR_HINT
+				"[color=%s]- watch: elevated late-mix rate (Godot audio scheduling, not Phonon) -[/color]"
+				% COLOR_HINT
 			)
 			var nw := mini(AUDIO_PROBLEM_DETAIL_CAP, watch_details.size())
 			for j in range(nw):
@@ -753,11 +810,13 @@ func _refresh_reverb_bus() -> void:
 	var fetch_hit := int(ri.get("fetch_cache_hit", 0))
 	var fetch_miss := int(ri.get("fetch_cache_miss", 0))
 	var fetch_skip := int(ri.get("fetch_cache_skip", 0))
-	var fetch_total := fetch_hit + fetch_miss
-	var miss_pct := (100.0 * fetch_miss / fetch_total) if fetch_total > 0 else 0.0
-	var miss_col := (
-		COLOR_OK if fetch_miss == 0 else (COLOR_WARNING if miss_pct < 10.0 else COLOR_ERROR)
-	)
+	# Nexus double-buffer epoch stats. Denominator includes skip.
+	var fetch_denom := fetch_hit + fetch_miss + fetch_skip
+	var miss_pct := (100.0 * fetch_miss / fetch_denom) if fetch_denom > 0 else 0.0
+	var enabled_denom := fetch_hit + fetch_miss
+	var enabled_miss_pct := (100.0 * fetch_miss / enabled_denom) if enabled_denom > 0 else 0.0
+	# Never paint as Steam/error: cache epoch churn is expected around heavy ticks.
+	var miss_col := COLOR_HINT if fetch_miss > 0 else COLOR_OK
 
 	var compact: PackedStringArray = []
 	var mixer_lbl := "ok" if mixer_ok else "missing"
@@ -796,10 +855,44 @@ func _refresh_reverb_bus() -> void:
 		)
 	compact.append(
 		(
-			"[color=%s]Fetch reverb:[/color] [color=%s]miss %.1f%%[/color] (hit=%d miss=%d skip=%d)"
-			% [COLOR_NEUTRAL, miss_col, miss_pct, fetch_hit, fetch_miss, fetch_skip]
+			"[color=%s]Fetch reverb (Nexus cache epoch):[/color] [color=%s]miss %.1f%%[/color] enabled_miss %.1f%% (hit=%d miss=%d skip=%d)"
+			% [COLOR_NEUTRAL, miss_col, miss_pct, enabled_miss_pct, fetch_hit, fetch_miss, fetch_skip]
 		)
 	)
+	var hold_last := int(ri.get("mixer_return_hold_last_count", 0))
+	var rms_pre := float(ri.get("effect_output_rms_pre_gain", 0.0))
+	compact.append(
+		(
+			"[color=%s]Wet meter:[/color] RMS_pre=%.4f  hold_last=%d"
+			% [COLOR_NEUTRAL, rms_pre, hold_last]
+		)
+	)
+	if refl_type == 0:
+		var conv_ok := int(ri.get("convolution_valid_fetches", 0))
+		var conv_null := int(ri.get("convolution_feed_ir_null", 0))
+		var g_min := float(ri.get("convolution_gain_min", 0.0))
+		var g_max := float(ri.get("convolution_gain_max", 0.0))
+		compact.append(
+			(
+				"[color=%s]Conv feed:[/color] ok=%d ir_null=%d gain=[%.3f, %.3f]"
+				% [COLOR_NEUTRAL, conv_ok, conv_null, g_min, g_max]
+			)
+		)
+	if _reverb_show_details:
+		compact.append(
+			(
+				"[color=%s]- reverb bus detail -[/color] RMS_post=%.4f peak_pre=%.4f click_guard=%d deferred_pending=%d"
+				% [
+					COLOR_HINT,
+					float(ri.get("effect_output_rms", 0.0)),
+					float(ri.get("effect_output_peak_pre_gain", 0.0)),
+					int(ri.get("effect_click_guard_triggers", 0)),
+					int(ri.get("mixer_deferred_pending", 0)),
+				]
+			)
+		)
+	elif refl_type == 0 or hold_last > 0:
+		compact.append("[color=%s]Alt+B[/color] more reverb bus fields" % COLOR_HINT)
 	if srv.has_method("get_pathing_instrumentation"):
 		var pi: Dictionary = srv.get_pathing_instrumentation()
 		var sim_attempt: int = int(pi.get("sim_attempt", 0))
@@ -812,16 +905,15 @@ func _refresh_reverb_bus() -> void:
 		var p_miss: int = int(pi.get("player_fetch_miss", 0))
 		var p_ap: int = int(pi.get("player_applied", 0))
 		var p_gate: int = int(pi.get("player_gate", 0))
-		var path_col := (
-			COLOR_OK
-			if sim_ran > 0 and sh_ok > 0 and p_miss == 0
-			else (COLOR_WARNING if sim_ran > 0 or sh_ok > 0 else COLOR_NEUTRAL)
-		)
+		# Hard miss only (stale reuse no longer increments). Wet applied => pipeline OK.
+		var path_col := COLOR_NEUTRAL
+		if sim_ran > 0 or sh_ok > 0:
+			path_col = COLOR_OK if (p_miss == 0 or p_ap > 0) else COLOR_HINT
 		if sim_attempt > 0 and sim_ran == 0:
 			path_col = COLOR_ERROR
 		if sim_seh > 0 and sim_ran == 0:
 			path_col = COLOR_ERROR
-		if p_miss > 0 and sh_null > 0:
+		if p_miss > 0 and sh_null > 0 and p_ap == 0:
 			path_col = COLOR_ERROR
 		(
 			compact

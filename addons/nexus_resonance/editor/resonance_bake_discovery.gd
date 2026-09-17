@@ -1,9 +1,10 @@
 extends Object
-class_name ResonanceBakeDiscovery
 
 ## Scene tree discovery for [ResonanceRuntime], [ResonanceStaticScene], and bake source/listener nodes.
 
 const ResonanceSceneUtils = preload("res://addons/nexus_resonance/scripts/resonance_scene_utils.gd")
+const Constants = preload("res://addons/nexus_resonance/scripts/resonance_config_constants.gd")
+const ResonanceBakeConfig = preload("res://addons/nexus_resonance/scripts/resonance_bake_config.gd")
 
 
 static func _find_resonance_static_scene(node: Node) -> Node:
@@ -47,6 +48,96 @@ static func find_resonance_runtime(node: Node) -> Node:
 		if found:
 			return found
 	return null
+
+
+## Bake reflection type from scene ResonanceRuntime, else BakeConfig / Hybrid fallback.
+static func resolve_bake_reflection_type(root: Node, bc: Resource) -> int:
+	var rt_node := find_resonance_runtime(root)
+	if rt_node:
+		var rt = rt_node.get("runtime")
+		if rt != null and "reflection_type" in rt:
+			return Constants.bake_reflection_type_from_runtime(int(rt.reflection_type))
+	if bc != null and "reflection_type" in bc:
+		return int(bc.reflection_type)
+	return Constants.REFLECTION_TYPE_HYBRID
+
+
+## Pathing bake on/off from ResonanceRuntime, else BakeConfig fallback.
+static func resolve_bake_pathing_enabled(root: Node, bc: Resource) -> bool:
+	var rt_node := find_resonance_runtime(root)
+	if rt_node:
+		var rt = rt_node.get("runtime")
+		if rt != null and "pathing_enabled" in rt:
+			return bool(rt.pathing_enabled)
+	if bc != null and "pathing_enabled" in bc:
+		return bool(bc.pathing_enabled)
+	return false
+
+
+## Ambisonics bake order: BakeConfig override (Use Global / 1-3), else Runtime bake_ambisonic_order (clamped 1-3).
+static func resolve_global_bake_ambisonic_order(root: Node) -> int:
+	var rt_node := find_resonance_runtime(root)
+	if rt_node:
+		var rt = rt_node.get("runtime")
+		if rt != null and "bake_ambisonic_order" in rt:
+			return clampi(int(rt.bake_ambisonic_order), 1, 3)
+		if rt != null and "ambisonic_order" in rt:
+			# Legacy scenes before bake_ambisonic_order existed.
+			return clampi(int(rt.ambisonic_order), 1, 3)
+	return 1
+
+
+static func resolve_bake_ambisonics_order(root: Node, bc: Resource, _vol: Node = null) -> int:
+	var global_order := resolve_global_bake_ambisonic_order(root)
+	var setting := 0
+	if bc != null and "bake_ambisonics_order" in bc:
+		setting = int(bc.bake_ambisonics_order)
+	if setting <= 0:
+		return global_order
+	return clampi(setting, 1, 3)
+
+
+## Overlay Runtime SSOT fields on BakeConfig params (reflection, pathing, ambisonics, pathing visibility).
+## Pass [param vol] so per-volume Bake Ambisonic Order overrides apply.
+static func bake_params_from_runtime(root: Node, bc: Resource, vol: Node = null) -> Dictionary:
+	var params: Dictionary = {}
+	if bc != null and bc.has_method("get_bake_params"):
+		params = bc.get_bake_params()
+	else:
+		params = ResonanceBakeConfig.create_default().get_bake_params()
+	params["bake_reflection_type"] = resolve_bake_reflection_type(root, bc)
+	params["bake_ambisonics_order"] = resolve_bake_ambisonics_order(root, bc, vol)
+	# Pathing samples/ranges/radius/threshold live on RuntimeConfig (Steam Audio Settings).
+	var num_samples := 4
+	var vis_range := 1000.0
+	var path_range := 1000.0
+	var radius := 1.0
+	var threshold := 0.1
+	var rt_node := find_resonance_runtime(root)
+	if rt_node:
+		var rt = rt_node.get("runtime")
+		if rt != null:
+			if "pathing_num_samples" in rt:
+				num_samples = clampi(int(rt.pathing_num_samples), 1, 16)
+			if "pathing_vis_range" in rt:
+				vis_range = clampf(float(rt.pathing_vis_range), 0.0, 1000.0)
+			if "pathing_path_range" in rt:
+				path_range = clampf(float(rt.pathing_path_range), 0.0, 1000.0)
+			if "pathing_vis_radius" in rt:
+				radius = clampf(float(rt.pathing_vis_radius), 0.0, 2.0)
+			if "pathing_vis_threshold" in rt:
+				threshold = clampf(float(rt.pathing_vis_threshold), 0.0, 1.0)
+	params["bake_pathing_num_samples"] = num_samples
+	params["bake_pathing_vis_range"] = vis_range
+	params["bake_pathing_path_range"] = path_range
+	params["bake_pathing_radius"] = radius
+	params["bake_pathing_threshold"] = threshold
+	return params
+
+
+## Compatibility alias for older call sites.
+static func bake_params_with_runtime_reflection(root: Node, bc: Resource, vol: Node = null) -> Dictionary:
+	return bake_params_from_runtime(root, bc, vol)
 
 
 static func find_resonance_static_scene_for_bake(volumes: Array[Node], edited_root: Node) -> Node:

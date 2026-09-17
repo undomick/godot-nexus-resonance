@@ -1,4 +1,5 @@
 #include "resonance_listener.h"
+#include "resonance_listener_sync_policy.h"
 #include "resonance_runtime.h"
 #include "resonance_server.h"
 
@@ -127,9 +128,11 @@ void ResonanceRuntime::apply_resonance_viewport_to_server(Viewport* vp, bool use
                 srv->update_listener(cam->get_global_position(), -gt.basis.get_column(2), gt.basis.get_column(1));
                 vp_sync_last_cam_xform = gt;
             }
+            srv->set_listener_valid(resonance::camera_fallback_listener_validity());
             vp_sync_last_had_listener_nodes = false;
         } else {
             vp_sync_last_had_listener_nodes = true;
+            // SSOT listener pose when ResonanceListener nodes exist (ResonanceListener skips duplicate push).
             ResonanceListener::sync_viewport_listeners_to_server(vp, listener_nodes);
         }
     }
@@ -155,6 +158,8 @@ void ResonanceRuntime::sync_physics_process_for_custom_tracer() {
         if (tree) {
             tree->call_group_flags(
                 SceneTree::GROUP_CALL_DEFERRED, "resonance_listener", "_apply_process_mode_for_tracer");
+            tree->call_group_flags(
+                SceneTree::GROUP_CALL_DEFERRED, "resonance_player", "_apply_process_mode_for_tracer");
         }
     }
     if (custom) {

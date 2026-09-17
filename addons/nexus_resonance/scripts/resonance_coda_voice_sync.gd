@@ -1,5 +1,4 @@
 extends RefCounted
-class_name ResonanceCodaVoiceSync
 
 ## Occlusion/transmission readback helpers for Nexus Coda voices (Option A bridge).
 

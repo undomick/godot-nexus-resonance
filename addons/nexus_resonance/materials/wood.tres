@@ -4,7 +4,7 @@
 absorption_low = 0.16
 absorption_mid = 0.22
 absorption_high = 0.28
-scattering = 0.22
-transmission_low = 0.06
-transmission_mid = 0.03
-transmission_high = 0.01
+scattering = 0.579
+transmission_low = 0.6
+transmission_mid = 0.355
+transmission_high = 0.128

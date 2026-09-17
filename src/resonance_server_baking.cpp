@@ -1,12 +1,17 @@
 #include "resonance_constants.h"
+#include "resonance_energy_field_query_policy.h"
 #include "resonance_epoch.h"
 #include "resonance_geometry_asset.h"
 #include "resonance_ipl_guard.h"
 #include "resonance_log.h"
+#include "resonance_param_cache_invalidate_policy.h"
+#include "resonance_probe_baked_query.h"
 #include "resonance_probe_exclusion_filter.h"
 #include "resonance_reflection_ir_fingerprint.h"
+#include "resonance_reflection_type_policy.h"
 #include "resonance_server.h"
 #include "resonance_utils.h"
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <godot_cpp/classes/engine.hpp>
@@ -88,9 +93,8 @@ PackedVector3Array ResonanceServer::generate_probes_scene_aware(const Transform3
     BakeSceneScratch scratch;
     {
         std::lock_guard<std::mutex> lock(simulation_mutex);
-        if (scene_dirty) {
-            iplSceneCommit(scene);
-            scene_dirty.store(false, std::memory_order_release);
+        if (scene_dirty.load(std::memory_order_acquire)) {
+            _commit_simulator_scene_graph_if_dirty_assume_locked(nullptr);
         }
         if (!_prepare_bake_scene(scratch))
             return out;
@@ -121,6 +125,14 @@ PackedVector3Array ResonanceServer::generate_probes_scene_aware(const Transform3
 
 void ResonanceServer::set_bake_pipeline_pathing(bool p_pathing) {
     _bake_pipeline_pathing = p_pathing;
+}
+
+void ResonanceServer::set_bake_pipeline_active(bool p_active) {
+    _bake_pipeline_active = p_active;
+}
+
+bool ResonanceServer::is_bake_pipeline_active() const {
+    return _bake_pipeline_active;
 }
 
 void ResonanceServer::set_bake_static_scene_asset(const Ref<ResonanceGeometryAsset>& p_asset) {
@@ -163,6 +175,8 @@ void ResonanceServer::_release_static_pack_assume_locked(RuntimeStaticPack& pack
     if (pack.instanced && scene) {
         iplInstancedMeshRemove(pack.instanced, scene);
         iplInstancedMeshRelease(&pack.instanced);
+        // Phonon/Embree: parent scene must commit after InstancedMeshRemove before sub-scene edits.
+        iplSceneCommit(scene);
     }
     pack.instanced = nullptr;
     if (pack.mesh_in_sub && pack.sub_scene) {
@@ -174,6 +188,8 @@ void ResonanceServer::_release_static_pack_assume_locked(RuntimeStaticPack& pack
         iplSceneRelease(&pack.sub_scene);
         pack.sub_scene = nullptr;
     }
+    pack.asset_id = ObjectID();
+    pack.godot_transform = Transform3D();
     if (pack.tri_count > 0) {
         const int sub = pack.tri_count;
         const int prev = global_triangle_count.fetch_sub(sub, std::memory_order_release);
@@ -234,6 +250,8 @@ bool ResonanceServer::_create_instanced_static_pack_assume_locked(const Ref<Reso
     out.mesh_in_sub = meshes_in_sub.empty() ? nullptr : meshes_in_sub[0];
     out.debug_id = debug_ids.empty() ? -1 : debug_ids[0];
     out.tri_count = added_tri;
+    out.asset_id = ObjectID(asset->get_instance_id());
+    out.godot_transform = transform;
     // Prevent clear_static_scenes-style double-free: we stole the handles into out.
     return true;
 }
@@ -274,6 +292,16 @@ void ResonanceServer::add_or_replace_static_pack(uint64_t object_id, const Ref<R
             _runtime_static_packs.erase(it);
         }
         return;
+    }
+    // Skip tear-down/rebuild when the same asset and transform are already registered
+    // (ENTER_TREE deferred register after reload_static_scenes_from_tree).
+    {
+        auto it = _runtime_static_packs.find(object_id);
+        if (it != _runtime_static_packs.end() && it->second.instanced &&
+            it->second.asset_id == ObjectID(p_asset->get_instance_id()) &&
+            it->second.godot_transform.is_equal_approx(p_transform)) {
+            return;
+        }
     }
     // Build the replacement first so an IPL/create failure keeps the existing pack.
     RuntimeStaticPack pack;
@@ -584,11 +612,11 @@ bool ResonanceServer::_prepare_bake_scene(BakeSceneScratch& out) {
 
 bool ResonanceServer::_with_bake_scene(std::function<bool(IPLScene)> bake_fn) {
     BakeSceneScratch scratch;
+    std::unique_lock<std::mutex> exclusive_lock(phonon_context_exclusive_mutex_);
     {
         std::lock_guard<std::mutex> lock(simulation_mutex);
         if (scene_dirty.load(std::memory_order_acquire)) {
-            iplSceneCommit(scene);
-            scene_dirty.store(false, std::memory_order_release);
+            _commit_simulator_scene_graph_if_dirty_assume_locked(nullptr);
         }
         if (!_prepare_bake_scene(scratch))
             return false;
@@ -596,12 +624,13 @@ bool ResonanceServer::_with_bake_scene(std::function<bool(IPLScene)> bake_fn) {
     if (!scratch.scene)
         return false;
     bake_progress_.store(0.0f, std::memory_order_release);
+    reset_bake_cancel_requested();
     const bool ok = bake_fn(scratch.scene);
     _release_bake_scene_scratch(scratch);
     return ok;
 }
 
-bool ResonanceServer::bake_manual_grid(const PackedVector3Array& points, Ref<ResonanceProbeData> data) {
+bool ResonanceServer::bake_manual_grid(const PackedVector3Array& points, Ref<ResonanceProbeData> data, float spacing) {
     if (!_ctx() || !scene) {
         UtilityFunctions::push_error("Nexus Resonance Bake: Server not initialized.");
         return false;
@@ -617,8 +646,8 @@ bool ResonanceServer::bake_manual_grid(const PackedVector3Array& points, Ref<Res
     int bake_reflection = _get_bake_reflection_type();
     int nt = _get_bake_num_threads();
     int ao = _get_bake_ambisonics_order();
-    return _with_bake_scene([this, &points, &data, nb, nr, bake_reflection, nt, ao](IPLScene bake_scene) {
-        return baker.bake_manual_grid(_ctx(), bake_scene, _tracer_type_for_mesh_operations(), _opencl(), _radeon(), points, nb, nr, bake_reflection, data, bake_progress_callback, this, _bake_pipeline_pathing, nt, ao);
+    return _with_bake_scene([this, &points, &data, spacing, nb, nr, bake_reflection, nt, ao](IPLScene bake_scene) {
+        return baker.bake_manual_grid(_ctx(), bake_scene, _tracer_type_for_mesh_operations(), _opencl(), _radeon(), points, spacing, nb, nr, bake_reflection, data, bake_progress_callback, this, _bake_pipeline_pathing, nt, ao);
     });
 }
 
@@ -660,9 +689,17 @@ bool ResonanceServer::bake_probes_for_volume(const Transform3D& volume_transform
                     points.push_back(ResonanceUtils::to_godot_vector3(sphere.center));
                 }
                 iplProbeArrayRelease(&probeArray);
+            } else {
+                UtilityFunctions::push_error(
+                    "Nexus Resonance Bake: Scene-aware probe generation failed (iplProbeArrayCreate). "
+                    "Check static scene export and bake geometry.");
+                return false;
             }
             if (points.is_empty()) {
-                points = baker.generate_manual_grid(volume_transform, extents, spacing, generation_type, height_above_floor);
+                UtilityFunctions::push_error(
+                    "Nexus Resonance Bake: Scene-aware probe generation produced no probes. "
+                    "Enlarge the volume, adjust spacing, or verify exported static geometry.");
+                return false;
             }
         } else {
             points = baker.generate_manual_grid(volume_transform, extents, spacing, generation_type, height_above_floor);
@@ -674,7 +711,7 @@ bool ResonanceServer::bake_probes_for_volume(const Transform3D& volume_transform
                 "Nexus Resonance Bake: No probes left after exclusion volumes. Enlarge the volume or disable exclusions.");
             return false;
         }
-        return baker.bake_manual_grid(_ctx(), bake_scene, _tracer_type_for_mesh_operations(), _opencl(), _radeon(), points, nb,
+        return baker.bake_manual_grid(_ctx(), bake_scene, _tracer_type_for_mesh_operations(), _opencl(), _radeon(), points, spacing, nb,
                                       nr, bake_reflection, probe_data_res, bake_progress_callback, this, _bake_pipeline_pathing, nt,
                                       ao);
     });
@@ -727,11 +764,13 @@ bool ResonanceServer::bake_static_listener(Ref<ResonanceProbeData> data, Vector3
 }
 
 void ResonanceServer::cancel_reflections_bake() {
+    bake_cancel_requested_.store(true, std::memory_order_release);
     if (_ctx())
         iplReflectionsBakerCancelBake(_ctx());
 }
 
 void ResonanceServer::cancel_pathing_bake() {
+    bake_cancel_requested_.store(true, std::memory_order_release);
     if (_ctx())
         iplPathBakerCancelBake(_ctx());
 }
@@ -761,10 +800,13 @@ int32_t ResonanceServer::load_probe_batch(Ref<ResonanceProbeData> data) {
                 s_warned_mismatch.insert(key);
                 const char* baked_names[] = {"Convolution", "Parametric", "Hybrid"};
                 const char* runt_names[] = {"Convolution", "Parametric", "Hybrid", "TrueAudio Next"};
-                String err = String("Probe data was baked as ") + baked_names[baked_type] +
-                             " but runtime is set to " + runt_names[(reflection_type >= resonance::kReflectionConvolution && reflection_type <= resonance::kReflectionTan) ? reflection_type : resonance::kReflectionConvolution] +
-                             ". Re-bake probes with matching reflection type or change runtime ReflectionType to match.";
-                UtilityFunctions::push_error(err);
+                int runt_idx = (reflection_type >= resonance::kReflectionConvolution && reflection_type <= resonance::kReflectionTan)
+                                   ? reflection_type
+                                   : resonance::kReflectionConvolution;
+                String err = String("Nexus Resonance: Probe Volume data was baked as ") + baked_names[baked_type] +
+                             " but runtime reflection_type is " + runt_names[runt_idx] +
+                             ". Rebake Probe Volumes to match ResonanceRuntime reflection_type.";
+                UtilityFunctions::push_warning(err);
                 Engine* eng = Engine::get_singleton();
                 if (eng && eng->has_singleton("ResonanceLogger")) {
                     Dictionary log_data;
@@ -777,25 +819,8 @@ int32_t ResonanceServer::load_probe_batch(Ref<ResonanceProbeData> data) {
         }
     }
 
-    // Skip pathing validation when called from bake_probes() mid-pipeline: pathing is baked
-    // in a later step, so hash is 0 at this point. Validation runs again on reload after save.
-    bool skip_pathing_check = _bake_pipeline_pathing;
-    if (!skip_pathing_check && pathing_enabled && data->get_pathing_params_hash() == 0) {
-        static bool s_warned_pathing_mismatch = false;
-        if (!s_warned_pathing_mismatch) {
-            s_warned_pathing_mismatch = true;
-            String err = "Nexus Resonance: Pathing is enabled but probe data has no pathing baked. Bake Pathing in the Probe Volume editor (enable Pathing in bake_config, then Bake).";
-            UtilityFunctions::push_warning(err);
-            Engine* eng_path = Engine::get_singleton();
-            if (eng_path && eng_path->has_singleton("ResonanceLogger")) {
-                Dictionary log_data;
-                log_data["pathing_enabled"] = true;
-                log_data["pathing_params_hash"] = 0;
-                resonance_logger_log("validation", err.utf8().get_data(), log_data);
-            }
-        }
-        return -1;
-    }
+    // Ambisonics: never refuse the batch. Playback uses min(baked, runtime); warn once via ResonanceRuntime.
+    // Pathing: never refuse the whole batch when the layer is missing - skip pathing only (registry has_pathing).
 
     const size_t probe_size_u = static_cast<size_t>(probe_size);
     uint64_t data_hash = _hash_probe_data(probe_ptr, probe_size_u);
@@ -811,6 +836,39 @@ int32_t ResonanceServer::load_probe_batch(Ref<ResonanceProbeData> data) {
         }
     }
     return handle;
+}
+
+namespace {
+void dedupe_source_handles(std::vector<int32_t>& handles) {
+    std::sort(handles.begin(), handles.end());
+    handles.erase(std::unique(handles.begin(), handles.end()), handles.end());
+}
+} // namespace
+
+void ResonanceServer::_invalidate_param_caches_for_handles(const std::vector<int32_t>& handles) {
+    if (handles.empty())
+        return;
+    // See resonance_param_cache_invalidate_policy.h: clear both buffer sides per handle;
+    // do not bump global slot epochs (that would invalidate unrelated sources).
+    for (int32_t h : handles) {
+        if (h < 0 || h >= kMaxCacheHandles)
+            continue;
+        const size_t idx = static_cast<size_t>(h);
+        for (int slot = 0; slot < resonance::kParamCacheSlotCount; ++slot) {
+            pathing_param_cache_[static_cast<size_t>(slot)][idx].order = -1;
+            pathing_param_cache_[static_cast<size_t>(slot)][idx].epoch = 0;
+            reflection_param_cache_[static_cast<size_t>(slot)][idx].epoch = 0;
+            reflection_param_cache_[static_cast<size_t>(slot)][idx].params.ir = nullptr;
+            reverb_param_cache_[static_cast<size_t>(slot)][idx].epoch = 0;
+        }
+        reflection_baked_energy_last_[idx] = 0.0f;
+        last_good_reflection_params_[idx].ir = nullptr;
+        last_good_reflection_valid_[idx].store(0, std::memory_order_relaxed);
+        {
+            std::lock_guard<std::mutex> lock(reverb_params_likely_available_mutex_);
+            reverb_params_likely_available_.erase(h);
+        }
+    }
 }
 
 void ResonanceServer::_clear_all_param_caches() {
@@ -834,18 +892,65 @@ void ResonanceServer::_clear_all_param_caches() {
 void ResonanceServer::remove_probe_batch(int32_t handle) {
     if (handle < 0 || is_shutting_down_flag.load(std::memory_order_acquire) || !_ctx() || !simulator)
         return;
+    std::vector<int32_t> affected;
     {
         // Clear source pathing before PathSimulator erase: Phonon keeps ProbeBatch alive via
         // shared_ptr, but RunPathing null-dereferences when the batch is gone from the simulator map.
         std::lock_guard<std::mutex> lock(simulation_mutex);
+        _collect_handles_affected_by_probe_batch_remove_assume_locked(handle, affected);
         _clear_pathing_for_probe_batch_assume_locked(handle);
         probe_batch_registry_.remove_batch(handle, simulator, nullptr);
     }
-    _clear_all_param_caches();
+    _invalidate_param_caches_for_handles(affected);
 }
 
-IPLProbeBatch ResonanceServer::_get_pathing_batch_for_source(int32_t preferred_handle) {
-    return probe_batch_registry_.get_pathing_batch(preferred_handle);
+IPLProbeBatch ResonanceServer::_get_pathing_batch_for_source(int32_t source_handle, int32_t preferred_handle) {
+    const ResonanceProbeBatchRegistry::PathingBatchResolve resolved =
+        probe_batch_registry_.resolve_pathing_batch(preferred_handle);
+    const resonance::PathingBatchLookupOutcome outcome = resolved.lookup.outcome;
+    const bool should_warn = outcome == resonance::PathingBatchLookupOutcome::PreferredInvalid ||
+                             outcome == resonance::PathingBatchLookupOutcome::AmbiguousMultiVolume ||
+                             outcome == resonance::PathingBatchLookupOutcome::SingleVolumeFallback;
+    if (should_warn && source_handle >= 0) {
+        String owner;
+        bool emit = false;
+        {
+            std::lock_guard<std::mutex> lock(source_pathing_owner_mutex_);
+            if (pathing_batch_resolve_warned_.insert(source_handle).second) {
+                emit = true;
+                const auto it = source_pathing_owner_path_.find(source_handle);
+                if (it != source_pathing_owner_path_.end() && !it->second.is_empty())
+                    owner = it->second;
+                else
+                    owner = String("source handle ") + String::num_int64(source_handle);
+            }
+        }
+        if (emit) {
+            switch (outcome) {
+            case resonance::PathingBatchLookupOutcome::PreferredInvalid:
+                UtilityFunctions::push_warning(String("Nexus Resonance: ") + owner +
+                                               " pathing_probe_volume is set but its probe batch is missing or has no "
+                                               "pathing layer. Pathing is silent until a valid volume is assigned or "
+                                               "pathing is re-baked.");
+                break;
+            case resonance::PathingBatchLookupOutcome::AmbiguousMultiVolume:
+                UtilityFunctions::push_warning(
+                    String("Nexus Resonance: multiple pathing probe volumes are loaded but ") + owner +
+                    " has no pathing_probe_volume. Assign ResonancePlayer.pathing_probe_volume explicitly; pathing "
+                    "stays silent to avoid picking the wrong batch.");
+                break;
+            case resonance::PathingBatchLookupOutcome::SingleVolumeFallback:
+                UtilityFunctions::push_warning(
+                    String("Nexus Resonance: ") + owner +
+                    " has no pathing_probe_volume; using the only loaded pathing probe batch. Assign "
+                    "pathing_probe_volume explicitly when adding more probe volumes.");
+                break;
+            default:
+                break;
+            }
+        }
+    }
+    return resolved.batch;
 }
 
 bool ResonanceServer::_uses_convolution_or_hybrid_or_tan() const {
@@ -857,9 +962,7 @@ bool ResonanceServer::_uses_parametric_or_hybrid() const {
 }
 
 bool ResonanceServer::_is_reflection_type_compatible(int baked_type) const {
-    return (baked_type == 2) ||
-           (baked_type == 0 && _uses_convolution_or_hybrid_or_tan()) ||
-           (baked_type == 1 && _uses_parametric_or_hybrid());
+    return resonance::baked_reflection_type_matches_runtime(baked_type, reflection_type);
 }
 
 bool ResonanceServer::_is_batch_compatible_with_config(int32_t handle) const {
@@ -867,11 +970,23 @@ bool ResonanceServer::_is_batch_compatible_with_config(int32_t handle) const {
 }
 
 int ResonanceServer::revalidate_probe_batches_with_config() {
-    int n = probe_batch_registry_.revalidate_with_config(simulator, &simulation_mutex, reflection_type, pathing_enabled);
-    if (n > 0) {
-        _clear_all_param_caches();
+    const std::vector<int32_t> to_remove =
+        probe_batch_registry_.list_incompatible_handles(reflection_type, pathing_enabled);
+    if (to_remove.empty())
+        return 0;
+    std::vector<int32_t> affected;
+    {
+        std::lock_guard<std::mutex> lock(simulation_mutex);
+        for (int32_t batch_handle : to_remove)
+            _collect_handles_affected_by_probe_batch_remove_assume_locked(batch_handle, affected);
+        for (int32_t batch_handle : to_remove) {
+            _clear_pathing_for_probe_batch_assume_locked(batch_handle);
+            probe_batch_registry_.remove_batch(batch_handle, simulator, nullptr);
+        }
     }
-    return n;
+    dedupe_source_handles(affected);
+    _invalidate_param_caches_for_handles(affected);
+    return static_cast<int>(to_remove.size());
 }
 
 void ResonanceServer::clear_probe_batches() {
@@ -942,4 +1057,25 @@ uint16_t ResonanceServer::get_reflection_baked_energy_q16(int32_t handle) const 
     if (handle < 0 || handle >= kMaxCacheHandles)
         return 0;
     return reflection_baked_energy_to_q16(reflection_baked_energy_last_[static_cast<size_t>(handle)]);
+}
+
+Dictionary ResonanceServer::probe_data_query_baked_at_point(Ref<ResonanceProbeData> data, Vector3 world_position, int baked_variation,
+                                                            Vector3 endpoint, float influence_radius, float neighbor_radius,
+                                                            bool reconstruct_ir) {
+    if (!_ctx())
+        return probe_query_failure(resonance::kProbeQueryErrNoContext);
+    if (data.is_null())
+        return probe_query_failure(resonance::kProbeQueryErrProbeDataMissing);
+    return baker.probe_data_query_baked_at_point(_ctx(), data, world_position, baked_variation, endpoint, influence_radius, neighbor_radius,
+                                                 reconstruct_ir, current_sample_rate);
+}
+
+Dictionary ResonanceServer::probe_data_query_baked_at_probe(Ref<ResonanceProbeData> data, int32_t probe_index, int baked_variation,
+                                                            Vector3 endpoint, float influence_radius, bool reconstruct_ir) {
+    if (!_ctx())
+        return probe_query_failure(resonance::kProbeQueryErrNoContext);
+    if (data.is_null())
+        return probe_query_failure(resonance::kProbeQueryErrProbeDataMissing);
+    return baker.probe_data_query_baked_at_probe_index(_ctx(), data, probe_index, baked_variation, endpoint, influence_radius, reconstruct_ir,
+                                                       current_sample_rate);
 }
