@@ -221,19 +221,23 @@ func _prepare_probe_data_for_bake(vol: Node, probe_data: Resource, root: Node) -
 	if not DirAccess.dir_exists_absolute(fs_batches):
 		var mkdir_err: int = DirAccess.make_dir_recursive_absolute(fs_batches)
 		if mkdir_err != OK or not DirAccess.dir_exists_absolute(fs_batches):
-			var msg := "Failed to create batches output directory: %s (error %s)" % [batches_dir, mkdir_err]
+			var msg := (
+				"Failed to create batches output directory: %s (error %s)"
+				% [batches_dir, mkdir_err]
+			)
 			if Engine.has_singleton("ResonanceLogger"):
 				Engine.get_singleton("ResonanceLogger").log(
-					&"bake",
-					msg,
-					{"step": "prepare", "error": mkdir_err, "path": batches_dir}
+					&"bake", msg, {"step": "prepare", "error": mkdir_err, "path": batches_dir}
 				)
-			_runner._log_and_show_error(
-				"Probe data path not writable",
-				"Fix project output permissions or choose a writable bake output folder in Project Settings.",
-				msg,
-				vol.name,
-				"prepare"
+			(
+				_runner
+				. _log_and_show_error(
+					"Probe data path not writable",
+					"Fix project output permissions or choose a writable bake output folder in Project Settings.",
+					msg,
+					vol.name,
+					"prepare"
+				)
 			)
 			return false
 	if probe_data.has_method("take_over_path"):

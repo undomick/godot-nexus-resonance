@@ -24,6 +24,7 @@ var editor_interface: EditorInterface
 var _job_progress = null
 var _export_job_running: bool = false
 
+
 func _init(p_editor_interface: EditorInterface) -> void:
 	editor_interface = p_editor_interface
 	if editor_interface:
@@ -331,8 +332,10 @@ func _export_static_scene_ssot(
 		var save_err: int = ResourceSaver.save(packed_scene, scene_path)
 		if save_err != OK:
 			push_warning(
-				"Nexus Resonance: Failed to save scene %s after static export (error %s)"
-				% [scene_path, save_err]
+				(
+					"Nexus Resonance: Failed to save scene %s after static export (error %s)"
+					% [scene_path, save_err]
+				)
 			)
 			return save_err
 	return OK
@@ -406,7 +409,9 @@ func _finish_static_batch_toasts(result: Dictionary, success_fmt: String = "") -
 	var skipped_no_static: int = int(result.get("skipped_no_static", 0))
 	var failed: int = int(result.get("failed", 0))
 	var fmt: String = (
-		success_fmt if not success_fmt.is_empty() else UIStrings.INFO_STATIC_SCENES_IN_BUILD_EXPORTED
+		success_fmt
+		if not success_fmt.is_empty()
+		else UIStrings.INFO_STATIC_SCENES_IN_BUILD_EXPORTED
 	)
 	if exported > 0:
 		var msg: String = tr(fmt) % exported
@@ -423,17 +428,17 @@ func _finish_static_batch_toasts(result: Dictionary, success_fmt: String = "") -
 		_show_warning(msg)
 	elif skipped_no_static > 0:
 		_show_warning(
-			tr(UIStrings.WARN_NO_SCENES_EXPORTED)
-			+ " "
-			+ (tr(UIStrings.INFO_SCENES_FILTERED) % skipped_no_static)
+			(
+				tr(UIStrings.WARN_NO_SCENES_EXPORTED)
+				+ " "
+				+ (tr(UIStrings.INFO_SCENES_FILTERED) % skipped_no_static)
+			)
 		)
 	else:
 		_show_warning(tr(UIStrings.WARN_NO_SCENES_EXPORTED))
 
 
-func _export_static_scenes_batch_async(
-	paths: PackedStringArray, success_fmt: String = ""
-) -> void:
+func _export_static_scenes_batch_async(paths: PackedStringArray, success_fmt: String = "") -> void:
 	var srv: Variant = get_resonance_server_or_show_error("export_static_scene_to_asset")
 	if srv == null:
 		_end_export_job()
@@ -495,9 +500,7 @@ func _export_dynamic_objects_batch(
 		ResonanceSceneUtils.collect_resonance_dynamic_geometry(inst, dynamic_geoms)
 		var scene_exported: int = 0
 		for geom in dynamic_geoms:
-			var parent_name: String = (
-				str(geom.get_parent().name) if geom.get_parent() else "mesh"
-			)
+			var parent_name: String = str(geom.get_parent().name) if geom.get_parent() else "mesh"
 			var key: String = str(path) + "|" + parent_name
 			if dedup and seen_geoms.get(key, false):
 				continue
@@ -604,7 +607,9 @@ func export_static_scenes_in_build(_unused: Variant = null) -> void:
 		_show_warning(tr(UIStrings.WARN_NO_SCENES_EXPORTED))
 		return
 	_dispatch_export_async(
-		_export_static_scenes_batch_async.bind(paths, UIStrings.INFO_STATIC_SCENES_IN_BUILD_EXPORTED)
+		_export_static_scenes_batch_async.bind(
+			paths, UIStrings.INFO_STATIC_SCENES_IN_BUILD_EXPORTED
+		)
 	)
 
 
@@ -660,9 +665,7 @@ func export_dynamic_mesh(_unused: Variant = null) -> void:
 		return
 	var exported: int = 0
 	for geom in dynamic_geoms:
-		var parent_name: String = (
-				str(geom.get_parent().name) if geom.get_parent() else "mesh"
-			)
+		var parent_name: String = str(geom.get_parent().name) if geom.get_parent() else "mesh"
 		var save_path: String = ResonancePaths.dynamic_mesh_asset_save_path(
 			parent_name.to_snake_case()
 		)
@@ -702,9 +705,7 @@ func export_dynamic_objects_in_build(_unused: Variant = null) -> void:
 	if not ensure_dynamics_dir():
 		return
 	var make_save_path: Callable = func(_path: Variant, scene_base: String, geom: Node) -> String:
-		var parent_name: String = (
-				str(geom.get_parent().name) if geom.get_parent() else "mesh"
-			)
+		var parent_name: String = str(geom.get_parent().name) if geom.get_parent() else "mesh"
 		return ResonancePaths.dynamic_mesh_asset_save_path(
 			scene_base + "_" + parent_name.to_snake_case()
 		)
@@ -737,9 +738,7 @@ func _export_dynamic_objects_in_project_async(tscn_files: PackedStringArray) -> 
 		scene_path: Variant, scene_base: String, geom: Node
 	) -> String:
 		var rel_dir: String = str(scene_path).get_base_dir().replace("res://", "").replace("/", "_")
-		var parent_name: String = (
-				str(geom.get_parent().name) if geom.get_parent() else "mesh"
-			)
+		var parent_name: String = str(geom.get_parent().name) if geom.get_parent() else "mesh"
 		return ResonancePaths.dynamic_mesh_asset_save_path(
 			rel_dir + "_" + scene_base + "_" + parent_name.to_snake_case()
 		)
@@ -787,9 +786,7 @@ func _export_dynamic_objects_batch_async(
 		ResonanceSceneUtils.collect_resonance_dynamic_geometry(inst, dynamic_geoms)
 		var scene_exported: int = 0
 		for geom in dynamic_geoms:
-			var parent_name: String = (
-				str(geom.get_parent().name) if geom.get_parent() else "mesh"
-			)
+			var parent_name: String = str(geom.get_parent().name) if geom.get_parent() else "mesh"
 			var key: String = str(path) + "|" + parent_name
 			if dedup and seen_geoms.get(key, false):
 				continue

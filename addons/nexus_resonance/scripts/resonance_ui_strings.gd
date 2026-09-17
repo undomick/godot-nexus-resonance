@@ -67,9 +67,7 @@ const ERR_GDEXTENSION_NOT_LOADED := "GDExtension not loaded."
 const ERR_EXPORT_FAILED := "Export failed with error %s"
 const ERR_SCENE_NOT_EXPORTED := "Scene not exported. Use Tools > Nexus Resonance > Export Active Scene before baking."
 const ERR_EXPORT_WHILE_PLAYING := "Stop play mode before exporting."
-const ERR_EXPORT_WHILE_PLAYING_DETAIL := (
-	"Stop the running scene before export. Export can change ResonanceStaticScene and export_hash on the edited root while play mode uses other packs."
-)
+const ERR_EXPORT_WHILE_PLAYING_DETAIL := "Stop the running scene before export. Export can change ResonanceStaticScene and export_hash on the edited root while play mode uses other packs."
 const ERR_BAKE_RUNNER_NOT_INIT := "Bake runner not initialized."
 const ERR_SERVER_LACKS_EXPORT := "ResonanceServer lacks export_static_scene_to_asset. Update the addon."
 const ERR_SOFAAsset_UNAVAILABLE := "ResonanceSOFAAsset not available."
@@ -97,9 +95,7 @@ const WARN_RUNTIME_REQUIRED_EDITOR := (
 )
 const WARN_SERVER_INIT_FAILED := "Server init failed."
 const WARN_BAKE_RUNNER_NOT_SET := "Bake runner not set. Cannot bake."
-const WARN_REVERB_QUERY_NO_PROBE_DATA := (
-	"No probe_data assigned and no ancestor ResonanceProbeVolume with probe_data found."
-)
+const WARN_REVERB_QUERY_NO_PROBE_DATA := "No probe_data assigned and no ancestor ResonanceProbeVolume with probe_data found."
 const WARN_NO_RESONANCE_RUNTIME := "Scene has no ResonanceRuntime. Add ResonanceRuntime for export to make sense."
 const WARN_NO_EXPORTABLE_STATIC_CONTENT := "Scene has no ResonanceStaticGeometry or ResonanceStaticScene. Add ResonanceStaticGeometry for export."
 const WARN_STATIC_SCENE_NO_ASSET_EXCLUDED := (
@@ -126,9 +122,7 @@ const INFO_DYNAMIC_OBJECTS_IN_PROJECT_EXPORTED := "Exported %d dynamic object(s)
 const INFO_UNLINK_DONE := "Cleared %d pathing_probe_volume reference(s). You can now delete the Probe Volume(s)."
 const INFO_PROBE_BATCHES_CLEARED := "Probe batches cleared."
 const INFO_SCENE_OBJ_EXPORTED := "Scene exported to OBJ: %s"
-const INFO_STATIC_SCENES_IN_BUILD_EXPORTED := (
-	"Re-exported %d scene(s) that already have a ResonanceStaticScene in the build."
-)
+const INFO_STATIC_SCENES_IN_BUILD_EXPORTED := "Re-exported %d scene(s) that already have a ResonanceStaticScene in the build."
 const INFO_UNREFERENCED_PROBE_DATA_CLEARED := "Cleared %d unreferenced probe data file(s)."
 const INFO_SCENES_FILTERED := "Skipped %d scene(s) without exportable static geometry."
 const INFO_STATIC_EXPORT_FAILED := "Failed to export %d scene(s)."
@@ -159,9 +153,7 @@ const INFO_CONVERT_SKIPPED_BLEND := " Skipped %d audio track(s) with use blend -
 const TT_BAKE_PROBES := "Bake reflections, pathing, static source/listener. Skips up-to-date stages. Configure in bake_config."
 const TT_EXPORT_MESH := "Export this dynamic mesh to a ResonanceGeometryAsset (.tres or .res per Project Settings)."
 const TT_UPDATE_TARGETS := "Scan scan_targets roots for ResonancePlayer / ResonanceListener and replace bake_sources / bake_listeners."
-const TT_SAMPLE_REVERB_HERE := (
-	"Sample baked reverb at this node's position. Shows RT60 and energy. Initializes ResonanceServer in the editor when needed."
-)
+const TT_SAMPLE_REVERB_HERE := "Sample baked reverb at this node's position. Shows RT60 and energy. Initializes ResonanceServer in the editor when needed."
 const TT_CANCEL_BAKE := "Stop the current bake and close."
 const TT_HELP := "Open documentation"
 

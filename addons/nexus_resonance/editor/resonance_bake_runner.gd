@@ -138,7 +138,11 @@ func shutdown() -> void:
 func run_bake(volumes: Array[Node], root: Node = null, save_results: bool = true) -> void:
 	if volumes.is_empty() or _bake_in_progress or _shutdown_completed:
 		return
-	if editor_interface and editor_interface.has_method("is_playing_scene") and editor_interface.is_playing_scene():
+	if (
+		editor_interface
+		and editor_interface.has_method("is_playing_scene")
+		and editor_interface.is_playing_scene()
+	):
 		_log_and_show_error(
 			"Stop play mode before baking",
 			"Stop the running scene before baking probes. Baking shares the Steam Audio context with live simulation.",

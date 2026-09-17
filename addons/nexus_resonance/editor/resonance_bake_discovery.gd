@@ -136,7 +136,9 @@ static func bake_params_from_runtime(root: Node, bc: Resource, vol: Node = null)
 
 
 ## Compatibility alias for older call sites.
-static func bake_params_with_runtime_reflection(root: Node, bc: Resource, vol: Node = null) -> Dictionary:
+static func bake_params_with_runtime_reflection(
+	root: Node, bc: Resource, vol: Node = null
+) -> Dictionary:
 	return bake_params_from_runtime(root, bc, vol)
 
 

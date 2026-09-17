@@ -457,7 +457,10 @@ func _exit_tree() -> void:
 	# Break RefCounted reference cycles in bake system (prevents exit leak warnings).
 	if resonance_probe_volume_inspector and "bake_runner" in resonance_probe_volume_inspector:
 		resonance_probe_volume_inspector.bake_runner = null
-	if resonance_reverb_data_point_inspector and "bake_runner" in resonance_reverb_data_point_inspector:
+	if (
+		resonance_reverb_data_point_inspector
+		and "bake_runner" in resonance_reverb_data_point_inspector
+	):
 		resonance_reverb_data_point_inspector.bake_runner = null
 	if bake_runner and bake_runner.has_method("shutdown"):
 		bake_runner.shutdown()

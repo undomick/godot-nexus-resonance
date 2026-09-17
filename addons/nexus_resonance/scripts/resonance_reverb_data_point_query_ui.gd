@@ -6,14 +6,17 @@ const BANDS := 3
 const BAND_LABELS := ["Low (400 Hz)", "Mid (2.5 kHz)", "High (15 kHz)"]
 
 const ERR_MESSAGES := {
-	"no_context": "ResonanceServer is not initialized. Click Sample again after ResonanceRuntime is in the scene.",
+	"no_context":
+	"ResonanceServer is not initialized. Click Sample again after ResonanceRuntime is in the scene.",
 	"no_resonance_server": "ResonanceServer is missing. Enable the Nexus Resonance plugin.",
-	"probe_data_missing": "No probe data. Assign Probe Data or place under a baked ResonanceProbeVolume.",
+	"probe_data_missing":
+	"No probe data. Assign Probe Data or place under a baked ResonanceProbeVolume.",
 	"invalid_context_or_probe_data": "Probe data is empty or invalid. Bake the Probe Volume first.",
 	"probe_batch_load_failed": "Could not load the baked probe batch.",
 	"probe_index_out_of_range": "Probe index out of range.",
 	"no_probes": "Probe data has no probes.",
-	"no_neighbors_in_radius": "No baked probes within Neighbor Radius. Move the marker or raise Neighbor Radius.",
+	"no_neighbors_in_radius":
+	"No baked probes within Neighbor Radius. Move the marker or raise Neighbor Radius.",
 	"energy_field_create_failed": "Could not create an energy field for sampling.",
 }
 

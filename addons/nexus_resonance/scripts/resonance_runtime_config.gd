@@ -99,8 +99,7 @@ var reflection_type: int:
 var _ambisonic_order: int = 1
 ## Realtime Ambisonic Order for reverb playback (convolution channels, mixer/decode, pathing order)
 ## and realtime reflection simulation ([code]IPLSimulationSettings.maxOrder[/code]). Not the bake order.
-@export_enum("1st Order:1", "2nd Order:2", "3rd Order:3")
-var realtime_ambisonic_order: int:
+@export_enum("1st Order:1", "2nd Order:2", "3rd Order:3") var realtime_ambisonic_order: int:
 	get:
 		return _ambisonic_order
 	set(v):
@@ -116,8 +115,7 @@ var ambisonic_order: int:
 		realtime_ambisonic_order = v
 var _bake_ambisonic_order: int = 1
 ## Bake Ambisonic Order for probe reflection IRs. Per-volume override: [ResonanceBakeConfig] bake_ambisonics_order (Use Global / 1st–3rd).
-@export_enum("1st Order:1", "2nd Order:2", "3rd Order:3")
-var bake_ambisonic_order: int:
+@export_enum("1st Order:1", "2nd Order:2", "3rd Order:3") var bake_ambisonic_order: int:
 	get:
 		return _bake_ambisonic_order
 	set(v):
