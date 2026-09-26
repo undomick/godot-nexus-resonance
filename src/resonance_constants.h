@@ -49,6 +49,9 @@ constexpr int kResonanceListenerProcessPriority = 101;
 constexpr int kResonancePlayerProcessPriority = 90;
 constexpr int kResonanceRuntimeProcessPriority = 0;
 
+/// Grace for the audio thread to retire a stopped activator playback before its generator stream is released.
+constexpr int kActivatorFadeGraceMs = 250;
+
 /// Lock-free gate for player spatial output: warmup done and Phonon scene committed when triangles exist.
 inline bool spatial_audio_geometry_gate_allows_output(int warmup_passes_remaining, int triangle_count,
                                                       bool phonon_scene_audio_ready) {
