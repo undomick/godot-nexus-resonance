@@ -10,6 +10,7 @@
 #include <godot_cpp/classes/audio_stream_player.hpp>
 #include <godot_cpp/classes/audio_stream_player3d.hpp>
 #include <godot_cpp/classes/engine.hpp>
+#include <godot_cpp/classes/os.hpp>
 #include <godot_cpp/classes/resource_loader.hpp>
 #include <godot_cpp/classes/scene_tree.hpp>
 #include <godot_cpp/classes/script.hpp>
@@ -240,6 +241,7 @@ void ResonanceRuntime::_exit_tree() {
                 srv->shutdown();
             }
         }
+        OS::get_singleton()->delay_msec(resonance::kActivatorFadeGraceMs);
     }
     if (Object* bridge = Object::cast_to<Object>(fmod_bridge)) {
         bridge->call("shutdown_bridge");
@@ -249,6 +251,7 @@ void ResonanceRuntime::_exit_tree() {
         bridge->call("shutdown");
         coda_bridge = Variant();
     }
+    reverb_activator_stream = Ref<Resource>();
 }
 
 void ResonanceRuntime::setup_activator() {
@@ -263,6 +266,10 @@ void ResonanceRuntime::setup_activator() {
     reverb_activator = script_new(ACTIVATOR_SCRIPT_PATH);
     if (Object* activator = Object::cast_to<Object>(reverb_activator)) {
         activator->call("setup", this, runtime_bus);
+        Node* player = Object::cast_to<Node>(activator->get("_player"));
+        if (player != nullptr) {
+            reverb_activator_stream = player->get("stream");
+        }
     }
 }
 
