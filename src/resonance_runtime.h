@@ -37,6 +37,7 @@ class ResonanceRuntime : public Node {
 
     Variant runtime_bus;
     Variant reverb_activator;
+    Ref<Resource> reverb_activator_stream;
     Variant fmod_bridge;
     Variant coda_bridge;
 
