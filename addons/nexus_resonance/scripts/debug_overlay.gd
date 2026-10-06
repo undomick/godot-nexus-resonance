@@ -426,17 +426,23 @@ func _refresh_status() -> void:
 						if pnode.get("exclude_from_debug") == true:
 							continue
 						player_n += 1
-				parts.append(
-					(
-						"[color=%s]Reflections:[/color] IPL handles=%d realtime=%d | players=%d | shared numRays=%d%s"
-						% [COLOR_HINT, maxi(ar, 0), maxi(rr, 0), player_n, maxi(nr, 0), extra]
+				(
+					parts
+					. append(
+						(
+							"[color=%s]Reflections:[/color] IPL handles=%d realtime=%d | players=%d | shared numRays=%d%s"
+							% [COLOR_HINT, maxi(ar, 0), maxi(rr, 0), player_n, maxi(nr, 0), extra]
+						)
 					)
 				)
 				if ipl_src >= 0:
-					parts.append(
-						(
-							"[color=%s]IPL sources:[/color] %d (handles with reflections flag may exceed playing players)"
-							% [COLOR_HINT, ipl_src]
+					(
+						parts
+						. append(
+							(
+								"[color=%s]IPL sources:[/color] %d (handles with reflections flag may exceed playing players)"
+								% [COLOR_HINT, ipl_src]
+							)
 						)
 					)
 	else:
@@ -749,10 +755,13 @@ func _refresh_audio_instrumentation() -> void:
 		)
 	)
 	if run_issue > 0:
-		parts.append(
-			(
-				"[color=%s](issues = lifetime counters on this voice; Alt+R resets; transmitter-style loops latch until reset)[/color]"
-				% COLOR_HINT
+		(
+			parts
+			. append(
+				(
+					"[color=%s](issues = lifetime counters on this voice; Alt+R resets; transmitter-style loops latch until reset)[/color]"
+					% COLOR_HINT
+				)
 			)
 		)
 
@@ -770,9 +779,14 @@ func _refresh_audio_instrumentation() -> void:
 				for line in d.detail:
 					parts.append(line)
 		if not watch_details.is_empty():
-			parts.append(
-				"[color=%s]- watch: elevated late-mix rate (Godot audio scheduling, not Phonon) -[/color]"
-				% COLOR_HINT
+			(
+				parts
+				. append(
+					(
+						"[color=%s]- watch: elevated late-mix rate (Godot audio scheduling, not Phonon) -[/color]"
+						% COLOR_HINT
+					)
+				)
 			)
 			var nw := mini(AUDIO_PROBLEM_DETAIL_CAP, watch_details.size())
 			for j in range(nw):
@@ -853,10 +867,21 @@ func _refresh_reverb_bus() -> void:
 				)
 			)
 		)
-	compact.append(
-		(
-			"[color=%s]Fetch reverb (Nexus cache epoch):[/color] [color=%s]miss %.1f%%[/color] enabled_miss %.1f%% (hit=%d miss=%d skip=%d)"
-			% [COLOR_NEUTRAL, miss_col, miss_pct, enabled_miss_pct, fetch_hit, fetch_miss, fetch_skip]
+	(
+		compact
+		. append(
+			(
+				"[color=%s]Fetch reverb (Nexus cache epoch):[/color] [color=%s]miss %.1f%%[/color] enabled_miss %.1f%% (hit=%d miss=%d skip=%d)"
+				% [
+					COLOR_NEUTRAL,
+					miss_col,
+					miss_pct,
+					enabled_miss_pct,
+					fetch_hit,
+					fetch_miss,
+					fetch_skip
+				]
+			)
 		)
 	)
 	var hold_last := int(ri.get("mixer_return_hold_last_count", 0))
@@ -879,16 +904,19 @@ func _refresh_reverb_bus() -> void:
 			)
 		)
 	if _reverb_show_details:
-		compact.append(
-			(
-				"[color=%s]- reverb bus detail -[/color] RMS_post=%.4f peak_pre=%.4f click_guard=%d deferred_pending=%d"
-				% [
-					COLOR_HINT,
-					float(ri.get("effect_output_rms", 0.0)),
-					float(ri.get("effect_output_peak_pre_gain", 0.0)),
-					int(ri.get("effect_click_guard_triggers", 0)),
-					int(ri.get("mixer_deferred_pending", 0)),
-				]
+		(
+			compact
+			. append(
+				(
+					"[color=%s]- reverb bus detail -[/color] RMS_post=%.4f peak_pre=%.4f click_guard=%d deferred_pending=%d"
+					% [
+						COLOR_HINT,
+						float(ri.get("effect_output_rms", 0.0)),
+						float(ri.get("effect_output_peak_pre_gain", 0.0)),
+						int(ri.get("effect_click_guard_triggers", 0)),
+						int(ri.get("mixer_deferred_pending", 0)),
+					]
+				)
 			)
 		)
 	elif refl_type == 0 or hold_last > 0:

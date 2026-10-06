@@ -228,11 +228,7 @@ var _max_transmission_surfaces_override: int = 0
 @export var reflections_enabled: bool = true
 ## Reflections simulation: [b]Use Global[/b] = runtime [member ResonanceRuntimeConfig.default_reflections_mode] (Baked or Realtime). [b]Realtime[/b] here = per-source ray tracing (requires runtime [member ResonanceRuntimeConfig.realtime_rays] &gt; 0). Baked Reverb / Static Source / Listener = probe data modes. Static Source uses this player's pose; Static Listener uses the active listener (bake lists on [ResonanceProbeVolume]).
 @export_enum(
-	"Use Global:-1",
-	"Realtime:0",
-	"Baked Reverb:1",
-	"Static Source:2",
-	"Static Listener:3"
+	"Use Global:-1", "Realtime:0", "Baked Reverb:1", "Static Source:2", "Static Listener:3"
 )
 var reflections_type: int = -1
 

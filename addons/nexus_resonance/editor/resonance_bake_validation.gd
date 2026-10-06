@@ -47,6 +47,9 @@ static func stale_bake_paths_warning(
 	if path_count <= 0 or resolved_count > 0:
 		return ""
 	return (
-		"Nexus Resonance: %s has %d NodePath(s) but none resolved to %s. "
-		+ "Remove stale paths or use Update Targets."
-	) % [property, path_count, target_class]
+		(
+			"Nexus Resonance: %s has %d NodePath(s) but none resolved to %s. "
+			+ "Remove stale paths or use Update Targets."
+		)
+		% [property, path_count, target_class]
+	)

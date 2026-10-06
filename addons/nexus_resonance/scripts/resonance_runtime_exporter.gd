@@ -23,7 +23,9 @@ static func export_asset(scene_root: Node) -> ResonanceGeometryAsset:
 		return null
 	var srv: Variant = ResonanceServerAccess.get_server()
 	if srv == null or not srv.has_method("export_static_scene_to_geometry_asset"):
-		push_error("Nexus Resonance: ResonanceServer.export_static_scene_to_geometry_asset missing.")
+		push_error(
+			"Nexus Resonance: ResonanceServer.export_static_scene_to_geometry_asset missing."
+		)
 		return null
 	var asset: Variant = srv.export_static_scene_to_geometry_asset(scene_root)
 	if asset == null:
@@ -100,7 +102,6 @@ class _DeferredProbeBakeRunner:
 	var _volumes: Array
 	var _caller_baker: Variant
 
-
 	func start(scene_root: Node, volumes: Array, caller_baker: Variant) -> void:
 		_scene_root = scene_root
 		_volumes = volumes
@@ -112,7 +113,6 @@ class _DeferredProbeBakeRunner:
 				ResonanceRuntimeExporter._pending_deferred_bake_runner = null
 			return
 		tree.process_frame.connect(_on_process_frame, CONNECT_ONE_SHOT)
-
 
 	func _on_process_frame() -> void:
 		ResonanceRuntimeExporter._start_probe_bake(_scene_root, _volumes, _caller_baker)
@@ -187,7 +187,9 @@ static func _plan_export_static(scene_root: Node, opts: Dictionary) -> _ExportSt
 			ResonanceSceneUtils.collect_resonance_probe_volumes(scene_root, collected)
 			volumes.assign(collected)
 		if volumes.is_empty():
-			push_warning("Nexus Resonance: bake_probes requested but no ResonanceProbeVolume found.")
+			push_warning(
+				"Nexus Resonance: bake_probes requested but no ResonanceProbeVolume found."
+			)
 		else:
 			plan.bake_volumes = volumes
 			plan.caller_baker = opts.get("baker", null)

@@ -98,9 +98,13 @@ func _wire_sphere_lines(radius: float) -> PackedVector3Array:
 			var p0 := PI * float(r) / float(SPHERE_RINGS)
 			var p1 := PI * float(r + 1) / float(SPHERE_RINGS)
 			lines.append(
-				Vector3(sin(p0) * cos(theta) * radius, cos(p0) * radius, sin(p0) * sin(theta) * radius)
+				Vector3(
+					sin(p0) * cos(theta) * radius, cos(p0) * radius, sin(p0) * sin(theta) * radius
+				)
 			)
 			lines.append(
-				Vector3(sin(p1) * cos(theta) * radius, cos(p1) * radius, sin(p1) * sin(theta) * radius)
+				Vector3(
+					sin(p1) * cos(theta) * radius, cos(p1) * radius, sin(p1) * sin(theta) * radius
+				)
 			)
 	return lines

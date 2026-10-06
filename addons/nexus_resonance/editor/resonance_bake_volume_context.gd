@@ -90,7 +90,8 @@ static func _resolve_static_endpoints(
 	var src_paths := _bake_path_count(p_vol, "bake_sources")
 	var lst_paths := _bake_path_count(p_vol, "bake_listeners")
 	return {
-		"add_flags": {
+		"add_flags":
+		{
 			"static_source": resolved_sources.size() > 0,
 			"static_listener": resolved_listeners.size() > 0,
 		},
@@ -142,9 +143,7 @@ static func build(
 	)
 	if ctx.bc == null:
 		ctx.bc = ResonanceBakeConfig.create_default()
-	var endpoints: Dictionary = _resolve_static_endpoints(
-		p_vol, p_root, default_influence_radius
-	)
+	var endpoints: Dictionary = _resolve_static_endpoints(p_vol, p_root, default_influence_radius)
 	_emit_stale_path_warnings(endpoints)
 	ctx.add_flags = endpoints.add_flags
 	ctx.static_source_entries = endpoints.static_source_entries
@@ -194,9 +193,7 @@ static func compute_bake_needs_for_volume(
 	var bake_cfg: Resource = p_bc
 	if bake_cfg == null:
 		bake_cfg = ResonanceBakeConfig.create_default()
-	var endpoints: Dictionary = _resolve_static_endpoints(
-		p_vol, p_root, default_influence_radius
-	)
+	var endpoints: Dictionary = _resolve_static_endpoints(p_vol, p_root, default_influence_radius)
 	return compute_bake_needs(
 		p_vol,
 		p_root,
@@ -280,9 +277,7 @@ static func compute_bake_needs(
 	if want_path and out.need_pathing and (not has_data or not refl_matches or not amb_matches):
 		out.need_reflections = true
 	if p_add_flags.get("static_source", false):
-		var sh := _static_pass_need_hash(
-			p_static_source_entries, p_player_pos, p_player_radius
-		)
+		var sh := _static_pass_need_hash(p_static_source_entries, p_player_pos, p_player_radius)
 		var ssh = (
 			p_probe_data.get_static_source_params_hash()
 			if p_probe_data.has_method("get_static_source_params_hash")

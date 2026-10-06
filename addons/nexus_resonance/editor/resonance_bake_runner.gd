@@ -43,6 +43,7 @@ var _active_bake_volumes: Array[Node] = []
 ## Set by [method shutdown] so an awaiting pipeline coroutine does not finish twice or touch freed state.
 var _shutdown_completed: bool = false
 
+
 func _init(p_editor_interface = null) -> void:
 	# Conditionally initialize these variables to avoid crashes when running in headless mode.
 	if Engine.is_editor_hint():
@@ -129,10 +130,15 @@ func shutdown() -> void:
 	export_static_callback = Callable()
 	editor_interface = null
 
+
 func run_bake(volumes: Array[Node], root: Node = null, save_results: bool = true) -> void:
 	if volumes.is_empty() or _bake_in_progress or _shutdown_completed:
 		return
-	if editor_interface and editor_interface.has_method("is_playing_scene") and editor_interface.is_playing_scene():
+	if (
+		editor_interface
+		and editor_interface.has_method("is_playing_scene")
+		and editor_interface.is_playing_scene()
+	):
 		_log_and_show_error(
 			"Stop play mode before baking",
 			"Stop the running scene before baking probes. Baking shares the Steam Audio context with live simulation.",

@@ -138,6 +138,27 @@ if env["platform"] == "windows":
 
     env.AddPostAction(library, env.Action(copy_steam_dlls))
 
+# Linux does not search the .so directory unless RUNPATH is $ORIGIN. Copy libphonon.so beside the extension.
+if env["platform"] == "linux":
+    steam_src = os.path.join(steam_audio_lib, "linux-x64" if env["arch"] == "x86_64" else "linux-x86")
+    phonon_name = "libphonon.so"
+
+    def copy_linux_phonon(target, source, env):
+        src_path = os.path.join(steam_src, phonon_name)
+        if not os.path.isfile(src_path):
+            print("WARNING: %s not found. Run: python scripts/install_steam_audio.py" % src_path)
+            return 0
+        dst = os.path.join(target_base, "linux")
+        try:
+            os.makedirs(dst, exist_ok=True)
+            shutil.copy2(src_path, os.path.join(dst, phonon_name))
+            print("Copied %s -> %s" % (phonon_name, dst))
+        except OSError as e:
+            print("WARNING: Could not copy %s into addon bin. %s" % (phonon_name, e))
+        return 0
+
+    env.AddPostAction(library, env.Action(copy_linux_phonon))
+
 # --- C++ UNIT TESTS (no Godot / no link to phonon; Steam Audio headers only for IPL types in ray tests) ---
 build_tests = ARGUMENTS.get("build_tests", "1") == "1"
 test_exe = None
