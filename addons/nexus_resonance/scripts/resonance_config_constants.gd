@@ -2,14 +2,11 @@
 extends RefCounted
 
 ## Shared enums and hints for Resonance configs. Single source of truth.
-## Reduces DRY violations between BakeConfig, RuntimeConfig, and PlayerConfig.
 
-# Numeric values for reflection_type (avoid magic numbers).
 const REFLECTION_TYPE_CONVOLUTION := 0
 const REFLECTION_TYPE_PARAMETRIC := 1
 const REFLECTION_TYPE_HYBRID := 2
 const REFLECTION_TYPE_TAN := 3
-
 
 ## Bake layer stored on ResonanceProbeData (0-2). TAN maps to Convolution.
 static func bake_reflection_type_from_runtime(runtime_type: int) -> int:
@@ -37,7 +34,6 @@ const REFLECTION_CONVOLUTION := "Convolution:0"
 const REFLECTION_PARAMETRIC := "Parametric:1"
 const REFLECTION_HYBRID := "Hybrid:2"
 const REFLECTION_TAN := "TrueAudio Next (AMD GPU):3"
-
 
 ## Runtime config hot-reload policy (SSOT lives in C++: resonance_runtime_config_policy.cpp).
 static func runtime_config_property_requires_engine_reinit(property: StringName) -> bool:

@@ -34,7 +34,6 @@ func _parse_begin(object: Object) -> void:
 
 	var base: Control = EditorInterface.get_base_control() if editor_interface else null
 
-	# Bake Probes
 	var btn = Button.new()
 	btn.text = tr(UIStrings.BTN_BAKE_PROBES)
 	btn.tooltip_text = tr(UIStrings.TT_BAKE_PROBES)

@@ -135,13 +135,6 @@ static func bake_params_from_runtime(root: Node, bc: Resource, vol: Node = null)
 	return params
 
 
-## Compatibility alias for older call sites.
-static func bake_params_with_runtime_reflection(
-	root: Node, bc: Resource, vol: Node = null
-) -> Dictionary:
-	return bake_params_from_runtime(root, bc, vol)
-
-
 static func find_resonance_static_scene_for_bake(volumes: Array[Node], edited_root: Node) -> Node:
 	var static_scene := _find_resonance_static_scene(edited_root)
 	if static_scene:

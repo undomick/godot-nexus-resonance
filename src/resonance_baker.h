@@ -26,12 +26,10 @@ class ResonanceBaker {
     ResonanceBaker(ResonanceBaker&&) = delete;
     ResonanceBaker& operator=(ResonanceBaker&&) = delete;
 
-    // Generation type for probe placement
     enum ProbeGenType { GEN_CENTROID = 0,
                         GEN_UNIFORM_FLOOR = 1,
                         GEN_VOLUME = 2 };
 
-    // Generate grid points in world space based on volume transform, extents, spacing, and generation type.
     PackedVector3Array generate_manual_grid(
         const Transform3D& volume_transform,
         Vector3 extents,
@@ -135,7 +133,7 @@ class ResonanceBaker {
     /// `iplProbeBatchRemoveProbe` + reserialize; drop matching `probe_positions` entry; clears pathing hash - reload batch in runtime if live.
     bool probe_data_remove_probe_at_index(IPLContext context, Ref<ResonanceProbeData> probe_data_res, int32_t index) const;
 
-    /// `iplProbeBatchRemoveData`: type 0 = reflections, 1 = pathing; variation 0–3 = reverb / static source / static listener / dynamic.
+    /// `iplProbeBatchRemoveData`: type 0 = reflections, 1 = pathing; variation 0-3 = reverb / static source / static listener / dynamic.
     /// Endpoint sphere must match the original bake for static variations.
     bool probe_data_remove_baked_data_layer(IPLContext context, Ref<ResonanceProbeData> probe_data_res, int baked_data_type,
                                             int variation, Vector3 endpoint, float influence_radius) const;

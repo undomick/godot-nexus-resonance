@@ -201,10 +201,8 @@ func _base_volume_db_for_player(coda_handle: Variant, player: AudioStreamPlayer)
 	if coda_handle == null:
 		return player.volume_db
 	if coda_handle.has_method("get_voice_players"):
-		var primary: AudioStreamPlayer = null
-		if "base_volume_db" in coda_handle:
-			if coda_handle._player == player:
-				return float(coda_handle.base_volume_db)
+		if "base_volume_db" in coda_handle and coda_handle._player == player:
+			return float(coda_handle.base_volume_db)
 		for sib in coda_handle.get("graph_parallel_siblings", []):
 			if sib != null and sib._player == player and "base_volume_db" in sib:
 				return float(sib.base_volume_db)

@@ -89,10 +89,6 @@ static func probe_reference_needles_for_path(probe_logical_path: String) -> Pack
 		var localized := ProjectSettings.localize_path(fs)
 		if not localized.is_empty() and not out.has(localized):
 			out.append(localized)
-	if norm.begins_with("res://"):
-		var alt := norm
-		if not out.has(alt):
-			out.append(alt)
 	return out
 
 

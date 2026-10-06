@@ -53,7 +53,6 @@ class ResonancePathProcessor {
 
     /// Main thread: recreate path effect when create-time HRTF identity no longer matches runtime.
     void ensure_hrtf_on_main(IPLHRTF runtime_hrtf);
-    bool hrtf_needs_main_sync(IPLHRTF runtime_hrtf) const;
 
   private:
     bool create_path_effect(IPLHRTF hrtf);

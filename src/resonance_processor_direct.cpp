@@ -246,13 +246,6 @@ bool ResonanceDirectProcessor::create_hrtf_bound_effects(IPLHRTF hrtf) {
     return true;
 }
 
-bool ResonanceDirectProcessor::hrtf_effects_need_main_sync(IPLHRTF runtime_hrtf) const {
-    if (!(init_flags & DirectInitFlags::DIRECT_EFFECT))
-        return false;
-    const bool has_binaural = (init_flags & DirectInitFlags::BINAURAL_EFFECT) && binaural_effect != nullptr;
-    return resonance::direct_needs_hrtf_main_sync(has_binaural, bound_hrtf_, runtime_hrtf);
-}
-
 void ResonanceDirectProcessor::ensure_hrtf_effects_on_main(IPLHRTF runtime_hrtf) {
     if (!(init_flags & DirectInitFlags::DIRECT_EFFECT) || !context)
         return;
@@ -435,10 +428,8 @@ void ResonanceDirectProcessor::apply_spatialization(const IPLVector3& dir, const
     }
 
     if (use_ambi_path && ambisonics_encode_effect && ambisonics_binaural_effect && internal_ambi_buffer.data && use_binaural && hrtf_handle) {
-        // AmbisonicsBinauralEffect has no spatialBlend; blend with iplBinauralEffectApply (same as non-HOA path) so
-        // spatial_blend crossfades from standard binaural (weight 1-sb) to HOA (weight sb). At sb=0: binaural only; at
-        // sb=1: HOA only. Mid values differ from a single BinauralEffect(sb) call - unavoidable without Steam exposing
-        // spatialBlend on AmbisonicsBinauralEffect.
+        // AmbisonicsBinauralEffect has no spatialBlend, so this mixes iplBinauralEffectApply with the HOA path.
+        // Mid values are not a single BinauralEffect(spatialBlend) call.
         float sb = spatial_blend;
         if (sb < 0.0f)
             sb = 0.0f;
@@ -476,7 +467,6 @@ void ResonanceDirectProcessor::apply_spatialization(const IPLVector3& dir, const
             else
                 clear_surround_tail_after_direct_stereo_effect(out, binaural_out);
         } else if (have_hoa_blend_scratch) {
-            // Mid-range spatial_blend: manual stereo mix (AmbisonicsBinauralEffect has no spatialBlend).
             IPLAmbisonicsEncodeEffectParams encParams{};
             encParams.direction = dir;
             encParams.order = ambisonic_order;

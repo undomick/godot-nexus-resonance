@@ -121,7 +121,6 @@ func _parse_tres_data(content: String) -> Variant:
 		elif stripped.begins_with("static_scene_params_hash = "):
 			static_scene_params_hash = int(stripped.substr(27))
 	var data_result = PackedByteArray()
-	# Cap str_to_var payload size (class doc).
 	const MAX_DATA_EXPR_LEN := 256 * 1024 * 1024
 	if not data_expr.is_empty() and data_expr.length() < MAX_DATA_EXPR_LEN:
 		var r = str_to_var(data_expr)
@@ -135,7 +134,6 @@ func _parse_tres_data(content: String) -> Variant:
 				)
 			)
 	var probe_positions_result = PackedVector3Array()
-	# Cap probe_positions expression size.
 	const MAX_PROBE_POSITIONS_EXPR_LEN := 1024 * 1024
 	if (
 		not probe_positions_expr.is_empty()

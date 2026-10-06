@@ -28,12 +28,10 @@ var _bake_in_progress: bool = false
 ## True after a bake step already popped an error dialog (avoids a second exclusive AcceptDialog).
 var _bake_error_dialog_shown: bool = false
 
-# --- RUNTIME VARIABLES ---
 var target_root: Node
 var save_to_disk: bool = true
 signal bake_progress_updated(status_message: String)
 signal bake_finished
-# -------------------------
 
 var _progress_ui  # Untyped to allow headless operation
 var _backup  # Untyped to allow headless operation
@@ -45,8 +43,6 @@ var _active_bake_volumes: Array[Node] = []
 ## Set by [method shutdown] so an awaiting pipeline coroutine does not finish twice or touch freed state.
 var _shutdown_completed: bool = false
 
-
-# Changed parameter to loosely typed to explicitly allow null instantiation at runtime
 func _init(p_editor_interface = null) -> void:
 	# Conditionally initialize these variables to avoid crashes when running in headless mode.
 	if Engine.is_editor_hint():
@@ -133,16 +129,10 @@ func shutdown() -> void:
 	export_static_callback = Callable()
 	editor_interface = null
 
-
-# Added runtime parameters root and save_results
 func run_bake(volumes: Array[Node], root: Node = null, save_results: bool = true) -> void:
 	if volumes.is_empty() or _bake_in_progress or _shutdown_completed:
 		return
-	if (
-		editor_interface
-		and editor_interface.has_method("is_playing_scene")
-		and editor_interface.is_playing_scene()
-	):
+	if editor_interface and editor_interface.has_method("is_playing_scene") and editor_interface.is_playing_scene():
 		_log_and_show_error(
 			"Stop play mode before baking",
 			"Stop the running scene before baking probes. Baking shares the Steam Audio context with live simulation.",
@@ -280,9 +270,8 @@ func _do_run_bake_after_validation(volumes: Array[Node], root: Node) -> void:
 func _get_edited_scene_root(volumes: Array[Node]) -> Node:
 	if target_root:
 		return target_root
-	if editor_interface:
-		if Engine.is_editor_hint() and editor_interface:
-			return _bake_validation.get_edited_scene_root(volumes, editor_interface)
+	if editor_interface and Engine.is_editor_hint():
+		return _bake_validation.get_edited_scene_root(volumes, editor_interface)
 	if volumes.size() > 0 and volumes[0].is_inside_tree():
 		return volumes[0].get_tree().root
 	return null

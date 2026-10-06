@@ -109,7 +109,6 @@ ResonanceStreamPlayback::ResonanceStreamPlayback() {
 }
 
 ResonanceStreamPlayback::~ResonanceStreamPlayback() {
-    // Stop new Apply calls, then wait out any in-flight one before releasing the effect and the source.
     convolution_blocked_.store(true, std::memory_order_release);
     const int32_t handle = voice_source_handle_.exchange(-1, std::memory_order_acq_rel);
     const uint32_t epoch = voice_source_epoch_.exchange(0, std::memory_order_acq_rel);
@@ -204,7 +203,7 @@ void ResonanceStreamPlayback::_start(double from_pos) {
     prev_conv_reflections_mix_level_ = 0.0f;
     prev_parametric_reflections_mix_level_ = 0.0f;
     prev_pathing_mix_level_ = 0.0f;
-    // The shared emitter effect holds the tail. Resetting it here would cut the previous voice.
+    // Shared reflection stays armed. Resetting it would cut the previous voice's tail.
     path_processor.reset_effect();
     reflection_tail_have_params_ = false;
     reflection_tail_param_epoch_ = 0;
@@ -564,8 +563,6 @@ void ResonancePlayer::internal_unregister_playback(ResonanceStreamPlayback* p) {
 }
 
 void ResonancePlayer::internal_reclaim_voice_source(int32_t handle, uint32_t epoch) {
-    if (handle < 0)
-        return;
     std::lock_guard<std::mutex> lock(voice_source_reclaim_mutex_);
     PendingVoiceSourceReclaim item;
     item.handle = handle;
@@ -606,11 +603,8 @@ void ResonancePlayer::_broadcast_update_parameters(const PlaybackParameters& p) 
             if (owned >= 0) {
                 voice.source_handle = owned;
                 if (srv && srv->is_initialized()) {
-                    IPLReflectionEffectParams ignored{};
-                    bool has_reverb = srv->peek_reverb_params_likely_available(owned);
-                    if (!has_reverb)
-                        has_reverb = srv->fetch_reverb_params(owned, ignored);
-                    voice.has_valid_reverb = has_reverb;
+                    IPLReflectionEffectParams params{};
+                    voice.has_valid_reverb = srv->peek_reverb_params_likely_available(owned) || srv->fetch_reverb_params(owned, params);
                 }
             } else {
                 voice.source_handle = -1;
@@ -827,7 +821,7 @@ void ResonancePlayer::_process(double delta) {
         return;
     if (!player_config.is_valid())
         return;
-    _drain_voice_source_reclaims(true);
+    _drain_voice_source_reclaims();
 
     {
         std::vector<ResonanceStreamPlayback*> resolve_voices;
@@ -972,8 +966,6 @@ void ResonancePlayer::_process(double delta) {
 }
 
 int32_t ResonancePlayer::_create_simulation_source(ResonanceServer* srv) {
-    if (!srv || !srv->is_initialized())
-        return -1;
     if (srv->simulation_source_cap_blocks_create())
         return -1;
     const float eff_radius = _config_float("source_radius", 1.0f);
@@ -1062,14 +1054,14 @@ int32_t ResonancePlayer::_first_live_voice_source(uint32_t* out_epoch) const {
     return -1;
 }
 
-void ResonancePlayer::_reclaim_voice_source_on_main(int32_t handle, uint32_t epoch, bool keep_idle) {
+void ResonancePlayer::_reclaim_voice_source_on_main(int32_t handle, uint32_t epoch) {
     if (handle < 0)
         return;
     if (_live_voice_uses_source(handle))
         return;
     uint32_t live_epoch = 0;
     const int32_t live = _first_live_voice_source(&live_epoch);
-    if (keep_idle && live < 0 && (source_handle < 0 || source_handle == handle)) {
+    if (live < 0 && (source_handle < 0 || source_handle == handle)) {
         source_handle = handle;
         source_lifecycle_epoch_ = epoch;
         return;
@@ -1086,14 +1078,14 @@ void ResonancePlayer::_reclaim_voice_source_on_main(int32_t handle, uint32_t epo
     srv->destroy_source_handle(handle);
 }
 
-void ResonancePlayer::_drain_voice_source_reclaims(bool keep_idle) {
+void ResonancePlayer::_drain_voice_source_reclaims() {
     std::vector<PendingVoiceSourceReclaim> local;
     {
         std::lock_guard<std::mutex> lock(voice_source_reclaim_mutex_);
         local.swap(voice_source_reclaims_);
     }
     for (const PendingVoiceSourceReclaim& item : local)
-        _reclaim_voice_source_on_main(item.handle, item.epoch, keep_idle);
+        _reclaim_voice_source_on_main(item.handle, item.epoch);
 }
 
 void ResonancePlayer::_block_live_convolution_and_wait() {
@@ -1227,17 +1219,12 @@ IPLAudioBuffer* ResonancePlayer::shared_reflection_direct_output() {
 void ResonancePlayer::reflection_round_enter(ResonanceStreamPlayback* voice) {
     if (!voice)
         return;
-    // A voice showing up twice means the previous callback never reached its expected count.
-    // Close that round so a missing playback cannot stall the single Apply forever.
-    bool repeat = false;
+    // A repeated voice means the previous callback never reached its expected count.
+    // Close that round so a missing playback cannot stall the single Apply.
     const int seen_before = std::min(refl_round_seen_, kReflectionRoundVoices);
     for (int i = 0; i < seen_before; ++i) {
-        if (refl_round_voices_[i] == voice) {
-            repeat = true;
-            break;
-        }
-    }
-    if (repeat) {
+        if (refl_round_voices_[i] != voice)
+            continue;
         if (!refl_round_applied_) {
             bool to_player = false;
             float dbg = 0.0f;
@@ -1247,6 +1234,7 @@ void ResonancePlayer::reflection_round_enter(ResonanceStreamPlayback* voice) {
         }
         refl_round_seen_ = 0;
         refl_round_closer_ = nullptr;
+        break;
     }
     if (refl_round_seen_ == 0) {
         const int n = playback_count_.load(std::memory_order_acquire);

@@ -108,7 +108,6 @@ class ResonanceDirectProcessor {
 
     /// Main thread: create or recreate HRTF-bound effects when HRTF arrives or identity changes.
     void ensure_hrtf_effects_on_main(IPLHRTF runtime_hrtf);
-    bool hrtf_effects_need_main_sync(IPLHRTF runtime_hrtf) const;
 
   private:
     void release_hrtf_bound_effects();

@@ -82,17 +82,12 @@ bool ResonancePathProcessor::create_path_effect(IPLHRTF hrtf) {
     return true;
 }
 
-bool ResonancePathProcessor::hrtf_needs_main_sync(IPLHRTF runtime_hrtf) const {
-    const bool has_effect = (init_flags & PathInitFlags::PATHEFFECT) && path_effect != nullptr;
-    return resonance::path_needs_hrtf_effect_recreate(has_effect, bound_hrtf_, runtime_hrtf);
-}
-
 void ResonancePathProcessor::ensure_hrtf_on_main(IPLHRTF runtime_hrtf) {
     if (!(init_flags & PathInitFlags::PATHEFFECT) || !context)
         return;
     if (!runtime_hrtf)
         return;
-    if (!hrtf_needs_main_sync(runtime_hrtf))
+    if (!resonance::path_needs_hrtf_effect_recreate(path_effect != nullptr, bound_hrtf_, runtime_hrtf))
         return;
     if (!create_path_effect(runtime_hrtf)) {
         ResonanceLog::error("PathProcessor: Failed to recreate IPLPathEffect for new HRTF");

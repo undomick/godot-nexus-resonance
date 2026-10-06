@@ -30,6 +30,10 @@ func _physics_process(_delta: float) -> void:
 	if not listener_camera or not audio_source_node:
 		return
 
+	var w3d := get_world_3d()
+	if not w3d:
+		return
+
 	var start := listener_camera.global_position
 	var end := audio_source_node.global_position
 
@@ -38,9 +42,6 @@ func _physics_process(_delta: float) -> void:
 	immediate_mesh.surface_begin(Mesh.PRIMITIVE_LINES)
 
 	var color := Color.GREEN
-	var w3d := get_world_3d()
-	if not w3d:
-		return
 	var space_state := w3d.direct_space_state
 	if space_state:
 		var query := PhysicsRayQueryParameters3D.create(start, end)

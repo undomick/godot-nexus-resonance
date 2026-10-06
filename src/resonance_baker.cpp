@@ -63,7 +63,6 @@ static void invalidate_probe_data_bake_params_hash(const Ref<ResonanceProbeData>
     probe_data_res->set_bake_params_hash(static_cast<int64_t>(kInvalidBakeParamsStamp));
 }
 
-/// Maps addon reflection_type to IPL_REFLECTIONSBAKEFLAGS (conv / param / both).
 static IPLReflectionsBakeFlags _bake_flags_from_reflection_type(int reflection_type) {
     if (reflection_type == resonance::kReflectionConvolution)
         return static_cast<IPLReflectionsBakeFlags>(IPL_REFLECTIONSBAKEFLAGS_BAKECONVOLUTION);
@@ -100,7 +99,7 @@ static void _fill_reflections_bake_params(IPLReflectionsBakeParams& out,
     out.irradianceMinDistance = resonance::kBakerIrradianceMinDistance;
 }
 
-/// Deserialize `ResonanceProbeData` → `IPLProbeBatch` (caller must `iplProbeBatchRelease`).
+/// Deserialize `ResonanceProbeData` into `IPLProbeBatch` (caller must `iplProbeBatchRelease`).
 static IPLProbeBatch _load_probe_batch_from_resource(IPLContext context, Ref<ResonanceProbeData> probe_data_res) {
     if (probe_data_res.is_null() || probe_data_res->get_data().is_empty())
         return nullptr;
@@ -194,27 +193,27 @@ static bool _save_probe_data_to_disk(Ref<ResonanceProbeData> probe_data_res, con
     return true;
 }
 
-/// UID → path; empty → ProjectSettings bake dir + numbered fallback (creates directories).
 static String _resolve_save_path(Ref<ResonanceProbeData> probe_data_res) {
     String path = probe_data_res->get_path();
     if (!path.is_empty() && path.begins_with("uid://")) {
         path = ResourceUID::get_singleton()->uid_to_path(path);
     }
-    if (path.is_empty()) {
-        const String base_dir = resonance_bake_batches_dir_from_settings();
-        int n = s_fallback_counter.fetch_add(1) + 1;
-        const String ext = resonance_probe_data_save_extension_from_settings();
-        path = base_dir + String("probe_batch_fallback_") + String::num_int64(n) + String(".") + ext;
-        _baker_push_warning("Nexus Resonance Bake: probe_data has no path. Using fallback: " + path);
-        String dir = path.get_base_dir();
-        if (!dir.is_empty()) {
-            ProjectSettings* ps2 = ProjectSettings::get_singleton();
-            String abs_dir = ps2 ? ps2->globalize_path(dir) : dir;
-            if (!abs_dir.is_empty()) {
-                DirAccess::make_dir_recursive_absolute(abs_dir);
-            }
-        }
-    }
+    if (!path.is_empty())
+        return path;
+
+    const String base_dir = resonance_bake_batches_dir_from_settings();
+    int n = s_fallback_counter.fetch_add(1) + 1;
+    const String ext = resonance_probe_data_save_extension_from_settings();
+    path = base_dir + String("probe_batch_fallback_") + String::num_int64(n) + String(".") + ext;
+    _baker_push_warning("Nexus Resonance Bake: probe_data has no path. Using fallback: " + path);
+    String dir = path.get_base_dir();
+    if (dir.is_empty())
+        return path;
+    ProjectSettings* ps2 = ProjectSettings::get_singleton();
+    String abs_dir = ps2 ? ps2->globalize_path(dir) : dir;
+    if (abs_dir.is_empty())
+        return path;
+    DirAccess::make_dir_recursive_absolute(abs_dir);
     return path;
 }
 
@@ -239,13 +238,6 @@ static IPLBakedDataIdentifier _reflections_bake_identifier(IPLBakedDataVariation
         id.endpointInfluence.center = ResonanceUtils::to_ipl_vector3(*endpoint_position);
         id.endpointInfluence.radius = influence_radius;
     }
-    return id;
-}
-
-static IPLBakedDataIdentifier _pathing_bake_identifier() {
-    IPLBakedDataIdentifier id{};
-    id.type = IPL_BAKEDDATATYPE_PATHING;
-    id.variation = IPL_BAKEDDATAVARIATION_DYNAMIC;
     return id;
 }
 
@@ -278,7 +270,6 @@ PackedVector3Array ResonanceBaker::generate_manual_grid(const Transform3D& volum
     Vector3 size = extents * 2.0f;
 
     if (generation_type == GEN_CENTROID) {
-        // Centroid: one sample at the volume origin (IPL_PROBEGENERATIONTYPE_CENTROID).
         Vector3 local_center(0, 0, 0);
         Vector3 world_pos = volume_transform.xform(local_center);
         points.push_back(world_pos);
@@ -286,7 +277,6 @@ PackedVector3Array ResonanceBaker::generate_manual_grid(const Transform3D& volum
     }
 
     if (generation_type == GEN_UNIFORM_FLOOR) {
-        // Uniform floor: 2D grid on local y = -extents.y + height_above_floor.
         float plane_y = -extents.y + height_above_floor;
         int count_x = static_cast<int>(std::floor(size.x / spacing));
         int count_z = static_cast<int>(std::floor(size.z / spacing));
@@ -599,7 +589,9 @@ bool ResonanceBaker::bake_pathing(IPLContext context, IPLScene scene, Ref<Resona
     resonance::BakerProgressState bake_progress{};
     AdapterData adapter = {progress_callback, progress_user_data, &bake_progress};
     iplPathBakerBake(context, &pathParams, _ipl_progress_adapter, &adapter);
-    const IPLBakedDataIdentifier layer_id = _pathing_bake_identifier();
+    IPLBakedDataIdentifier layer_id{};
+    layer_id.type = IPL_BAKEDDATATYPE_PATHING;
+    layer_id.variation = IPL_BAKEDDATAVARIATION_DYNAMIC;
     if (!_bake_outcome_ok(batch, layer_id, bake_progress, progress_user_data, "iplPathBakerBake"))
         return false;
 
@@ -779,7 +771,7 @@ bool ResonanceBaker::probe_data_remove_baked_data_layer(IPLContext context, Ref<
         return false;
     }
     if (variation < 0 || variation > 3) {
-        _baker_push_error("Nexus Resonance: variation must be 0–3 (reverb, static source, static listener, dynamic).");
+        _baker_push_error("Nexus Resonance: variation must be 0-3 (reverb, static source, static listener, dynamic).");
         return false;
     }
     IPLBakedDataIdentifier id{};
@@ -925,8 +917,6 @@ static IPLBakedDataIdentifier _probe_query_reflections_identifier(int baked_vari
 }
 
 static bool _probe_data_create_energy_field(IPLContext context, int ambisonics_order, IPLEnergyField* out_field) {
-    if (!out_field)
-        return false;
     IPLEnergyFieldSettings ef_settings{};
     ef_settings.duration = resonance::kBakerSimulatedDuration;
     ef_settings.order = resonance::clamp_bake_ambisonics_order(ambisonics_order);

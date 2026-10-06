@@ -16,7 +16,7 @@ static func get_edited_scene_root(volumes: Array[Node], editor_interface: Editor
 	return null
 
 
-## Defensive: bake step entered with no resolved entries (should not happen when add_flags
+## Bake step entered with no resolved entries (should not happen when add_flags
 ## is derived from resolved nodes).
 static func static_source_entries_error(static_source_wanted: bool, entries: Array) -> String:
 	if not static_source_wanted:
@@ -47,9 +47,6 @@ static func stale_bake_paths_warning(
 	if path_count <= 0 or resolved_count > 0:
 		return ""
 	return (
-		(
-			"Nexus Resonance: %s has %d NodePath(s) but none resolved to %s. "
-			+ "Remove stale paths or use Update Targets."
-		)
-		% [property, path_count, target_class]
-	)
+		"Nexus Resonance: %s has %d NodePath(s) but none resolved to %s. "
+		+ "Remove stale paths or use Update Targets."
+	) % [property, path_count, target_class]

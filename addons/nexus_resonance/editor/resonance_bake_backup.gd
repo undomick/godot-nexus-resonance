@@ -128,7 +128,6 @@ func create_backups(volumes: Array[Node], make_disk_copies: bool = true) -> void
 		if not FileAccess.file_exists(original_path):
 			continue
 		var backup_path: String = original_path + ".bak"
-		# DirAccess.copy_absolute overwrites if backup_path already exists.
 		var err: int = DirAccess.copy_absolute(original_path, backup_path)
 		if err == OK:
 			_backup_paths[original_path] = backup_path

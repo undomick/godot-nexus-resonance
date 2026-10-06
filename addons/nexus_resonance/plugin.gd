@@ -1,8 +1,7 @@
 @tool
 extends EditorPlugin
 
-## This EditorPlugin registers gizmos, inspectors, menus, and probe resource I/O. Disabling it removes
-## that editor integration (menus, custom gizmos, inspector extensions, import/export hooks, autoload).
+## This EditorPlugin registers gizmos, inspectors, menus, and probe resource I/O.
 ## Native node types (ResonanceProbeVolume, etc.) come from GDExtension (nexus_resonance.gdextension)
 ## and stay in ClassDB until the editor is restarted, so existing nodes remain movable like any Node3D.
 
@@ -71,7 +70,6 @@ const _tool_submenu_name := "Nexus Resonance"
 var _tool_submenu: PopupMenu = null
 var _gizmo_refresh_pending: bool = false
 
-## Project settings / bus defaults: see [ResonancePaths].
 const SETTINGS_PREFIX := ResonancePaths.SETTINGS_PREFIX
 const LEGACY_SETTINGS_PREFIX := ResonancePaths.LEGACY_SETTINGS_PREFIX
 
@@ -199,7 +197,6 @@ func _init_editor_plugin_ui() -> void:
 		push_warning(
 			"Nexus Resonance: Failed to load export handler. Export and bake features may be unavailable."
 		)
-	# bake_runner depends on export_handler for export_static_callback (pre-bake static scene export)
 	var runner_script: Script = load(RESONANCE_BAKE_RUNNER_SCRIPT) as Script
 	if runner_script and export_handler:
 		bake_runner = runner_script.new(get_editor_interface())
@@ -286,8 +283,7 @@ func _init_editor_plugin_ui() -> void:
 	var importer_script: Script = load(SOFA_IMPORTER_SCRIPT) as Script
 	if importer_script:
 		sofa_importer = importer_script.new()
-		if sofa_importer:
-			add_import_plugin(sofa_importer)
+		add_import_plugin(sofa_importer)
 
 	var inspector_script: Script = load(RESONANCE_GEOMETRY_INSPECTOR_SCRIPT) as Script
 	if inspector_script:
@@ -448,8 +444,7 @@ func _refresh_class_gizmos_recursive(n: Node, class_name_str: String) -> void:
 
 
 func _exit_tree() -> void:
-	# Mirrors _init_editor_plugin_ui: inspectors, import/export plugins, 3D gizmo, tool submenu,
-	# scene_changed. (Autoload is removed in _disable_plugin; ProjectSettings.add_property_info persists.)
+	# Autoload is removed in _disable_plugin; ProjectSettings.add_property_info persists.
 	_editor_plugin_ui_active = false
 	if scene_changed.is_connected(_on_editor_scene_changed_refresh_probe_gizmos):
 		scene_changed.disconnect(_on_editor_scene_changed_refresh_probe_gizmos)
@@ -457,10 +452,7 @@ func _exit_tree() -> void:
 	# Break RefCounted reference cycles in bake system (prevents exit leak warnings).
 	if resonance_probe_volume_inspector and "bake_runner" in resonance_probe_volume_inspector:
 		resonance_probe_volume_inspector.bake_runner = null
-	if (
-		resonance_reverb_data_point_inspector
-		and "bake_runner" in resonance_reverb_data_point_inspector
-	):
+	if resonance_reverb_data_point_inspector and "bake_runner" in resonance_reverb_data_point_inspector:
 		resonance_reverb_data_point_inspector.bake_runner = null
 	if bake_runner and bake_runner.has_method("shutdown"):
 		bake_runner.shutdown()
@@ -565,11 +557,6 @@ func _disable_plugin() -> void:
 	remove_autoload_singleton("ResonanceLogger")
 
 
-func _get_bus_editor() -> StringName:
-	# Matches ResonanceRuntimeConfig defaults (buses are not Project Settings anymore).
-	return ResonancePaths.DEFAULT_OUTPUT_BUS_NAME
-
-
 func _get_reverb_bus_name_editor() -> StringName:
 	return ResonancePaths.DEFAULT_REVERB_BUS_NAME
 
@@ -589,7 +576,8 @@ func _detach_reverb_effect() -> void:
 
 func _setup_audio_bus() -> void:
 	var bus_name: StringName = _get_reverb_bus_name_editor()
-	var send_name: StringName = _get_bus_editor()
+	# Matches ResonanceRuntimeConfig defaults (buses are not Project Settings anymore).
+	var send_name: StringName = ResonancePaths.DEFAULT_OUTPUT_BUS_NAME
 	var idx: int = AudioServer.get_bus_index(bus_name)
 	if idx == -1:
 		AudioServer.add_bus()

@@ -5,7 +5,7 @@ extends RefCounted
 
 
 ## Builds the deletion plan after a project reference scan.
-## When [param scan_cancelled] is true the scan may be incomplete — never offer deletes.
+## When [param scan_cancelled] is true the scan may be incomplete - never offer deletes.
 static func build_clear_plan(
 	probe_files: PackedStringArray, referenced: PackedStringArray, scan_cancelled: bool
 ) -> Dictionary:

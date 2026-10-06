@@ -66,7 +66,6 @@ func _redraw(gizmo: EditorNode3DGizmo) -> void:
 	var node = gizmo.get_node_3d()
 	_ensure_icon_material(gizmo)
 
-	# Billboard icon
 	var icon_mat = get_material(_mat_icon, gizmo)
 	if icon_mat:
 		gizmo.add_unscaled_billboard(icon_mat, 0.05)
@@ -93,7 +92,6 @@ func _redraw(gizmo: EditorNode3DGizmo) -> void:
 	gizmo.add_lines(lines, get_material(_mat_main, gizmo))
 	gizmo.add_collision_segments(lines)
 
-	# Handles
 	var handles = PackedVector3Array()
 	handles.push_back(Vector3(half.x, 0, 0))
 	handles.push_back(Vector3(0, half.y, 0))

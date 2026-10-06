@@ -124,7 +124,6 @@ class ResonanceStreamPlayback : public AudioStreamPlayback {
     std::atomic<uintptr_t> retained_ipl_source_{0};
     std::atomic<int32_t> retained_source_handle_{-1};
     int32_t current_source_handle = -1;
-    /// Emitter IPLSource this voice feeds. Voices of one player share it. One effect Applies.
     std::atomic<int32_t> voice_source_handle_{-1};
     std::atomic<uint32_t> voice_source_epoch_{0};
     int32_t get_voice_source_handle() const { return voice_source_handle_.load(std::memory_order_acquire); }
@@ -594,7 +593,6 @@ class ResonancePlayer : public AudioStreamPlayer3D {
     /// Returns true if a new handle was created. Optionally defers playback param push when already playing.
     bool _try_ensure_source_and_sync(ResonanceServer* srv, bool deferred_playback_push_if_playing);
     int32_t _create_simulation_source(ResonanceServer* srv);
-    /// One IPLSource for this player. Voices bind that handle and do not create another.
     void _ensure_voice_sources(ResonanceServer* srv);
     void ensure_shared_reflection_on_main(ResonanceServer* srv);
     void cleanup_shared_reflection();
@@ -608,8 +606,8 @@ class ResonancePlayer : public AudioStreamPlayer3D {
     void _collect_simulation_source_handles(std::vector<int32_t>& out) const;
     bool _live_voice_uses_source(int32_t handle) const;
     int32_t _first_live_voice_source(uint32_t* out_epoch) const;
-    void _drain_voice_source_reclaims(bool keep_idle);
-    void _reclaim_voice_source_on_main(int32_t handle, uint32_t epoch, bool keep_idle);
+    void _drain_voice_source_reclaims();
+    void _reclaim_voice_source_on_main(int32_t handle, uint32_t epoch);
     void _destroy_owned_sources_for_shutdown();
     void _block_live_convolution_and_wait();
     struct PendingVoiceSourceReclaim {
