@@ -3,7 +3,7 @@ extends Object
 ## Resolves the edited scene root for bake validation.
 
 
-static func get_edited_scene_root(volumes: Array[Node], editor_interface: EditorInterface) -> Node:
+static func get_edited_scene_root(volumes: Array[Node], editor_interface = null) -> Node:
 	if editor_interface:
 		var root = editor_interface.get_edited_scene_root()
 		if root:

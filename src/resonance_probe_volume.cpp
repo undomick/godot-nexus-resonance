@@ -269,12 +269,14 @@ void ResonanceProbeVolume::_ready() {
         if (viz_instance)
             viz_instance->set_visible(false);
 
-        ResonanceServer* srv = ResonanceServer::get_singleton();
-        if (srv && srv->is_initialized() && probe_data.is_valid()) {
-            _store_probe_batch_handle(srv->load_probe_batch(probe_data));
-        } else if (probe_data.is_valid()) {
-            // Server may not be ready yet (autoload order); retry deferred
-            call_deferred("_runtime_load_probe_batch");
+        if (!headless_baking_mode) {
+            ResonanceServer* srv = ResonanceServer::get_singleton();
+            if (srv && srv->is_initialized() && probe_data.is_valid()) {
+                _store_probe_batch_handle(srv->load_probe_batch(probe_data));
+            } else if (probe_data.is_valid()) {
+                // Server may not be ready yet (autoload order); retry deferred
+                call_deferred("_runtime_load_probe_batch");
+            }
         }
     }
 }
@@ -286,6 +288,9 @@ void ResonanceProbeVolume::_check_probe_data_loaded() {
 }
 
 void ResonanceProbeVolume::_runtime_load_probe_batch() {
+    if (headless_baking_mode) {
+        return;
+    }
     if (!_has_valid_resonance_config()) {
         if (_runtime_load_retry_count < resonance::kProbeVolumeMaxRuntimeLoadRetries) {
             _runtime_load_retry_count++;
