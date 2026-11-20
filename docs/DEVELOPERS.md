@@ -11,7 +11,7 @@ nexus-resonance/
 │   ├── resonance_log.*     # C++ logging (ResonanceLog, forwards to ResonanceLogger)
 │   ├── test/               # C++ unit tests (Catch2)
 │   ├── lib/
-│   │   ├── godot-cpp/      # Godot C++ bindings (vendored 10.0.0-stable)
+│   │   ├── godot-cpp/      # Godot C++ bindings (submodule, 10.0.0-stable)
 │   │   ├── catch2/         # Catch2 test framework (submodule, v2.x)
 │   │   ├── pffft/          # FFT library for iOS (submodule)
 │   │   ├── libmysofa/      # HRTF/SOFA reader for iOS (submodule)

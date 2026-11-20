@@ -45,7 +45,7 @@ make build-ios        # macOS only; builds pffft and libmysofa for iOS arm64
 
 Libraries are referenced from GitHub as git submodules, not bundled:
 
-- **[godot-cpp](https://github.com/godotengine/godot-cpp)** - Godot C++ bindings (vendored 10.0.0-stable, `api_version` 4.4)
+- **[godot-cpp](https://github.com/godotengine/godot-cpp)** - Godot C++ bindings (tag 10.0.0-stable, `api_version` 4.4)
 - **[Catch2](https://github.com/catchorg/Catch2)** - C++ unit tests (branch v2.x)
 - **[pffft](https://github.com/marton78/pffft)** - FFT library (iOS static linking)
 - **[libmysofa](https://github.com/hoene/libmysofa)** - HRTF/SOFA file reader (iOS static linking)
