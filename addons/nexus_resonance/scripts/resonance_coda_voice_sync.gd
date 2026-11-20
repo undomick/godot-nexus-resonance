@@ -1,6 +1,6 @@
 extends RefCounted
 
-## Occlusion/transmission readback helpers for Nexus Coda voices (Option A bridge).
+## Occlusion/transmission readback helpers for Nexus Coda voices.
 
 const DEFAULT_SOURCE_RADIUS := 1.0
 const MIN_LINEAR_GAIN := 0.0001
@@ -13,7 +13,7 @@ static func server_ready() -> bool:
 	return srv != null
 
 
-## Mirror C++ resonance_source_handle_policy: recycled IDs after reinit need a matching epoch.
+## Handle IDs are recycled after an engine reinit, so a handle is only valid with the epoch it was created in.
 static func handle_matches_lifecycle_epoch(
 	handle: int, handle_epoch: int, server_epoch: int
 ) -> bool:
@@ -46,7 +46,7 @@ static func destroy_source(handle: int) -> void:
 		srv.destroy_source_handle(handle)
 
 
-## Only destroy when the handle still belongs to this client (not a recycled post-reinit ID).
+## Skips handles from an earlier epoch: after a reinit that ID may belong to another source.
 static func destroy_source_if_epoch_matches(handle: int, handle_epoch: int) -> void:
 	if not handle_matches_lifecycle_epoch(handle, handle_epoch, lifecycle_epoch()):
 		return
@@ -105,7 +105,7 @@ static func read_occlusion_dict(handle: int, handle_epoch: int = 0) -> Dictionar
 	return data as Dictionary
 
 
-## TODO: Smooth occlusion/transmission (ResonancePlayer-style smoothing constants).
+# TODO: Smooth occlusion/transmission like ResonancePlayer does.
 static func linear_gain_from_occlusion(occ: Dictionary) -> float:
 	if occ.is_empty():
 		return 1.0
@@ -123,7 +123,7 @@ static func attenuation_db_from_occlusion(occ: Dictionary) -> float:
 	return linear_to_db(linear_gain_from_occlusion(occ))
 
 
-## TODO: Air absorption bands instead of scalar transmission average.
+# TODO: Use per-band transmission instead of the scalar average.
 static func _average_transmission(tx: Variant) -> float:
 	if tx is PackedFloat32Array:
 		var arr: PackedFloat32Array = tx as PackedFloat32Array

@@ -7,7 +7,7 @@ const BakeBackup = preload("res://addons/nexus_resonance/editor/resonance_bake_b
 
 func test_restore_memory_snapshots_rolls_back_mutated_probe_data() -> void:
 	var backup = BakeBackup.new()
-	var vol := ClassDB.instantiate("ResonanceProbeVolume")
+	var vol := ClassDB.instantiate("ResonanceProbeVolume") as Node
 	add_child_autoqfree(vol)
 
 	var pd := ClassDB.instantiate("ResonanceProbeData") as Resource
@@ -51,7 +51,7 @@ func test_restore_memory_snapshots_rolls_back_mutated_probe_data() -> void:
 
 func test_discard_backups_clears_memory_snapshots() -> void:
 	var backup = BakeBackup.new()
-	var vol := ClassDB.instantiate("ResonanceProbeVolume")
+	var vol := ClassDB.instantiate("ResonanceProbeVolume") as Node
 	add_child_autoqfree(vol)
 	var pd := ClassDB.instantiate("ResonanceProbeData") as Resource
 	pd.set_data(PackedByteArray([1]))
@@ -74,7 +74,7 @@ func test_resolve_disk_backup_survives_resource_path_migration() -> void:
 	}
 	var by_path := {original: bak}
 
-	# Simulate _prepare_probe_data_for_bake take_over_path to the new canonical layout.
+	# Preparing a bake moves the resource to a new canonical path.
 	if pd.has_method("take_over_path"):
 		pd.take_over_path(migrated)
 	else:
@@ -89,14 +89,13 @@ func test_resolve_disk_backup_survives_resource_path_migration() -> void:
 		"restore should write into the post-migration canonical path"
 	)
 
-	# Path-only lookup must miss after migration (this was the pre-fix Undo failure).
+	# Without the instance-id map, Undo cannot find a migrated resource.
 	var path_only: Dictionary = BakeBackup.resolve_disk_backup({}, by_path, pd)
 	assert_true(path_only.is_empty(), "path-keyed lookup alone cannot find migrated resources")
 
 
 func test_load_disk_backup_resource_falls_back_to_file_copy_for_binary_bak() -> void:
-	# Binary .res.bak cannot be ResourceLoader.load'd by extension; restore copies onto
-	# the canonical .res path and loads that instead.
+	# No loader takes a binary .res.bak, so restore copies it onto the canonical .res and loads that.
 	var dir := "user://nexus_resonance_bake_backup_test"
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(dir))
 	var save_path := dir + "/probe_batch.res"

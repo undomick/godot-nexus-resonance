@@ -19,13 +19,22 @@ class ResonanceListener : public Node3D {
     ResonanceListener(const ResonanceListener&) = delete;
     ResonanceListener(ResonanceListener&&) = delete;
 
+    enum ReverbType {
+        REVERB_REALTIME = 0,
+        REVERB_BAKED = 1,
+    };
+
     void set_listener_valid(bool valid) { listener_valid = valid; }
     bool is_listener_valid() const { return listener_valid; }
+    void set_apply_reverb(bool enabled) { apply_reverb = enabled; }
+    bool is_apply_reverb() const { return apply_reverb; }
+    void set_reverb_type(ReverbType type) { reverb_type = type; }
+    ReverbType get_reverb_type() const { return reverb_type; }
 
     /// Active listeners under the viewport camera; call before ResonanceServer::tick.
     static void sync_viewport_listeners_to_server(Viewport* vp, const TypedArray<Node>& listener_nodes);
 
-    /// Pose + validity from the viewport camera (Lis-01 / no-driver fallback).
+    /// Fallback when no ResonanceListener drives the camera: pose and validity come from the camera.
     static void push_camera_fallback_listener_to_server(Camera3D* cam, ResonanceServer* server);
 
     void _enter_tree() override;
@@ -37,6 +46,9 @@ class ResonanceListener : public Node3D {
     static void _bind_methods();
 
     bool listener_valid = true;
+    bool apply_reverb = false;
+    ReverbType reverb_type = REVERB_REALTIME;
+    bool reverb_pushed_to_server_ = false;
     bool listener_sync_uses_physics_ = false;
 
     bool _listener_sync_uses_physics() const;
@@ -46,5 +58,7 @@ class ResonanceListener : public Node3D {
 };
 
 } // namespace godot
+
+VARIANT_ENUM_CAST(ResonanceListener::ReverbType);
 
 #endif // RESONANCE_LISTENER_H

@@ -9,9 +9,11 @@
 #include "resonance_polyphonic_voice_policy.h"
 #include "resonance_probe_volume.h"
 #include "resonance_reflection_fetch_policy.h"
+#include "resonance_reverb_send_policy.h"
 #include "resonance_server.h"
 #include "resonance_soft_stop_watchdog_policy.h"
 #include "resonance_source_handle_policy.h"
+#include "resonance_tail_drain_policy.h"
 #include "resonance_utils.h"
 #include <algorithm>
 #include <atomic>
@@ -41,14 +43,13 @@
 #include <limits>
 #include <sstream>
 #include <thread>
+#include <utility>
 
 namespace {
 thread_local int tls_convolution_apply_depth = 0;
 } // namespace
 
 using namespace godot;
-
-// ResonancePlayer + ResonanceStreamPlayback: Godot audio I/O, rings, IPL direct/reflection/path pipeline, tails and instrumentation.
 
 namespace {
 static void collect_collision_object_rids_recursive(Node* node, std::vector<RID>& out) {
@@ -63,27 +64,22 @@ static void collect_collision_object_rids_recursive(Node* node, std::vector<RID>
 }
 } // namespace
 
-// ============================================================================
-// RESONANCE INTERNAL PLAYBACK
-// ============================================================================
-
 ResonanceStreamPlayback::ResonanceStreamPlayback() {
-    params_next.apply_air_absorption = false;
-    params_next.air_absorption[0] = 1.0f;
-    params_next.air_absorption[1] = 1.0f;
-    params_next.air_absorption[2] = 1.0f;
-    params_next.apply_directivity = false;
-    params_next.directivity_value = 1.0f;
-    params_next.occlusion = 0.0f;
-    params_next.transmission[0] = 1.0f;
-    params_next.transmission[1] = 1.0f;
-    params_next.transmission[2] = 1.0f;
-    params_next.attenuation = 1.0f;
-    params_next.listener_orientation.ahead = {0, 0, -1};
-    params_next.listener_orientation.up = {0, 1, 0};
-    params_next.listener_orientation.right = {1, 0, 0};
-    params_next.listener_orientation.origin = {0, 0, 0};
-    params_current = params_next;
+    params_current.apply_air_absorption = false;
+    params_current.air_absorption[0] = 1.0f;
+    params_current.air_absorption[1] = 1.0f;
+    params_current.air_absorption[2] = 1.0f;
+    params_current.apply_directivity = false;
+    params_current.directivity_value = 1.0f;
+    params_current.occlusion = 0.0f;
+    params_current.transmission[0] = 1.0f;
+    params_current.transmission[1] = 1.0f;
+    params_current.transmission[2] = 1.0f;
+    params_current.attenuation = 1.0f;
+    params_current.listener_orientation.ahead = {0, 0, -1};
+    params_current.listener_orientation.up = {0, 1, 0};
+    params_current.listener_orientation.right = {1, 0, 0};
+    params_current.listener_orientation.origin = {0, 0, 0};
 
     input_ring_l.resize(resonance::kRingBufferCapacity);
     input_ring_r.resize(resonance::kRingBufferCapacity);
@@ -92,14 +88,13 @@ ResonanceStreamPlayback::ResonanceStreamPlayback() {
     output_ring_reverb_l.resize(resonance::kRingBufferCapacity);
     output_ring_reverb_r.resize(resonance::kRingBufferCapacity);
 
-    // Temp buffers resized in _lazy_init to match frame_size_ from ResonanceServer
+    // _lazy_init resizes these to the server's frame size.
     temp_process_buffer_l.resize(resonance::kGodotDefaultFrameSize);
     temp_process_buffer_r.resize(resonance::kGodotDefaultFrameSize);
 
     temp_reverb_buffer_l.resize(resonance::kMaxAudioFrameSize);
     temp_reverb_buffer_r.resize(resonance::kMaxAudioFrameSize);
 
-    // Clean struct init
     memset(&sa_in_buffer, 0, sizeof(IPLAudioBuffer));
     memset(&sa_direct_out_buffer, 0, sizeof(IPLAudioBuffer));
     memset(&sa_final_mix_buffer, 0, sizeof(IPLAudioBuffer));
@@ -112,7 +107,8 @@ ResonanceStreamPlayback::~ResonanceStreamPlayback() {
     convolution_blocked_.store(true, std::memory_order_release);
     const int32_t handle = voice_source_handle_.exchange(-1, std::memory_order_acq_rel);
     const uint32_t epoch = voice_source_epoch_.exchange(0, std::memory_order_acq_rel);
-    ResonancePlayer* owner = owner_player_;
+    const auto owner_lease = owner_link_.lease();
+    ResonancePlayer* owner = owner_lease.get();
     if (owner)
         owner->internal_unregister_playback(this);
     // The applying thread must not wait on itself. Main waits until that Apply returns.
@@ -182,32 +178,45 @@ void ResonanceStreamPlayback::_retain_source_for_main(int32_t handle) {
 
 void ResonanceStreamPlayback::update_parameters(const PlaybackParameters& p_params) {
     _retain_source_for_main(p_params.source_handle);
-    params_next = p_params;
-    params_dirty.store(true, std::memory_order_release);
-    // Opens the _mix gate. Before this point the audio thread must not emit samples because
-    // params_current still holds defaults (no 3D position, no attenuation, no occlusion).
+    params_slot_.publish(p_params);
+    // Opens the _mix gate. Before this, params_current holds defaults with no position or attenuation.
     params_ever_synced_.store(true, std::memory_order_release);
 }
 
 void ResonanceStreamPlayback::_start(double from_pos) {
+    const auto owner_lease = owner_link_.lease();
+    ResonancePlayer* owner = owner_lease.get();
     input_started = false;
-    // Re-arm the first-params gate for the new playback run so restarted players do not leak
-    // a full-volume burst with stale or default parameters before the main thread pushes fresh ones.
+    // Closes the params gate again so a restart cannot burst at full volume with stale parameters.
     params_ever_synced_.store(false, std::memory_order_release);
-    // Cancel any in-flight tail-drain from a previous run so the fresh playback starts cleanly.
     stop_requested_.store(false, std::memory_order_release);
     tail_grace_blocks_remaining_.store(-1, std::memory_order_release);
     tail_drain_complete_.store(false, std::memory_order_release);
-    // Zero prev mix weights so ramps rebuild from silence on the next blocks.
+    base_short_read_.store(false, std::memory_order_release);
+    voice_was_virtual_ = false;
+    mix_timing_started_ = false;
+    mix_lateness_.reset();
+    _reset_voice_dsp_state();
+    if (base_playback.is_valid()) {
+        base_playback->start(from_pos);
+    }
+    started_.store(true, std::memory_order_release);
+    if (owner)
+        owner->internal_register_playback(this);
+    playback_host_fade_out_remaining_ = 0;
+    // play() often pushed parameters before this _start, and _start just closed the gate again.
+    // Push once more so the gate opens on the next main-thread flush, not on the next _process.
+    if (owner)
+        owner->call_deferred("_deferred_push_playback_parameters");
+}
+
+void ResonanceStreamPlayback::_reset_voice_dsp_state() {
     prev_direct_weight = 0.0f;
     prev_conv_reflections_mix_level_ = 0.0f;
     prev_parametric_reflections_mix_level_ = 0.0f;
     prev_pathing_mix_level_ = 0.0f;
     // Shared reflection stays armed. Resetting it would cut the previous voice's tail.
     path_processor.reset_effect();
-    reflection_tail_have_params_ = false;
-    reflection_tail_param_epoch_ = 0;
-    memset(&reflection_tail_params_, 0, sizeof(reflection_tail_params_));
     pathing_tail_have_params_ = false;
     pathing_tail_param_epoch_ = 0;
     memset(&pathing_tail_params_, 0, sizeof(pathing_tail_params_));
@@ -238,29 +247,11 @@ void ResonanceStreamPlayback::_start(double from_pos) {
     output_ring_r.clear();
     output_ring_reverb_l.clear();
     output_ring_reverb_r.clear();
-    if (base_playback.is_valid()) {
-        base_playback->start(from_pos);
-    }
-    if (owner_player_)
-        owner_player_->internal_register_playback(this);
-    // Belt-and-suspenders: base `start` must not leave a prior host fade-out countdown for the first `_mix`.
-    playback_host_fade_out_remaining_ = 0;
-    // Ordering: `ResonancePlayer::play()` often runs `_push_playback_parameters_from_simulation` on the main
-    // thread before this audio-thread `_start` runs. `_start` clears `params_ever_synced_` (burst guard),
-    // which would otherwise leave the first-params gate closed until the next `_process` - extra silence
-    // vs native `AudioStreamPlayer3D`, worse when `_mix` does not call `mix_audio` while gated. Reschedule
-    // the same deferred push used in `play()` so the gate opens on the next main-thread flush without
-    // discarding decoder samples at the gate.
-    if (owner_player_)
-        owner_player_->call_deferred("_deferred_push_playback_parameters");
 }
+
 void ResonanceStreamPlayback::_stop() {
-    // Soft stop: halt the dry input so mix_audio() returns 0 from now on, but keep the
-    // playback alive while the reverb / pathing tail decays. _is_playing() stays true via
-    // has_active_tail_residue() until the effect tails are exhausted or the grace block
-    // budget runs out. The destructor performs the final unregister + IPL cleanup once Godot
-    // detaches the playback (after _is_playing returns false). We intentionally do NOT call
-    // direct_processor.reset_for_new_playback() here - that would clear the in-flight tail.
+    // Halts only the dry input; the reverb and path tails keep decaying. Resetting the processors
+    // here would cut the tail.
     if (base_playback.is_valid())
         base_playback->stop();
     stop_requested_.store(true, std::memory_order_release);
@@ -289,22 +280,17 @@ bool ResonanceStreamPlayback::has_active_tail_residue() const {
         return true;
     if (direct_processor.get_tail_size_samples() > 0)
         return true;
-    if (reflection_processor.get_tail_size_samples() > 0)
-        return true;
     if (path_processor.get_tail_size_samples() > 0)
         return true;
     return false;
 }
 
 bool ResonanceStreamPlayback::_is_playing() const {
-    // Never report "naturally finished" after tail drain; the parent node stops explicitly.
+    // Never finish on our own after the tail drain; the player stops the node.
     if (tail_drain_complete_.load(std::memory_order_acquire))
         return true;
-    if (base_playback.is_valid() && base_playback->is_playing())
+    if (is_base_playing())
         return true;
-    // Dry signal ended (natural completion or explicit stop). Stay alive while output rings
-    // or IPL tails hold residue, or while tail_grace_blocks_remaining_ still budgets tail
-    // generation in the samples_read==0 path (grace counts production iterations, not ring depth).
     if (!is_initialized)
         return false;
     if (has_active_tail_residue())
@@ -312,16 +298,19 @@ bool ResonanceStreamPlayback::_is_playing() const {
     const int64_t grace = tail_grace_blocks_remaining_.load(std::memory_order_acquire);
     if (grace == 0)
         return true;
-    // Grace is armed (>= 0) on the first samples_read==0 mix. Until then it stays -1; Godot can
-    // query _is_playing() after base EOS but before that callback runs - keep the playback alive
-    // so the tail branch executes once.
+    // Grace is armed only by the first mix without input, which Godot may not have run yet.
     if (grace < 0)
         return true;
-    // grace > 0: tail-grace budget from the first `samples_read==0` mix (EOS/stop tail). We must keep
-    // reporting playing until grace reaches 0 inside `_mix`; otherwise Godot omits further mix callbacks,
-    // grace never decrements, and synthetic EOS fades / final ring drains never run - audible hard cut.
+    // Only _mix counts grace down; reporting false here would stop the mix calls and cut the tail hard.
     return true;
 }
+
+bool ResonanceStreamPlayback::is_base_playing() const {
+    if (base_short_read_.load(std::memory_order_acquire))
+        return false;
+    return base_playback.is_valid() && base_playback->is_playing();
+}
+
 int ResonanceStreamPlayback::_get_loop_count() const {
     return base_playback.is_valid() ? base_playback->get_loop_count() : 0;
 }
@@ -332,9 +321,8 @@ void ResonanceStreamPlayback::_seek(double position) {
 
 void ResonanceStream::set_base_stream(const Ref<AudioStream>& p_stream) { base_stream = p_stream; }
 Ref<AudioStreamPlayback> ResonanceStream::_instantiate_playback() const {
-    // Animation TYPE_AUDIO uses AudioStreamPolyphonic. Returning ResonanceStreamPlayback here crashes on Windows
-    // before playback starts. Native playback is stable.
-    // Steam for TYPE_AUDIO: enable [member ResonancePlayer.convert_anim_audio_runtime] or convert in editor.
+    // Animation audio tracks use AudioStreamPolyphonic. Wrapping it in ResonanceStreamPlayback crashes on
+    // Windows before playback starts, so it plays natively without Steam Audio.
     if (base_stream.is_valid() && base_stream->is_class("AudioStreamPolyphonic")) {
         return base_stream->instantiate_playback();
     }
@@ -344,37 +332,33 @@ Ref<AudioStreamPlayback> ResonanceStream::_instantiate_playback() const {
     if (base_stream.is_valid()) {
         playback->set_base_playback(base_stream->instantiate_playback());
     }
-    // Prewarm each voice on instantiate so polyphony does not hit lazy IPL alloc on the audio thread.
+    // Prewarm here so a new polyphonic voice does not allocate IPL effects on the audio thread.
     playback->prewarm_steam_audio();
     return playback;
 }
 
-void ResonanceReverbPlayback::set_parent_player(ResonancePlayer* p_player) {
-    parent_player = p_player;
+void ResonanceReverbPlayback::set_parent_link(std::shared_ptr<ReverbParentLink> p_link) {
+    parent_link_ = std::move(p_link);
 }
 
 int32_t ResonanceReverbPlayback::_mix(AudioFrame* buffer, float _rate_scale, int32_t frames) {
-    if (!parent_player || frames <= 0 || !buffer)
+    if (!parent_link_ || frames <= 0 || !buffer)
+        return 0;
+    const auto lease = parent_link_->lease();
+    const ResonancePlayer* parent = lease.get();
+    if (!parent)
         return 0;
     ResonancePlayer::PlaybackVoiceSnapshot snap;
-    parent_player->internal_get_playback_snapshot_for_audio(snap);
+    parent->internal_get_playback_snapshot_for_audio(snap);
+    // The parent's voices register on its next physics tick, after this child has started. Mixing
+    // fewer frames than asked makes the AudioServer delete this playback, so play silence until then.
     size_t total_reverb_samples = 0;
     for (int vi = 0; vi < snap.count; vi++) {
         ResonanceStreamPlayback* pb = snap.voices[static_cast<size_t>(vi)];
         if (pb)
             total_reverb_samples += pb->get_reverb_ring_available_read();
     }
-    ResonanceStreamPlayback* fallback_pb = nullptr;
-    if (snap.count == 0)
-        fallback_pb = Object::cast_to<ResonanceStreamPlayback>(parent_player->get_stream_playback().ptr());
-    if (snap.count == 0 && !fallback_pb)
-        return 0;
-    if (snap.count == 0) {
-        if (!parent_player->is_playing() && fallback_pb->get_reverb_ring_available_read() == 0)
-            return 0;
-        return fallback_pb->read_reverb_frames(buffer, frames);
-    }
-    if (!parent_player->is_playing() && total_reverb_samples == 0)
+    if (!resonance::reverb_send_child_should_play(parent->internal_is_playing_for_audio(), total_reverb_samples > 0))
         return 0;
     for (int32_t i = 0; i < frames; i++) {
         buffer[i].left = 0.0f;
@@ -402,30 +386,31 @@ int32_t ResonanceReverbPlayback::_mix(AudioFrame* buffer, float _rate_scale, int
 void ResonanceReverbPlayback::_start(double _from_pos) {}
 void ResonanceReverbPlayback::_stop() {}
 bool ResonanceReverbPlayback::_is_playing() const {
-    if (!parent_player)
+    if (!parent_link_)
         return false;
-    if (parent_player->is_playing())
-        return true;
-    // Parent stopped, but the split-reverb ring may still hold tail samples that have not
-    // been drained yet; keep this child alive until the rings are empty so the wet tail
-    // reaches the reverb bus instead of being cut off.
-    return parent_player->any_internal_playback_has_reverb_ring_data();
+    const auto lease = parent_link_->lease();
+    const ResonancePlayer* parent = lease.get();
+    if (!parent)
+        return false;
+    return resonance::reverb_send_child_should_play(parent->internal_is_playing_for_audio(),
+                                                    parent->any_internal_playback_has_reverb_ring_data());
 }
 int ResonanceReverbPlayback::_get_loop_count() const { return 0; }
 void ResonanceReverbPlayback::_seek(double _position) {}
 
-void ResonanceReverbStream::set_parent_player(ResonancePlayer* p_player) {
-    parent_player = p_player;
+void ResonanceReverbStream::set_parent_link(std::shared_ptr<ReverbParentLink> p_link) {
+    parent_link_ = std::move(p_link);
 }
 
 Ref<AudioStreamPlayback> ResonanceReverbStream::_instantiate_playback() const {
     Ref<ResonanceReverbPlayback> pb;
     pb.instantiate();
-    pb->set_parent_player(parent_player);
+    pb->set_parent_link(parent_link_);
     return pb;
 }
 
 void ResonancePlayer::_enter_tree() {
+    reverb_parent_link_->set(this);
     set_process_priority(resonance::kResonancePlayerProcessPriority);
     set_physics_process_priority(resonance::kResonancePlayerProcessPriority);
     call_deferred("_apply_process_mode_for_tracer");
@@ -469,10 +454,14 @@ void ResonancePlayer::_ready() {
 }
 
 void ResonancePlayer::_apply_steam_mode_asp3d_guards() {
-    // Godot can still apply a linear sphere cutoff when max_distance > 0 even with ATTENUATION_DISABLED.
-    // Steam distance lives on ResonancePlayerConfig; clear both so saved ASP3D knobs cannot double-shape the mix.
+    // Godot still cuts off at max_distance > 0 even with ATTENUATION_DISABLED. Clear both so the node's own
+    // distance settings cannot shape the mix a second time.
     set_attenuation_model(AttenuationModel::ATTENUATION_DISABLED);
     set_max_distance(0.0f);
+}
+
+void ResonancePlayer::_publish_playing_for_audio() {
+    playing_for_audio_.store(is_playing(), std::memory_order_release);
 }
 
 void ResonancePlayer::_refresh_effective_volume_cache() {
@@ -482,9 +471,7 @@ void ResonancePlayer::_refresh_effective_volume_cache() {
 
 void ResonancePlayer::_exit_tree() {
     _clear_physics_ray_auto_exclude_rids();
-    // T-10 (accepted hard cut): soft-stop would race node destruction. Base stop only marks
-    // FADE_OUT_TO_DELETION; the unref is deferred - use ResonanceRuntime.prepare_for_shutdown()
-    // before quitting if you need an ordered bus teardown (still no guaranteed wet tail drain).
+    // Hard stop on purpose: a soft stop would race node destruction, so the wet tail is cut here.
     warned_source_handle_create_failed_ = false;
     playback_lod_have_anchor_ = false;
     playback_lod_time_since_full_ = 0.0;
@@ -497,12 +484,15 @@ void ResonancePlayer::_exit_tree() {
             rp->stop();
     }
     AudioStreamPlayer3D::stop();
+    _publish_playing_for_audio();
+    reverb_parent_link_->orphan();
     debug_drawer.cleanup();
     directivity_drawer_.cleanup();
     _destroy_owned_sources_for_shutdown();
 }
 
 ResonancePlayer::~ResonancePlayer() {
+    reverb_parent_link_->orphan();
     std::vector<ResonanceStreamPlayback*> copy;
     {
         std::lock_guard<std::mutex> lock(internal_playbacks_mutex_);
@@ -512,6 +502,7 @@ ResonancePlayer::~ResonancePlayer() {
         if (p)
             p->internal_orphan_owner_player();
     }
+    cleanup_shared_reflection();
 }
 
 void ResonancePlayer::internal_publish_playback_snapshot() {
@@ -725,6 +716,8 @@ void ResonancePlayer::_notification(int p_what) {
             _sync_physics_ray_auto_exclude_rids();
     }
     if (p_what == NOTIFICATION_ENTER_TREE) {
+        if (player_config.is_valid())
+            _apply_player_config_bus_routing();
         Engine* eng = Engine::get_singleton();
         if (eng && !eng->is_editor_hint() && convert_anim_audio_runtime_ && player_config.is_valid())
             call_deferred("_nexus_deferred_spawn_anim_audio_helper");
@@ -774,9 +767,14 @@ void ResonancePlayer::_sync_playback_simulation_frame(double delta, ResonanceSer
 
     _ensure_listener_pose_synced_for_playback(srv);
     _ensure_config_valid();
+    if (_reverb_send_wanted(srv) != reverb_send_active_)
+        _sync_reverb_send_child(srv);
     const bool coeff_smooth_active = (config_cache_.playback_coeff_smoothing_time > 0.0f) &&
                                      ((config_cache_.occlusion_input == 0) || (config_cache_.transmission_input == 0));
-    const bool apply_playback = _playback_lod_should_apply_playback_params(delta, show_debug_hud, get_global_position()) || coeff_smooth_active;
+    const bool lod_gate_open = _playback_lod_should_apply_playback_params(delta, show_debug_hud, get_global_position());
+    const bool virtual_state_changed = _update_voice_virtual_state(srv, delta);
+    const bool apply_playback =
+        resonance::playback_should_apply_full_params(lod_gate_open, coeff_smooth_active, virtual_state_changed);
 
     ResonanceDebugData dbg_data;
     if (apply_playback)
@@ -816,6 +814,7 @@ void ResonancePlayer::_physics_process(double delta) {
 }
 
 void ResonancePlayer::_process(double delta) {
+    _publish_playing_for_audio();
     Engine* eng = Engine::get_singleton();
     if (eng && eng->is_editor_hint())
         return;
@@ -847,20 +846,19 @@ void ResonancePlayer::_process(double delta) {
         directivity_drawer_.process(dp, show_directivity_gizmo_);
     }
 
-    // Update audio-thread readable snapshot values.
-    // Volume is source loudness before Steam DSP (see owner_effective_volume_linear / effective_asp3d_volume_linear).
     _refresh_effective_volume_cache();
 
     ResonanceServer* srv = ResonanceServer::get_singleton();
-    // `finished` should fire exactly once when the dry/base playback ends.
-    // Wet/pathing tails may keep running; we stop the node explicitly once tail drain completes
-    // so Godot does not emit `finished` again at the wet/tail end.
+    // `finished` fires once at dry EOS. The node is stopped explicitly after the tail drain so Godot
+    // does not emit `finished` a second time.
     if (is_playing()) {
         std::vector<ResonanceStreamPlayback*> voices;
         internal_copy_internal_playbacks(voices);
-        if (voices.empty()) {
-            if (ResonanceStreamPlayback* res_pb = _get_resonance_playback())
-                voices.push_back(res_pb);
+        // A replay's playback starts and registers only on the next physics tick; until then it is the
+        // newest stream playback and must count as a run that has not started yet.
+        if (ResonanceStreamPlayback* newest = _get_resonance_playback()) {
+            if (std::find(voices.begin(), voices.end(), newest) == voices.end())
+                voices.push_back(newest);
         }
 
         bool any_dry_playing = false;
@@ -871,7 +869,7 @@ void ResonancePlayer::_process(double delta) {
                 all_tail_drained = false;
                 continue;
             }
-            if (pb->base_playback.is_valid() && pb->base_playback->is_playing())
+            if (!pb->has_started() || pb->is_base_playing())
                 any_dry_playing = true;
             if (pb->stop_requested_.load(std::memory_order_acquire))
                 any_soft_stopped = true;
@@ -882,8 +880,7 @@ void ResonancePlayer::_process(double delta) {
         const bool dry_done_natural = !voices.empty() && !any_dry_playing && !any_soft_stopped;
         if (dry_done_natural && !dry_finished_emitted_) {
             dry_finished_emitted_ = true;
-            // Defer to avoid re-entrancy: user code may call play() inside `finished`,
-            // while the engine is still mid-frame / mid-audio bookkeeping.
+            // Deferred because a `finished` handler may call play() while this tick is still running.
             if (!dry_finished_deferred_queued_) {
                 dry_finished_deferred_queued_ = true;
                 dry_finished_deferred_serial_ = play_serial_;
@@ -891,8 +888,7 @@ void ResonancePlayer::_process(double delta) {
             }
         }
 
-        // Natural EOS: stop after finished was emitted and wet/path tails drained.
-        // Soft-stop: stop as soon as every voice reports tail_drain_complete (no finished emit).
+        // After a soft stop no `finished` is emitted; stop once every voice has drained its tail.
         if (all_tail_drained && (dry_finished_emitted_ || any_soft_stopped)) {
             soft_stop_elapsed_sec_ = -1.0;
             soft_stop_mix_stall_sec_ = 0.0;
@@ -900,8 +896,8 @@ void ResonancePlayer::_process(double delta) {
             AudioStreamPlayer3D::stop();
             return;
         }
-        // Watchdog: only force-stop when _mix stalls (Dummy driver) or an absolute cap is reached.
-        // Active tail drain may exceed max_reverb + margin; do not cut it at the legacy wall clock.
+        // Force-stop only when _mix stalls (Dummy driver) or the absolute cap is hit; an active tail drain
+        // may run longer than the reverb duration.
         if (any_soft_stopped && soft_stop_elapsed_sec_ >= 0.0) {
             soft_stop_elapsed_sec_ += delta;
             uint64_t total_mix_calls = 0;
@@ -939,6 +935,7 @@ void ResonancePlayer::_process(double delta) {
     const bool show_debug_hud = _compute_show_debug_hud(srv);
 
     if (!is_playing()) {
+        _sync_source_simulation_activity(srv);
         _present_player_debug_overlay_from_cache(delta, srv, show_debug_hud);
         return;
     }
@@ -973,12 +970,32 @@ int32_t ResonancePlayer::_create_simulation_source(ResonanceServer* srv) {
     return srv->create_source_handle(get_global_position(), eff_radius, get_path(), pathing_override);
 }
 
+bool ResonancePlayer::_source_simulation_wanted() const {
+    return is_playing() && !voice_virtual_state_.virtualized;
+}
+
+void ResonancePlayer::_sync_source_simulation_activity(ResonanceServer* srv) {
+    if (source_simulation_active_pushed_ == _source_simulation_wanted())
+        return;
+    if (!srv || !srv->is_initialized() || source_handle < 0)
+        return;
+    if (_source_simulation_wanted()) {
+        // Inline when the simulation mutex is free so direct runs before the first mix; a dropped
+        // update is resent by the per-frame sync while playing.
+        _prepare_source_for_simulation(srv);
+        return;
+    }
+    // Queued, not try_update_source: the stop transition is sent once and must not be dropped.
+    _ensure_config_and_apply_source(_resolve_pathing_probe_batch());
+}
+
 bool ResonancePlayer::_try_ensure_source_and_sync(ResonanceServer* srv, bool deferred_playback_push_if_playing) {
     _invalidate_source_handle_if_stale(srv);
     if (!player_config.is_valid() || source_handle >= 0)
         return false;
-    if (!srv || !srv->is_initialized())
+    if (!srv || !srv->is_initialized() || srv->simulation_source_cap_blocks_create())
         return false;
+    resonance::ScopedSpawnPhase phase(&spawn_timing_, resonance::SpawnPhase::Source);
 
     const int32_t h = _create_simulation_source(srv);
     if (h < 0) {
@@ -1167,7 +1184,20 @@ void ResonancePlayer::_zero_shared_reflection_accum() {
     }
 }
 
+void ResonancePlayer::shared_reflection_context_cleanup(void* userdata) {
+    if (userdata)
+        static_cast<ResonancePlayer*>(userdata)->cleanup_shared_reflection();
+}
+
 void ResonancePlayer::cleanup_shared_reflection() {
+    ResonanceServer* srv = ResonanceServer::get_singleton();
+    if (srv)
+        srv->unregister_ipl_context_client(this);
+    DetachedReflectionEffect detached = shared_reflection_.detach_effect();
+    if (srv)
+        srv->give_back_reflection_effect(shared_refl_context_, detached.recipe, detached.effect);
+    else if (detached.effect)
+        iplReflectionEffectRelease(&detached.effect);
     shared_reflection_.cleanup();
     if (shared_refl_context_ && shared_refl_accum_.data)
         iplAudioBufferFree(shared_refl_context_, &shared_refl_accum_);
@@ -1192,11 +1222,13 @@ void ResonancePlayer::ensure_shared_reflection_on_main(ResonanceServer* srv) {
     const int frame = srv->get_audio_frame_size();
     if (shared_reflection_inited_ && shared_refl_context_ == ctx && shared_refl_frame_size_ == frame)
         return;
+    resonance::ScopedSpawnPhase phase(&spawn_timing_, resonance::SpawnPhase::ReflectionEffect);
     cleanup_shared_reflection();
     if (!ctx || frame <= 0)
         return;
     shared_reflection_.initialize(ctx, srv->get_sample_rate(), frame, srv->get_ambisonic_order(), srv->get_reflection_type(),
-                                  srv->get_realtime_simulation_duration(), srv->get_convolution_ir_max_samples());
+                                  srv->get_realtime_simulation_duration(), srv->get_convolution_ir_max_samples(),
+                                  srv->take_pooled_reflection_effect());
     if (iplAudioBufferAllocate(ctx, 2, frame, &shared_refl_accum_) != IPL_STATUS_SUCCESS) {
         shared_reflection_.cleanup();
         return;
@@ -1204,10 +1236,23 @@ void ResonancePlayer::ensure_shared_reflection_on_main(ResonanceServer* srv) {
     shared_refl_context_ = ctx;
     shared_refl_frame_size_ = frame;
     shared_reflection_inited_ = true;
+    // The server destroys the context on shutdown and reinit; the effect must be released before that.
+    srv->register_ipl_context_client(this, &ResonancePlayer::shared_reflection_context_cleanup);
 }
 
 bool ResonancePlayer::shared_reflection_is_parametric() const {
     return shared_reflection_inited_ && shared_reflection_.is_parametric();
+}
+
+bool ResonancePlayer::shared_reflection_tail_applyable(const ResonanceServer* srv) const {
+    if (!srv)
+        return false;
+    return resonance::emitter_tail_applyable(shared_tail_have_, shared_tail_source_, source_handle, shared_tail_ir_gen_,
+                                             srv->get_source_ir_generation(source_handle));
+}
+
+int ResonancePlayer::shared_reflection_tail_samples() const {
+    return shared_reflection_inited_ ? shared_reflection_.get_tail_size_samples() : 0;
 }
 
 IPLAudioBuffer* ResonancePlayer::shared_reflection_direct_output() {
@@ -1226,11 +1271,9 @@ void ResonancePlayer::reflection_round_enter(ResonanceStreamPlayback* voice) {
         if (refl_round_voices_[i] != voice)
             continue;
         if (!refl_round_applied_) {
-            bool to_player = false;
-            float dbg = 0.0f;
             if (!refl_round_closer_)
                 refl_round_closer_ = voice;
-            reflection_try_apply(refl_round_closer_, to_player, dbg);
+            reflection_apply_outside_block(refl_round_closer_);
         }
         refl_round_seen_ = 0;
         refl_round_closer_ = nullptr;
@@ -1245,7 +1288,6 @@ void ResonancePlayer::reflection_round_enter(ResonanceStreamPlayback* voice) {
         refl_apply_reader_ = -1;
         refl_round_mix_ = 1.0f;
         refl_round_wet_occ_ = 1.0f;
-        refl_round_air_ = false;
         refl_round_eq_[0] = 1.0f;
         refl_round_eq_[1] = 1.0f;
         refl_round_eq_[2] = 1.0f;
@@ -1281,8 +1323,6 @@ void ResonancePlayer::reflection_round_add(ResonanceStreamPlayback* voice) {
     refl_round_have_dry_ = true;
     refl_round_wet_occ_ = voice->params_current.wet_occlusion_factor;
     refl_round_mix_ = voice->params_current.reflections_mix_level;
-    refl_round_air_ = voice->params_current.apply_air_absorption_to_wet;
-    refl_round_air_bands_ = voice->params_current.air_absorption;
     refl_round_eq_[0] = voice->params_current.reflections_eq[0];
     refl_round_eq_[1] = voice->params_current.reflections_eq[1];
     refl_round_eq_[2] = voice->params_current.reflections_eq[2];
@@ -1295,6 +1335,8 @@ bool ResonancePlayer::reflection_try_apply(ResonanceStreamPlayback* voice, bool&
     refl_round_applied_ = true;
     out_reverb_to_player = false;
     out_dbg_reverb = 0.0f;
+    if (voice->params_current.virtualized)
+        return false;
     if (!shared_reflection_inited_ || source_handle < 0)
         return false;
     if (!voice->params_current.enable_reverb && !refl_round_have_dry_)
@@ -1310,9 +1352,7 @@ bool ResonancePlayer::reflection_try_apply(ResonanceStreamPlayback* voice, bool&
     IPLReflectionEffectParams params{};
     const bool fetched = srv->fetch_reverb_params(source_handle, params, nullptr);
     if (!fetched) {
-        const uint32_t live_gen = srv->get_source_ir_generation(source_handle);
-        if (!shared_tail_have_ || !resonance::voice_tail_ir_matches_source(shared_tail_source_, source_handle) ||
-            !resonance::voice_reflection_ir_generation_live(shared_tail_ir_gen_, live_gen)) {
+        if (!shared_reflection_tail_applyable(srv)) {
             refl_apply_reader_ = -1;
             return false;
         }
@@ -1330,8 +1370,7 @@ bool ResonancePlayer::reflection_try_apply(ResonanceStreamPlayback* voice, bool&
         auto mixer_guard = srv->scoped_mixer_read();
         IPLReflectionMixer mixer = mixer_guard.get();
         if (mixer && shared_refl_accum_.data) {
-            fed = shared_reflection_.process_mix(shared_refl_accum_, params, mixer, shared_prev_conv_mix_, curr_mix, 1.0f, refl_round_air_,
-                                                 refl_round_air_bands_);
+            fed = shared_reflection_.process_mix(shared_refl_accum_, params, mixer, shared_prev_conv_mix_, curr_mix, 1.0f);
             if (fed) {
                 shared_prev_conv_mix_ = curr_mix;
                 srv->record_mixer_feed();
@@ -1349,8 +1388,7 @@ bool ResonancePlayer::reflection_try_apply(ResonanceStreamPlayback* voice, bool&
                 params.delay = refl_round_delay_;
         }
         const float parametric_mix = resonance::sanitize_audio_float(refl_round_mix_ * wet_occ);
-        fed = shared_reflection_.process_mix_direct(shared_refl_accum_, params, shared_prev_param_mix_, parametric_mix, refl_round_air_,
-                                                    refl_round_air_bands_);
+        fed = shared_reflection_.process_mix_direct(shared_refl_accum_, params, shared_prev_param_mix_, parametric_mix);
         if (fed) {
             shared_prev_param_mix_ = parametric_mix;
             out_reverb_to_player = true;
@@ -1368,16 +1406,67 @@ bool ResonancePlayer::reflection_try_apply(ResonanceStreamPlayback* voice, bool&
     return fed;
 }
 
+bool ResonancePlayer::reflection_try_drain_tail(ResonanceStreamPlayback* voice, bool& out_reverb_to_player) {
+    out_reverb_to_player = false;
+    if (!voice || !shared_reflection_inited_ || source_handle < 0)
+        return false;
+    ResonanceServer* srv = ResonanceServer::get_singleton();
+    if (!srv || !srv->is_initialized())
+        return false;
+    if (!resonance::reflection_round_should_drain_tail(voice == refl_round_closer_, refl_round_applied_, refl_round_have_dry_,
+                                                       shared_reflection_tail_applyable(srv), shared_reflection_tail_samples()))
+        return false;
+    if (!resonance::claim_reflection_apply(&refl_apply_reader_, resonance::kEmitterReflectionReader))
+        return false;
+    refl_round_applied_ = true;
+
+    IPLReflectionEffectParams params{};
+    if (!srv->fetch_reverb_params(source_handle, params, nullptr))
+        params = shared_tail_params_;
+    const int refl_type = srv->get_reflection_type();
+    resonance::reflection_eos_tail_refresh_tan_device(refl_type, params, srv->get_tan_device_for_reflection());
+    if (!voice->convolution_try_enter()) {
+        refl_apply_reader_ = -1;
+        return false;
+    }
+    bool produced = false;
+    if (refl_type == resonance::kReflectionConvolution || refl_type == resonance::kReflectionTan) {
+        auto mixer_guard = srv->scoped_mixer_read();
+        IPLReflectionMixer mixer = mixer_guard.get();
+        if (mixer) {
+            const IPLAudioEffectState state = shared_reflection_.tail_apply_to_mixer(&params, mixer);
+            produced = resonance::reflection_eos_tail_produced(state == IPL_AUDIOEFFECTSTATE_TAILCOMPLETE);
+            if (produced)
+                srv->record_mixer_feed();
+        } else {
+            voice->instrumentation_conv_mixer_null_blocks.fetch_add(1, std::memory_order_relaxed);
+        }
+    } else {
+        const IPLAudioEffectState state = shared_reflection_.tail_apply_direct(&params);
+        produced = resonance::reflection_eos_tail_produced(state == IPL_AUDIOEFFECTSTATE_TAILCOMPLETE);
+        out_reverb_to_player = produced;
+    }
+    voice->convolution_leave();
+    refl_apply_reader_ = -1;
+    return produced;
+}
+
 void ResonancePlayer::reflection_round_leave(ResonanceStreamPlayback* voice) {
     if (refl_round_seen_ <= 0)
         return;
     if (refl_round_seen_ >= refl_round_expected_) {
-        bool to_player = false;
-        float dbg = 0.0f;
-        reflection_try_apply(voice, to_player, dbg);
+        reflection_apply_outside_block(voice);
         refl_round_seen_ = 0;
         refl_round_closer_ = nullptr;
     }
+}
+
+void ResonancePlayer::reflection_apply_outside_block(ResonanceStreamPlayback* voice) {
+    const auto start = std::chrono::steady_clock::now();
+    bool to_player = false;
+    float dbg = 0.0f;
+    reflection_try_apply(voice, to_player, dbg);
+    instrumentation_reflection_outside_block_ns_.fetch_add(resonance::elapsed_ns(start), std::memory_order_relaxed);
 }
 
 void ResonancePlayer::_ensure_voice_sources(ResonanceServer* srv) {
@@ -1486,7 +1575,7 @@ void ResonancePlayer::_ensure_source_exists() {
     (void)_try_ensure_source_and_sync(srv, false);
 }
 
-void ResonancePlayer::_start_reverb_split_child_if_needed() {
+void ResonancePlayer::_start_reverb_send_child_if_needed() {
     Node* reverb_child = get_node_or_null(NodePath("ResonanceReverbOutput"));
     if (reverb_child && reverb_child->is_class("AudioStreamPlayer")) {
         if (AudioStreamPlayer* rp = Object::cast_to<AudioStreamPlayer>(reverb_child)) {
@@ -1572,9 +1661,11 @@ void ResonancePlayer::play(float from_position) {
     Engine* eng = Engine::get_singleton();
     if (eng && eng->is_editor_hint()) {
         AudioStreamPlayer3D::play(from_position);
+        _publish_playing_for_audio();
         return;
     }
     play_serial_++;
+    voice_virtual_state_ = {};
     dry_finished_emitted_ = false;
     dry_finished_deferred_queued_ = false;
     dry_finished_deferred_serial_ = 0;
@@ -1584,26 +1675,25 @@ void ResonancePlayer::play(float from_position) {
     if (player_config.is_valid()) {
         playback_lod_have_anchor_ = false;
         playback_lod_time_since_full_ = 0.0;
+        _sync_bus_routing_with_config();
         _update_stream_setup();
         ResonanceServer* srv = ResonanceServer::get_singleton();
         _try_ensure_source_and_sync(srv, false);
     }
     AudioStreamPlayer3D::play(from_position);
+    _publish_playing_for_audio();
     if (player_config.is_valid()) {
+        _sync_source_simulation_activity(ResonanceServer::get_singleton());
         _refresh_effective_volume_cache();
-        _start_reverb_split_child_if_needed();
-        // Synchronously seed the freshly instantiated ResonanceStreamPlayback(s) with valid
-        // spatial parameters so the audio thread's first _mix block opens the params gate
-        // immediately and mixes from the source's real world position / attenuation instead
-        // of waiting a frame for the deferred broadcast. _try_ensure_source_and_sync above
-        // has already ensured source_handle >= 0 when possible; _push_playback_parameters_
-        // _from_simulation tolerates empty simulation caches (defaults to occlusion=1 / no
-        // reverb) which still produces correct 3D positioning.
+        _start_reverb_send_child_if_needed();
+        // Push now so the first _mix opens the params gate at the real position instead of waiting a frame.
+        // Empty simulation caches still give correct positioning.
         ResonanceServer* srv = ResonanceServer::get_singleton();
-        if (srv && srv->is_simulating() && source_handle >= 0)
+        if (srv && srv->is_simulating() && source_handle >= 0) {
+            resonance::ScopedSpawnPhase phase(&spawn_timing_, resonance::SpawnPhase::ParamsPush);
             _push_playback_parameters_from_simulation(srv, nullptr, 0.0, false);
-        // Keep the deferred push as safety net in case source_handle was not yet available
-        // this tick (worker still spinning up, late attach, etc.).
+        }
+        // The source handle may not exist yet this tick.
         call_deferred("_deferred_push_playback_parameters");
     }
 }
@@ -1628,7 +1718,6 @@ void ResonancePlayer::_update_stream_setup() {
 }
 
 void ResonancePlayer::play_stream(double from_pos) {
-    // GDExtension may narrow to float internally; keep double at call site.
     // NOLINTNEXTLINE(bugprone-narrowing-conversions)
     play(static_cast<float>(from_pos));
 }
@@ -1648,8 +1737,7 @@ void ResonancePlayer::stop() {
     Engine* eng = Engine::get_singleton();
     const bool editor = eng && eng->is_editor_hint();
 
-    // Editor or fallback (no player_config / non-Resonance playback): use the original
-    // hard-cutoff behaviour to match plain AudioStreamPlayer3D semantics.
+    // In the editor or without a config, stop hard like a plain AudioStreamPlayer3D.
     if (editor || !player_config.is_valid()) {
         Node* reverb_child = get_node_or_null(NodePath("ResonanceReverbOutput"));
         if (reverb_child && reverb_child->is_class("AudioStreamPlayer")) {
@@ -1657,17 +1745,12 @@ void ResonancePlayer::stop() {
                 rp->stop();
         }
         AudioStreamPlayer3D::stop();
+        _publish_playing_for_audio();
         return;
     }
 
-    // Soft-stop: halt the dry input on each active ResonanceStreamPlayback voice but keep
-    // the playbacks themselves alive while the reverb / pathing tail decays. We deliberately
-    // do NOT call AudioStreamPlayer3D::stop() so Godot's audio engine keeps invoking _mix
-    // on each voice while ResonanceStreamPlayback::_is_playing() returns true (which it does
-    // while effect tails or output rings still hold residue, capped by realtime_simulation_duration).
-    // Once _is_playing() finally returns false the AudioServer detaches the playback.
-    // The reverb-split child is left running too; ResonanceReverbPlayback::_is_playing()
-    // returns false on its own once both the parent and the split-reverb rings are empty.
+    // Soft stop: no AudioStreamPlayer3D::stop(), so Godot keeps mixing each voice while its reverb and path
+    // tails decay. The reverb send child also keeps running until its rings are empty.
     std::vector<ResonanceStreamPlayback*> copy;
     internal_copy_internal_playbacks(copy);
     bool any_soft_stopped = false;
@@ -1682,9 +1765,7 @@ void ResonancePlayer::stop() {
         soft_stop_mix_stall_sec_ = 0.0;
         soft_stop_last_mix_calls_ = 0;
     } else {
-        // No active ResonanceStreamPlayback voices (e.g. AudioStreamPolyphonic via runtime
-        // animation conversion, or the player was never played). Fall back to the plain
-        // hard-cutoff path so callers see the expected stop() semantics immediately.
+        // No Resonance voice to soft-stop, e.g. a native AudioStreamPolyphonic: stop hard.
         soft_stop_elapsed_sec_ = -1.0;
         Node* reverb_child = get_node_or_null(NodePath("ResonanceReverbOutput"));
         if (reverb_child && reverb_child->is_class("AudioStreamPlayer")) {
@@ -1692,6 +1773,7 @@ void ResonancePlayer::stop() {
                 rp->stop();
         }
         AudioStreamPlayer3D::stop();
+        _publish_playing_for_audio();
     }
 }
 
@@ -1700,6 +1782,10 @@ NodePath ResonancePlayer::get_pathing_probe_volume() const { return pathing_prob
 
 void ResonancePlayer::clear_pathing_probe_immediate() {
     pathing_probe_volume = NodePath();
+    detach_pathing_probe_immediate();
+}
+
+void ResonancePlayer::detach_pathing_probe_immediate() {
     ResonanceServer* srv = ResonanceServer::get_singleton();
     _invalidate_source_handle_if_stale(srv);
     if (!srv || !srv->is_initialized() || source_handle < 0)
@@ -1708,7 +1794,7 @@ void ResonancePlayer::clear_pathing_probe_immediate() {
 }
 
 void ResonancePlayer::set_inputs(int flags) {
-    (void)flags; // Phonon still splits Direct vs Wet internally; flags reserved for callers.
+    (void)flags;
     if (!player_config.is_valid())
         return;
     ResonanceServer* srv = ResonanceServer::get_singleton();
@@ -1788,8 +1874,7 @@ void ResonancePlayer::set_player_config(const Ref<Resource>& p_config) {
     }
     if (player_config.is_valid() && !player_config->is_connected("changed", changed_cb))
         player_config->connect("changed", changed_cb);
-    // Toggling between plain and config-driven mode changes which inherited 3D knobs are inert,
-    // so refresh the inspector property list (see _validate_property).
+    // Gaining or losing a config changes which inherited properties _validate_property hides.
     if (had_config != player_config.is_valid())
         notify_property_list_changed();
     _on_player_config_changed_refresh_gizmo();
@@ -1797,10 +1882,8 @@ void ResonancePlayer::set_player_config(const Ref<Resource>& p_config) {
 Ref<Resource> ResonancePlayer::get_player_config() const { return player_config; }
 
 void ResonancePlayer::_validate_property(PropertyInfo& p_property) const {
-    // With a player_config the spatialization runs through Steam Audio: distance/attenuation come
-    // from the config; _apply_steam_mode_asp3d_guards forces ATTENUATION_DISABLED and clears Godot
-    // max_distance. Inherited ASP3D distance/rolloff/filter knobs are then inert - hide them
-    // (Godot 4.6 ASP3D spatial set). Without a config the node is plain AudioStreamPlayer3D.
+    // With a config, Steam Audio owns distance and the inherited AudioStreamPlayer3D spatial settings do
+    // nothing, so hide them.
     if (!player_config.is_valid())
         return;
 
@@ -1840,8 +1923,8 @@ void ResonancePlayer::_on_player_config_changed_refresh_gizmo() {
     config_cache_frame_countdown = 0;
     Engine* eng = Engine::get_singleton();
     const bool editor = eng && eng->is_editor_hint();
-    // Runtime mix toggles (e.g. radio mute via master_mix_level) emit changed every interact.
-    // Skip gizmo redraw and bus group scan while playing - cache invalidate is enough for DSP.
+    // Runtime mix toggles can emit `changed` on every interaction. While playing, invalidating the cache
+    // is enough; skip the gizmo redraw and bus routing.
     if (!editor && is_playing())
         return;
     directivity_drawer_.mark_dirty();
@@ -1859,10 +1942,23 @@ void ResonancePlayer::_on_player_config_changed_refresh_gizmo() {
     }
 }
 
+ResonancePlayer::BusRoutingKey ResonancePlayer::_bus_routing_key_from_config() const {
+    if (!player_config.is_valid())
+        return {};
+    return {_config_int("bus_override", -1), player_config->get(StringName("bus_name")),
+            _config_int("reverb_bus_override", -1), player_config->get(StringName("reverb_bus_name"))};
+}
+
+void ResonancePlayer::_sync_bus_routing_with_config() {
+    if (!(_bus_routing_key_from_config() == bus_routing_key_))
+        _apply_player_config_bus_routing();
+}
+
 void ResonancePlayer::_apply_player_config_bus_routing() {
     if (!is_inside_tree()) {
         return;
     }
+    bus_routing_key_ = _bus_routing_key_from_config();
     SceneTree* tree = get_tree();
     if (!tree) {
         return;
@@ -1921,7 +2017,7 @@ PackedVector3Array ResonancePlayer::build_directivity_gizmo_lines(
         lines.push_back(meridian_yz(t1));
     }
 
-    // Azimuth rings (circles in the XY plane at constant theta; axis-symmetry around -Z).
+    // Rings at constant theta around the -Z axis.
     float ring_thetas[8];
     int ring_count = 0;
     if (is_dipole) {
@@ -1930,7 +2026,7 @@ PackedVector3Array ResonancePlayer::build_directivity_gizmo_lines(
         ring_thetas[ring_count++] = 2.0f * kPi / 3.0f;
         ring_thetas[ring_count++] = 5.0f * kPi / 6.0f;
     } else {
-        ring_thetas[ring_count++] = kPi * 0.5f; // equator only
+        ring_thetas[ring_count++] = kPi * 0.5f;
     }
     for (int idx = 0; idx < ring_count; ++idx) {
         const float theta = ring_thetas[idx];
@@ -1951,8 +2047,7 @@ PackedVector3Array ResonancePlayer::build_directivity_gizmo_lines(
         }
     }
 
-    // Forward arrow on -Z: for dipole the length matches the forward lobe, for user-defined we scale
-    // by the directivity_value so a near-muted scalar shows visually.
+    // Forward arrow on -Z: the dipole's forward lobe, or scaled by the user value so a near-muted source shows.
     float arrow_len = size;
     if (is_dipole)
         arrow_len = sample(0.0f) * size;
@@ -1974,42 +2069,39 @@ PackedVector3Array ResonancePlayer::build_directivity_gizmo_lines(
     return lines;
 }
 
-void ResonancePlayer::set_reverb_split_output(bool p_enable, const StringName& p_reverb_bus) {
-    if (reverb_split_output_ != p_enable) {
-        reverb_split_output_ = p_enable;
-        _update_reverb_split_child(p_reverb_bus);
-    } else if (reverb_split_output_ && !p_reverb_bus.is_empty()) {
-        Node* child = get_node_or_null(NodePath("ResonanceReverbOutput"));
-        if (child && child->is_class("AudioStreamPlayer")) {
-            if (AudioStreamPlayer* rp = Object::cast_to<AudioStreamPlayer>(child))
-                rp->set_bus(p_reverb_bus);
-        }
-    }
+void ResonancePlayer::set_reverb_send_bus(const StringName& p_bus) {
+    reverb_send_bus_ = p_bus;
+    _sync_reverb_send_child(ResonanceServer::get_singleton());
 }
 
-void ResonancePlayer::_update_reverb_split_child(const StringName& p_reverb_bus) {
-    const NodePath child_path = NodePath("ResonanceReverbOutput");
-    Node* child = get_node_or_null(child_path);
-    if (reverb_split_output_) {
-        if (!child) {
-            AudioStreamPlayer* reverb_player = memnew(AudioStreamPlayer);
-            reverb_player->set_name("ResonanceReverbOutput");
-            Ref<ResonanceReverbStream> reverb_stream;
-            reverb_stream.instantiate();
-            reverb_stream->set_parent_player(this);
-            reverb_player->set_stream(reverb_stream);
-            if (!p_reverb_bus.is_empty())
-                reverb_player->set_bus(p_reverb_bus);
-            add_child(reverb_player);
-            if (is_playing())
-                reverb_player->play();
-        } else if (!p_reverb_bus.is_empty() && child->is_class("AudioStreamPlayer")) {
-            if (AudioStreamPlayer* rp = Object::cast_to<AudioStreamPlayer>(child))
-                rp->set_bus(p_reverb_bus);
-        }
-    } else if (child) {
-        child->queue_free();
+bool ResonancePlayer::_reverb_send_wanted(const ResonanceServer* srv) const {
+    return srv && srv->is_listener_reverb_enabled() && !reverb_send_bus_.is_empty() && config_cache_.reverb_send;
+}
+
+void ResonancePlayer::_sync_reverb_send_child(const ResonanceServer* srv) {
+    const bool wanted = _reverb_send_wanted(srv);
+    Node* child = get_node_or_null(NodePath("ResonanceReverbOutput"));
+    AudioStreamPlayer* send_player = child ? Object::cast_to<AudioStreamPlayer>(child) : nullptr;
+    reverb_send_active_ = wanted;
+    if (!wanted) {
+        if (child)
+            child->queue_free();
+        return;
     }
+    if (send_player) {
+        send_player->set_bus(reverb_send_bus_);
+        return;
+    }
+    send_player = memnew(AudioStreamPlayer);
+    send_player->set_name("ResonanceReverbOutput");
+    Ref<ResonanceReverbStream> send_stream;
+    send_stream.instantiate();
+    send_stream->set_parent_link(reverb_parent_link_);
+    send_player->set_stream(send_stream);
+    send_player->set_bus(reverb_send_bus_);
+    add_child(send_player);
+    if (is_playing())
+        send_player->play();
 }
 
 void ResonancePlayer::_nexus_deferred_spawn_anim_audio_helper() {
@@ -2030,6 +2122,56 @@ void ResonancePlayer::_nexus_deferred_spawn_anim_audio_helper() {
     helper->set_name(String("NexusAnimationAudioRuntimeHelper"));
     helper->set_script(script);
     add_child(helper);
+}
+
+bool ResonancePlayer::is_spatial_output_ready() const {
+    const ResonanceServer* srv = ResonanceServer::get_singleton();
+    if (!srv || !srv->is_initialized())
+        return true;
+    return source_handle >= 0 && srv->is_source_spatial_output_ready(source_handle);
+}
+
+Dictionary ResonancePlayer::get_spawn_timing() const {
+    using resonance::SpawnPhase;
+    Dictionary d;
+    d["voice_dsp_us"] = static_cast<int64_t>(spawn_timing_.total_us(SpawnPhase::VoiceDsp));
+    d["reflection_effect_us"] = static_cast<int64_t>(spawn_timing_.total_us(SpawnPhase::ReflectionEffect));
+    d["source_us"] = static_cast<int64_t>(spawn_timing_.total_us(SpawnPhase::Source));
+    d["params_push_us"] = static_cast<int64_t>(spawn_timing_.total_us(SpawnPhase::ParamsPush));
+    return d;
+}
+
+// Worst blocks of all voices: longest lap per stage, merged block-time histogram and the audio thread id.
+static void add_block_spike_fields(Dictionary& d, const std::vector<ResonanceStreamPlayback*>& playbacks) {
+    std::array<uint64_t, resonance::kBlockStageCount> max_stage_ns{};
+    std::array<uint64_t, resonance::kBlockTimeBucketCount> histogram{};
+    int64_t audio_thread_id = resonance::kUnknownOsThreadId;
+    for (const ResonanceStreamPlayback* res_pb : playbacks) {
+        if (!res_pb)
+            continue;
+        const resonance::BlockStageTotals& stages = res_pb->get_block_stage_totals();
+        for (size_t i = 0; i < resonance::kBlockStageCount; ++i)
+            max_stage_ns[i] = std::max(max_stage_ns[i], stages.max_ns(static_cast<resonance::BlockStage>(i)));
+        const resonance::BlockTimeHistogram& block_times = res_pb->get_block_time_histogram();
+        for (size_t i = 0; i < resonance::kBlockTimeBucketCount; ++i)
+            histogram[i] += block_times.count(i);
+        if (audio_thread_id == resonance::kUnknownOsThreadId)
+            audio_thread_id = res_pb->get_audio_thread_id();
+    }
+
+    for (size_t i = 0; i < resonance::kBlockStageCount; ++i) {
+        const char* name = resonance::block_stage_name(static_cast<resonance::BlockStage>(i));
+        d[String("max_stage_") + name + "_us"] = resonance::ns_to_us(max_stage_ns[i]);
+    }
+    PackedInt64Array counts;
+    PackedInt64Array upper_us;
+    for (size_t i = 0; i < resonance::kBlockTimeBucketCount; ++i) {
+        counts.push_back(static_cast<int64_t>(histogram[i]));
+        upper_us.push_back(static_cast<int64_t>(resonance::block_time_bucket_upper_us(i)));
+    }
+    d["block_time_histogram"] = counts;
+    d["block_time_histogram_upper_us"] = upper_us;
+    d["audio_thread_id"] = audio_thread_id;
 }
 
 Dictionary ResonancePlayer::get_audio_instrumentation() {
@@ -2065,6 +2207,8 @@ Dictionary ResonancePlayer::get_audio_instrumentation() {
     int32_t max_path_order = -1;
     uint64_t sum_reverb_ring_samples = 0; // Test hook: split-reverb tail residue across all voices.
     uint64_t sum_conv_mixer_null = 0, sum_conv_mix_failed = 0, sum_enable_reverb_false = 0;
+    uint64_t sum_block_time_us = 0;
+    std::array<uint64_t, resonance::kBlockStageCount> sum_stage_ns{};
 
     for (ResonanceStreamPlayback* res_pb : copy) {
         if (!res_pb)
@@ -2100,13 +2244,6 @@ Dictionary ResonancePlayer::get_audio_instrumentation() {
         max_last_mix_gap_us = std::max(max_last_mix_gap_us, last_mix_gap_us);
         max_mix_gap_us = std::max(max_mix_gap_us, max_mix_gap_us_local);
         max_expected_mix_gap_us = std::max(max_expected_mix_gap_us, expected_mix_gap_us);
-        // Debugging signal completion: whether the playback ever returns 0 (EOS) and how long it stayed gated.
-        // (Aggregated like the other counters; only surfaced in the dictionary below.)
-        // Reuse sum_* locals for aggregation.
-        // NOTE: We intentionally do not cap these; they are for troubleshooting.
-        // (Declared above as sum_* variables.)
-        // --- aggregation ---
-        // (see vars declared at top of function)
         if (mix_frames_min < agg_mix_frames_min)
             agg_mix_frames_min = mix_frames_min;
         agg_mix_frames_max = std::max(agg_mix_frames_max, mix_frames_max);
@@ -2120,6 +2257,10 @@ Dictionary ResonancePlayer::get_audio_instrumentation() {
         sum_conv_mixer_null += conv_mixer_null;
         sum_conv_mix_failed += conv_mix_failed;
         sum_enable_reverb_false += enable_reverb_false;
+        sum_block_time_us += res_pb->get_block_time_total_us();
+        const resonance::BlockStageTotals& stages = res_pb->get_block_stage_totals();
+        for (size_t i = 0; i < resonance::kBlockStageCount; ++i)
+            sum_stage_ns[i] += stages.ns(static_cast<resonance::BlockStage>(i));
     }
 
     if (agg_mix_frames_min == std::numeric_limits<int32_t>::max())
@@ -2134,6 +2275,7 @@ Dictionary ResonancePlayer::get_audio_instrumentation() {
     d["reverb_miss_blocks"] = (int64_t)sum_reverb_miss;
     d["max_block_time_us"] = (int64_t)max_block_us;
     d["last_block_time_us"] = (int64_t)max_last_block_us;
+    d["block_time_total_us"] = (int64_t)sum_block_time_us;
     d["late_mix_count"] = (int64_t)sum_late_mix;
     d["last_mix_gap_us"] = (int64_t)max_last_mix_gap_us;
     d["max_mix_gap_us"] = (int64_t)max_mix_gap_us;
@@ -2153,6 +2295,15 @@ Dictionary ResonancePlayer::get_audio_instrumentation() {
     d["conv_mixer_null_blocks"] = (int64_t)sum_conv_mixer_null;
     d["conv_mix_failed_blocks"] = (int64_t)sum_conv_mix_failed;
     d["enable_reverb_false_blocks"] = (int64_t)sum_enable_reverb_false;
+    for (size_t i = 0; i < resonance::kBlockStageCount; ++i) {
+        const char* name = resonance::block_stage_name(static_cast<resonance::BlockStage>(i));
+        d[String("stage_") + name + "_us"] = resonance::ns_to_us(sum_stage_ns[i]);
+    }
+    add_block_spike_fields(d, copy);
+    const resonance::DurationTotals& apply_times = shared_reflection_.get_effect_apply_times();
+    d["reflection_effect_apply_us"] = resonance::ns_to_us(apply_times.total_ns());
+    d["reflection_effect_apply_max_us"] = resonance::ns_to_us(apply_times.max_ns());
+    d["reflection_outside_block_us"] = resonance::ns_to_us(instrumentation_reflection_outside_block_ns_.load(std::memory_order_relaxed));
     return d;
 }
 
@@ -2167,12 +2318,12 @@ void ResonancePlayer::reset_audio_instrumentation() {
         if (res_pb)
             res_pb->reset_instrumentation();
     }
+    shared_reflection_.reset_effect_apply_times();
+    instrumentation_reflection_outside_block_ns_.store(0, std::memory_order_relaxed);
 }
 
 void ResonancePlayer::_nexus_deferred_emit_finished() {
-    // Emit only for the playback run that queued this callback. If user code restarted
-    // immediately (e.g. in the finished handler), play_serial_ has advanced and we must
-    // not emit for the previous run.
+    // A restart since this was queued advanced play_serial_; do not emit for the old run.
     if (!dry_finished_deferred_queued_ || dry_finished_deferred_serial_ != play_serial_)
         return;
     dry_finished_deferred_queued_ = false;

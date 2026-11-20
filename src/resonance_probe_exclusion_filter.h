@@ -8,8 +8,8 @@
 
 namespace resonance {
 
-/// Keeps points that are outside all exclusion OBBs.
-/// Each entry in [param boxes] is a Dictionary with keys "xform" (Transform3D) and "size" (Vector3 region_size).
+/// Keeps points outside all exclusion boxes. Each entry in boxes is a Dictionary with
+/// "xform" (Transform3D) and "size" (Vector3).
 godot::PackedVector3Array filter_points_outside_exclusion_boxes(const godot::PackedVector3Array& points,
                                                                 const godot::Array& boxes);
 

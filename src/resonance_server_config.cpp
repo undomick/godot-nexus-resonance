@@ -7,8 +7,6 @@
 
 namespace godot {
 
-// Dictionary helpers: tolerant Variant typing (int/float/bool), SOFA ref extraction, sim-interval migration chain.
-
 int ResonanceServerConfig::config_int(const Dictionary& c, const char* key, int def) {
     if (!c.has(key))
         return def;
@@ -68,7 +66,7 @@ void ResonanceServerConfig::config_sofa_asset(const Dictionary& c, const char* k
         out.unref();
 }
 
-// new_key → legacy_sub_key → master simulation_update_interval; values clamped to [0, 1] seconds.
+// Falls back from new_key to legacy_sub_key to simulation_update_interval. Seconds, clamped to [0, 1].
 float ResonanceServerConfig::resolve_sim_interval_sec(const Dictionary& c, const char* new_key, const char* legacy_sub_key) {
     if (c.has(new_key)) {
         float v = config_float(c, new_key, 0.1f);
@@ -94,7 +92,6 @@ float ResonanceServerConfig::resolve_sim_interval_sec(const Dictionary& c, const
     return master;
 }
 
-// Loads and clamps all fields; handles legacy enums (pathing_validation_ab_mode, use_radeon_rays) and bake fallbacks for pathing_vis_*.
 void ResonanceServerConfig::apply(const Dictionary& config,
                                   std::function<float(const char*, float)> get_bake_pathing_param) {
     sample_rate = config_int(config, "sample_rate", sample_rate);
@@ -142,12 +139,6 @@ void ResonanceServerConfig::apply(const Dictionary& config,
         reflection_type = resonance::kReflectionConvolution;
     if (reflection_type > resonance::kReflectionTan)
         reflection_type = resonance::kReflectionTan;
-    default_reflections_mode = config_int(config, "default_reflections_mode", default_reflections_mode);
-    if (default_reflections_mode < 0)
-        default_reflections_mode = 0;
-    // Legacy three-value enum used Realtime = 2; clamp 2+ to Realtime (1).
-    if (default_reflections_mode > 1)
-        default_reflections_mode = 1;
     hybrid_reverb_transition_time = config_float(config, "hybrid_reverb_transition_time", hybrid_reverb_transition_time);
     if (hybrid_reverb_transition_time < 0.1f)
         hybrid_reverb_transition_time = 0.1f;
@@ -178,8 +169,8 @@ void ResonanceServerConfig::apply(const Dictionary& config,
     max_simulation_sources = config_int(config, "max_simulation_sources", max_simulation_sources);
     if (max_simulation_sources < 8)
         max_simulation_sources = 8;
-    if (max_simulation_sources > resonance::kMaxSimulationSourcesUserMax)
-        max_simulation_sources = resonance::kMaxSimulationSourcesUserMax;
+    if (max_simulation_sources > resonance::kMaxSimulationSourcesUserMax - resonance::kListenerReverbSourceSlots)
+        max_simulation_sources = resonance::kMaxSimulationSourcesUserMax - resonance::kListenerReverbSourceSlots;
     hrtf_volume_db = config_float(config, "hrtf_volume_db", hrtf_volume_db);
     if (hrtf_volume_db < resonance::kHRTFVolumeDBMin)
         hrtf_volume_db = resonance::kHRTFVolumeDBMin;
@@ -237,7 +228,7 @@ void ResonanceServerConfig::apply(const Dictionary& config,
         pathing_num_samples = 16;
     path_validation_enabled = config_bool(config, "path_validation_enabled", path_validation_enabled);
     find_alternate_paths = config_bool(config, "find_alternate_paths", find_alternate_paths);
-    // Legacy: pathing_validation_ab_mode when new keys absent (old get_config() / hand-built dicts).
+    // Legacy key, read only when neither new key is present.
     if (!config.has("path_validation_enabled") && !config.has("find_alternate_paths") && config.has("pathing_validation_ab_mode")) {
         int ab = config_int(config, "pathing_validation_ab_mode", 0);
         if (ab == 1) {
@@ -254,7 +245,7 @@ void ResonanceServerConfig::apply(const Dictionary& config,
     if (config.has("scene_type"))
         scene_type = config_int(config, "scene_type", scene_type);
     else
-        scene_type = config_bool(config, "use_radeon_rays", false) ? 2 : 0; // backwards compatibility: missing key = Default
+        scene_type = config_bool(config, "use_radeon_rays", false) ? 2 : 0; // Legacy key
     if (scene_type < 0 || scene_type > 3)
         scene_type = 0;
     physics_ray_collision_mask = config_int(config, "physics_ray_collision_mask", physics_ray_collision_mask);

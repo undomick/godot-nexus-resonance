@@ -1,8 +1,7 @@
 extends Node3D
 
-## DEMO / PHYSICS ONLY: Godot PhysicsRayQuery line (collision shapes), not Steam Audio occlusion or F3 player overlay.
-## For Steam Audio debug use ResonanceRuntime enable_debug + player_overlay_toggle_key (default F3).
-## Do not attach this node expecting Embree/IPL occlusion; it never reads ResonanceServer.
+## Demo helper: draws a line from the camera to the source, red when a Godot physics ray hits a collision shape.
+## It never reads ResonanceServer. For Steam Audio occlusion use ResonanceRuntime enable_debug and the player overlay (default F3).
 
 @export var listener_camera: Camera3D
 @export var audio_source_node: Node3D
@@ -37,7 +36,6 @@ func _physics_process(_delta: float) -> void:
 	var start := listener_camera.global_position
 	var end := audio_source_node.global_position
 
-	# One line per frame: fine for debug; not a production path.
 	immediate_mesh.clear_surfaces()
 	immediate_mesh.surface_begin(Mesh.PRIMITIVE_LINES)
 

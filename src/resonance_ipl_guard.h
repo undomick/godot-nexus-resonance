@@ -5,10 +5,8 @@
 
 namespace godot {
 
-/// RAII guard for IPL resources. Calls release_fn on scope exit to avoid leaks on early return or exception.
-/// Use for temporary IPL objects created during bake/export that must be released in correct order.
-/// Example: IPLScopedRelease<IPLSerializedObject> guard(sObj, iplSerializedObjectRelease);
-/// T is the handle type (e.g. IPLSerializedObject); release_fn takes T* (address of handle variable).
+/// Releases an IPL handle on scope exit. release_fn takes the address of the handle,
+/// e.g. IPLScopedRelease<IPLSerializedObject> guard(obj, iplSerializedObjectRelease).
 template <typename T>
 struct IPLScopedRelease {
     T ptr;
@@ -19,8 +17,7 @@ struct IPLScopedRelease {
         if (ptr && release_fn)
             release_fn(&ptr);
     }
-    /// Prevents release on scope exit. Use when transferring ownership to output parameters.
-    /// After detach(), the caller is responsible for correctly releasing the resource; the guard will no longer call release_fn.
+    /// Hands ownership to the caller; the guard no longer releases the handle.
     void detach() { ptr = nullptr; }
     IPLScopedRelease(const IPLScopedRelease&) = delete;
     IPLScopedRelease& operator=(const IPLScopedRelease&) = delete;

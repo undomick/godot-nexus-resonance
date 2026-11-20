@@ -7,6 +7,7 @@
 #include "resonance_param_cache_invalidate_policy.h"
 #include "resonance_probe_baked_query.h"
 #include "resonance_probe_exclusion_filter.h"
+#include "resonance_probe_generation_policy.h"
 #include "resonance_reflection_ir_fingerprint.h"
 #include "resonance_reflection_type_policy.h"
 #include "resonance_server.h"
@@ -93,6 +94,8 @@ PackedVector3Array ResonanceServer::generate_probes_scene_aware(const Transform3
     BakeSceneScratch scratch;
     {
         std::lock_guard<std::mutex> lock(simulation_mutex);
+        _apply_pending_static_pack_changes_assume_locked();
+        apply_queued_scene_mesh_changes_assume_locked();
         if (scene_dirty.load(std::memory_order_acquire)) {
             _commit_simulator_scene_graph_if_dirty_assume_locked(nullptr);
         }
@@ -175,7 +178,7 @@ void ResonanceServer::_release_static_pack_assume_locked(RuntimeStaticPack& pack
     if (pack.instanced && scene) {
         iplInstancedMeshRemove(pack.instanced, scene);
         iplInstancedMeshRelease(&pack.instanced);
-        // Phonon/Embree: parent scene must commit after InstancedMeshRemove before sub-scene edits.
+        // The parent scene must commit the removal before the sub-scene is edited.
         iplSceneCommit(scene);
     }
     pack.instanced = nullptr;
@@ -204,6 +207,10 @@ void ResonanceServer::_release_static_pack_assume_locked(RuntimeStaticPack& pack
 }
 
 void ResonanceServer::_clear_static_packs_assume_locked() {
+    {
+        std::lock_guard<std::mutex> queue_lock(static_pack_queue_mutex_);
+        static_pack_queue_.clear();
+    }
     for (auto& kv : _runtime_static_packs) {
         _release_static_pack_assume_locked(kv.second);
     }
@@ -224,7 +231,7 @@ bool ResonanceServer::_create_instanced_static_pack_assume_locked(const Ref<Reso
     std::vector<IPLMatrix4x4> xfs;
     std::vector<int> debug_ids;
     int tri = 0;
-    // Do not touch global_triangle_count here - add_static_scene_from_asset updates it; we copy tri into the pack.
+    // Counted into unused_gtc; global_triangle_count is bumped once below, with the geometry gate check.
     std::atomic<int> unused_gtc{0};
     std::atomic<bool> unused_dirty{false};
     RuntimeSceneState state(meshes, tri, debug_ids, &unused_gtc, &unused_dirty, subs, insts, xfs, &meshes_in_sub);
@@ -234,7 +241,6 @@ bool ResonanceServer::_create_instanced_static_pack_assume_locked(const Ref<Reso
     if (insts.empty() || subs.empty())
         return false;
 
-    // add_static_scene_from_asset with unused_gtc did not update global_triangle_count - fix that.
     const int added_tri = asset->get_triangle_count();
     if (added_tri > 0) {
         const int after = global_triangle_count.fetch_add(added_tri, std::memory_order_release) + added_tri;
@@ -252,7 +258,6 @@ bool ResonanceServer::_create_instanced_static_pack_assume_locked(const Ref<Reso
     out.tri_count = added_tri;
     out.asset_id = ObjectID(asset->get_instance_id());
     out.godot_transform = transform;
-    // Prevent clear_static_scenes-style double-free: we stole the handles into out.
     return true;
 }
 
@@ -267,12 +272,7 @@ void ResonanceServer::clear_static_scenes() {
 void ResonanceServer::remove_static_pack(uint64_t object_id) {
     if (!_ctx() || !scene || object_id == 0)
         return;
-    std::lock_guard<std::mutex> lock(simulation_mutex);
-    auto it = _runtime_static_packs.find(object_id);
-    if (it == _runtime_static_packs.end())
-        return;
-    _release_static_pack_assume_locked(it->second);
-    _runtime_static_packs.erase(it);
+    _queue_static_pack_change(object_id, StaticPackChange{});
 }
 
 void ResonanceServer::add_or_replace_static_pack(uint64_t object_id, const Ref<ResonanceGeometryAsset>& p_asset,
@@ -284,31 +284,57 @@ void ResonanceServer::add_or_replace_static_pack(uint64_t object_id, const Ref<R
             "Nexus Resonance: add_or_replace_static_pack has no effect when scene_type is Custom (Godot Physics).");
         return;
     }
-    std::lock_guard<std::mutex> lock(simulation_mutex);
-    if (!p_asset.is_valid() || !p_asset->is_valid()) {
-        auto it = _runtime_static_packs.find(object_id);
-        if (it != _runtime_static_packs.end()) {
-            _release_static_pack_assume_locked(it->second);
-            _runtime_static_packs.erase(it);
-        }
-        return;
+    StaticPackChange change;
+    if (p_asset.is_valid() && p_asset->is_valid()) {
+        change.asset = p_asset;
+        change.transform = p_transform;
     }
-    // Skip tear-down/rebuild when the same asset and transform are already registered
-    // (ENTER_TREE deferred register after reload_static_scenes_from_tree).
+    _queue_static_pack_change(object_id, change);
+}
+
+void ResonanceServer::_queue_static_pack_change(uint64_t object_id, StaticPackChange change) {
     {
-        auto it = _runtime_static_packs.find(object_id);
-        if (it != _runtime_static_packs.end() && it->second.instanced &&
-            it->second.asset_id == ObjectID(p_asset->get_instance_id()) &&
-            it->second.godot_transform.is_equal_approx(p_transform)) {
-            return;
-        }
+        std::lock_guard<std::mutex> queue_lock(static_pack_queue_mutex_);
+        static_pack_queue_[object_id] = std::move(change);
     }
-    // Build the replacement first so an IPL/create failure keeps the existing pack.
-    RuntimeStaticPack pack;
-    if (!_create_instanced_static_pack_assume_locked(p_asset, p_transform, pack)) {
+    _wake_phonon_worker_for_lifecycle();
+}
+
+bool ResonanceServer::_has_pending_static_pack_changes() {
+    std::lock_guard<std::mutex> queue_lock(static_pack_queue_mutex_);
+    return !static_pack_queue_.empty();
+}
+
+void ResonanceServer::_apply_pending_static_pack_changes_assume_locked() {
+    std::unordered_map<uint64_t, StaticPackChange> changes;
+    {
+        std::lock_guard<std::mutex> queue_lock(static_pack_queue_mutex_);
+        changes.swap(static_pack_queue_);
+    }
+    for (const auto& [object_id, change] : changes)
+        _apply_static_pack_change_assume_locked(object_id, change);
+}
+
+void ResonanceServer::_apply_static_pack_change_assume_locked(uint64_t object_id, const StaticPackChange& change) {
+    auto it = _runtime_static_packs.find(object_id);
+    if (change.asset.is_null()) {
+        if (it == _runtime_static_packs.end())
+            return;
+        _release_static_pack_assume_locked(it->second);
+        _runtime_static_packs.erase(it);
         return;
     }
-    auto it = _runtime_static_packs.find(object_id);
+    // ENTER_TREE registers again after reload_static_scenes_from_tree; an unchanged pack keeps its meshes.
+    if (it != _runtime_static_packs.end() && it->second.instanced &&
+        it->second.asset_id == ObjectID(change.asset->get_instance_id()) &&
+        it->second.godot_transform.is_equal_approx(change.transform)) {
+        return;
+    }
+    // Build the replacement first so a failure keeps the existing pack.
+    RuntimeStaticPack pack;
+    if (!_create_instanced_static_pack_assume_locked(change.asset, change.transform, pack))
+        return;
+    it = _runtime_static_packs.find(object_id);
     if (it != _runtime_static_packs.end()) {
         _release_static_pack_assume_locked(it->second);
         _runtime_static_packs.erase(it);
@@ -579,7 +605,7 @@ bool ResonanceServer::_prepare_bake_scene(BakeSceneScratch& out) {
         return true;
     }
 
-    // Last resort: snapshot the live Phonon scene into an isolated temp (may include dynamics frozen at t0).
+    // Last resort: snapshot the live scene, which may include dynamic geometry frozen at its current pose.
     if (!scene) {
         ResonanceLog::error("ResonanceServer: no live scene for bake snapshot.");
         return false;
@@ -612,9 +638,11 @@ bool ResonanceServer::_prepare_bake_scene(BakeSceneScratch& out) {
 
 bool ResonanceServer::_with_bake_scene(std::function<bool(IPLScene)> bake_fn) {
     BakeSceneScratch scratch;
-    std::unique_lock<std::mutex> exclusive_lock(phonon_context_exclusive_mutex_);
+    std::unique_lock<resonance::WriterPreferringSharedMutex> exclusive_lock(phonon_context_exclusive_mutex_);
     {
         std::lock_guard<std::mutex> lock(simulation_mutex);
+        _apply_pending_static_pack_changes_assume_locked();
+        apply_queued_scene_mesh_changes_assume_locked();
         if (scene_dirty.load(std::memory_order_acquire)) {
             _commit_simulator_scene_graph_if_dirty_assume_locked(nullptr);
         }
@@ -663,6 +691,13 @@ bool ResonanceServer::bake_probes_for_volume(const Transform3D& volume_transform
             UtilityFunctions::push_error("Nexus Resonance Bake: Scene not exported. Use Tools > Nexus Resonance > Export Static Scene before baking.");
             return false;
         }
+    }
+    if (generation_type == ResonanceBaker::GEN_UNIFORM_FLOOR && !resonance::uniform_floor_fits_volume(extents.y * 2.0f, height_above_floor)) {
+        UtilityFunctions::push_error(vformat(
+            "Nexus Resonance Bake: Uniform Floor needs a volume taller than height_above_floor (%.2f m), but the volume is %.2f m tall. "
+            "Raise region_size.y, lower height_above_floor, or use the Volume generation type.",
+            height_above_floor, extents.y * 2.0f));
+        return false;
     }
     int nb = _get_bake_num_bounces();
     int nr = _get_bake_num_rays();
@@ -819,21 +854,20 @@ int32_t ResonanceServer::load_probe_batch(Ref<ResonanceProbeData> data) {
         }
     }
 
-    // Ambisonics: never refuse the batch. Playback uses min(baked, runtime); warn once via ResonanceRuntime.
-    // Pathing: never refuse the whole batch when the layer is missing - skip pathing only (registry has_pathing).
+    // A different ambisonic order or missing pathing data never refuses the batch: playback uses the lower
+    // order and skips pathing.
 
     const size_t probe_size_u = static_cast<size_t>(probe_size);
     uint64_t data_hash = _hash_probe_data(probe_ptr, probe_size_u);
-    int32_t handle = probe_batch_registry_.load_batch(_ctx(), simulator, &simulation_mutex, data, data_hash,
-                                                      probe_ptr, probe_size);
-    // Baked-only (max_rays==0): tick() only arms reflection heavy when batches exist. After reinit or first load,
-    // without this the worker can skip RunReflections until the next interval, leaving reflections_have_run_once
-    // false and fetch_reverb_params failing for parametric/hybrid (no wet). Request heavy immediately.
+    int32_t handle = probe_batch_registry_.load_batch(_ctx(), data, data_hash, probe_ptr, probe_size);
+    // With baked-only reflections the worker could otherwise wait a full interval before the first
+    // RunReflections, and fetch_reverb_params fails until then.
     if (handle >= 0) {
         reflection_sim_heavy_requested.store(true, std::memory_order_release);
         if (pathing_enabled) {
             pathing_sim_heavy_requested.store(true, std::memory_order_release);
         }
+        _wake_phonon_worker_for_lifecycle();
     }
     return handle;
 }
@@ -848,8 +882,7 @@ void dedupe_source_handles(std::vector<int32_t>& handles) {
 void ResonanceServer::_invalidate_param_caches_for_handles(const std::vector<int32_t>& handles) {
     if (handles.empty())
         return;
-    // See resonance_param_cache_invalidate_policy.h: clear both buffer sides per handle;
-    // do not bump global slot epochs (that would invalidate unrelated sources).
+    // Clear both buffer sides per handle. Bumping the slot epochs would invalidate unrelated sources.
     for (int32_t h : handles) {
         if (h < 0 || h >= kMaxCacheHandles)
             continue;
@@ -861,7 +894,7 @@ void ResonanceServer::_invalidate_param_caches_for_handles(const std::vector<int
             reflection_param_cache_[static_cast<size_t>(slot)][idx].params.ir = nullptr;
             reverb_param_cache_[static_cast<size_t>(slot)][idx].epoch = 0;
         }
-        reflection_baked_energy_last_[idx] = 0.0f;
+        reflection_baked_energy_last_[idx].store(0.0f, std::memory_order_relaxed);
         last_good_reflection_params_[idx].ir = nullptr;
         last_good_reflection_valid_[idx].store(0, std::memory_order_relaxed);
         {
@@ -873,7 +906,6 @@ void ResonanceServer::_invalidate_param_caches_for_handles(const std::vector<int
 
 void ResonanceServer::_clear_all_param_caches() {
     _clear_reverb_params_likely_available_hints();
-    // Invalidate lock-free caches so audio thread won't use stale params after probe batch changes.
     const int reverb_back = 1 - reverb_param_cache_front_.load(std::memory_order_acquire);
     const int refl_back = 1 - reflection_param_cache_front_.load(std::memory_order_acquire);
     const int path_back = 1 - pathing_param_cache_front_.load(std::memory_order_acquire);
@@ -884,7 +916,7 @@ void ResonanceServer::_clear_all_param_caches() {
     reflection_param_cache_front_.store(refl_back, std::memory_order_release);
     pathing_param_cache_front_.store(path_back, std::memory_order_release);
     for (size_t i = 0; i < kMaxCacheHandles; ++i) {
-        reflection_baked_energy_last_[i] = 0.0f;
+        reflection_baked_energy_last_[i].store(0.0f, std::memory_order_relaxed);
         last_good_reflection_valid_[i].store(0, std::memory_order_relaxed);
     }
 }
@@ -892,15 +924,21 @@ void ResonanceServer::_clear_all_param_caches() {
 void ResonanceServer::remove_probe_batch(int32_t handle) {
     if (handle < 0 || is_shutting_down_flag.load(std::memory_order_acquire) || !_ctx() || !simulator)
         return;
+    probe_batch_registry_.remove_batch(handle);
+    _wake_phonon_worker_for_lifecycle();
+}
+
+void ResonanceServer::_apply_pending_probe_batch_changes_assume_locked(resonance::SimulationAccess access) {
+    const std::vector<int32_t> removing = probe_batch_registry_.pending_removals();
     std::vector<int32_t> affected;
-    {
-        // Clear source pathing before PathSimulator erase: Phonon keeps ProbeBatch alive via
-        // shared_ptr, but RunPathing null-dereferences when the batch is gone from the simulator map.
-        std::lock_guard<std::mutex> lock(simulation_mutex);
-        _collect_handles_affected_by_probe_batch_remove_assume_locked(handle, affected);
-        _clear_pathing_for_probe_batch_assume_locked(handle);
-        probe_batch_registry_.remove_batch(handle, simulator, nullptr);
+    // Clear source pathing before the batch leaves the simulator: RunPathing dereferences null for a
+    // removed batch even though Phonon keeps the ProbeBatch alive.
+    for (int32_t batch_handle : removing) {
+        _collect_handles_affected_by_probe_batch_remove_assume_locked(access, batch_handle, affected);
+        _clear_pathing_for_probe_batch_assume_locked(access, batch_handle);
     }
+    probe_batch_registry_.apply_simulator_changes(simulator);
+    dedupe_source_handles(affected);
     _invalidate_param_caches_for_handles(affected);
 }
 
@@ -987,18 +1025,11 @@ int ResonanceServer::revalidate_probe_batches_with_config() {
         probe_batch_registry_.list_incompatible_handles(reflection_type, pathing_enabled);
     if (to_remove.empty())
         return 0;
-    std::vector<int32_t> affected;
-    {
-        std::lock_guard<std::mutex> lock(simulation_mutex);
-        for (int32_t batch_handle : to_remove)
-            _collect_handles_affected_by_probe_batch_remove_assume_locked(batch_handle, affected);
-        for (int32_t batch_handle : to_remove) {
-            _clear_pathing_for_probe_batch_assume_locked(batch_handle);
-            probe_batch_registry_.remove_batch(batch_handle, simulator, nullptr);
-        }
-    }
-    dedupe_source_handles(affected);
-    _invalidate_param_caches_for_handles(affected);
+    std::lock_guard<std::mutex> lock(simulation_mutex);
+    const resonance::SimulationAccess access(lock);
+    for (int32_t batch_handle : to_remove)
+        probe_batch_registry_.remove_batch(batch_handle);
+    _apply_pending_probe_batch_changes_assume_locked(access);
     return static_cast<int>(to_remove.size());
 }
 
@@ -1007,21 +1038,22 @@ void ResonanceServer::clear_probe_batches() {
         return;
     {
         std::lock_guard<std::mutex> lock(simulation_mutex);
+        const resonance::SimulationAccess access(lock);
         std::vector<int32_t> handles;
         source_manager.get_all_handles(handles);
         for (int32_t h : handles) {
             IPLSource src = source_manager.get_source(h);
             if (!src)
                 continue;
-            _clear_source_pathing_inputs_assume_locked(src, h);
+            _clear_source_pathing_inputs_assume_locked(access, src, h);
             iplSourceRelease(&src);
         }
-        probe_batch_registry_.clear_batches(simulator, nullptr);
+        probe_batch_registry_.clear_batches(simulator);
     }
     _clear_all_param_caches();
 }
 void ResonanceServer::emit_bake_progress(float progress) {
-    // Bake thread safe: no Godot signal emit from worker threads.
+    // Called from the bake thread, so no signal is emitted here.
     bake_progress_.store(progress, std::memory_order_release);
 }
 
@@ -1069,7 +1101,8 @@ float ResonanceServer::probe_data_static_source_energy_at(Ref<ResonanceProbeData
 uint16_t ResonanceServer::get_reflection_baked_energy_q16(int32_t handle) const {
     if (handle < 0 || handle >= kMaxCacheHandles)
         return 0;
-    return reflection_baked_energy_to_q16(reflection_baked_energy_last_[static_cast<size_t>(handle)]);
+    return reflection_baked_energy_to_q16(
+        reflection_baked_energy_last_[static_cast<size_t>(handle)].load(std::memory_order_relaxed));
 }
 
 Dictionary ResonanceServer::probe_data_query_baked_at_point(Ref<ResonanceProbeData> data, Vector3 world_position, int baked_variation,

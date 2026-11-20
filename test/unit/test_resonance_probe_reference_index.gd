@@ -19,7 +19,7 @@ func test_canonical_probe_resource_path_strips_bak_suffix() -> void:
 func test_collect_live_probe_data_paths_from_edited_tree() -> void:
 	var root := Node.new()
 	add_child_autoqfree(root)
-	var vol := ClassDB.instantiate("ResonanceProbeVolume")
+	var vol := ClassDB.instantiate("ResonanceProbeVolume") as Node
 	root.add_child(vol)
 
 	var pd := ClassDB.instantiate("ResonanceProbeData") as Resource

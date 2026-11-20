@@ -5,12 +5,72 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),  
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.2.0] - 2026-11-20
+
+### Breaking changes
+
+- **Room reverb moved to the listener** - Players no longer apply reverb themselves, and `ResonanceListener.apply_reverb` is off by default, so a 1.1 project plays without reverb until you enable it. Turn on `apply_reverb` on the `ResonanceListener` and set `reverb_type` to Baked (the old default) or Realtime. Players send to their reverb bus by default (`ResonancePlayerConfig.reverb_send`).
+- **`reflections_type` options removed** - Use Global (`-1`) and Baked Reverb (`1`) are gone; configs and scripts that use them get Realtime. Static Source (`2`) and Static Listener (`3`) keep their values, so saved configs load unchanged.
+- **`reflections_enabled` defaults to off** - Configs that relied on the old default (on) lose per-source reflections. Set it explicitly where a player needs its own reflections.
+- **Removed API** - `ResonanceRuntimeConfig.default_reflections_mode`, `ResonancePlayer.set_reverb_split_output()` / `get_reverb_split_output()`, `ResonanceServer.get_default_reflections_mode()`, `ResonanceServer.reset_spatial_audio_warmup_passes()`, `ResonanceRuntime.deferred_reset_spatial_audio_warmup_passes()`, `ResonanceRuntime.on_scene_tree_exiting()` and `ResonancePlayerConfig.get_editor_reverb_bus_override_warning()`.
+- **Process priorities** - `ResonanceListener`, `ResonancePlayer` and `ResonanceRuntime` now run at 100, 110 and 120 instead of 101, 90 and 0. Check scripts that set their own priority relative to these nodes: to move sources or the camera before the audio update, keep their priority below 100.
+- **Static export hash** - A `MeshInstance3D` whose own child `ResonanceGeometry` exports it is no longer exported twice. Scenes with that setup get a new export hash once; re-export their static scene.
+
+### Added
+
+- **Listener reverb** - Reverb is applied once at the listener instead of once per player. Enable `ResonanceListener.apply_reverb` and pick `reverb_type` (Realtime or Baked); each `ResonancePlayer` sends its output to its reverb bus (`ResonancePlayerConfig.reverb_send`, default on), where `ResonanceAudioEffect` convolves the mix with the listener's reflections. With realtime convolution, audio thread load dropped from 34% to 1.5% per block for 8 sources and from 184% to 6% for 32 sources.
+- **Voice virtualization** - A playing `ResonancePlayer` with Linear or Curve attenuation that stays beyond `max_distance` for 0.25 s stops its simulation and DSP; the stream keeps advancing and the voice fades back in when it returns into range. With reflections, a voice goes virtual only when they follow the distance curve and after the reverb tail has decayed. Inverse attenuation never virtualizes.
+- **Player resource pool** - Sources and reflection effects are built ahead on a low-priority thread, which removes most of the main-thread hitch when a player starts. Size it with the project settings `nexus/resonance/pool/min_ready` (2) and `nexus/resonance/pool/max_kept` (8); `ResonanceServer.get_resource_pool_stats()` reports ready counts and misses.
+- **Reflections age** - `get_simulation_worker_timing()` reports `reflections_age_us_last`, `reflections_age_us_max`, `reflections_age_samples` and `reflection_passes`, the time between two completed reflections passes, as shown in the F1 overlay.
+
+### Changed
+
+- **Per-source reflections are opt-in** - `ResonancePlayerConfig.reflections_enabled` defaults to off; `reflections_type` offers Realtime, Static Source and Static Listener. A player runs its own wet path only with per-source reflections or pathing.
+- **Direct and reflections run in parallel** - A second simulation worker runs reflections and pathing, so direct occlusion keeps updating while a long reflections pass runs.
+- **Unchanged passes are skipped** - Reflections and pathing passes whose inputs (sources, listener, geometry, probe batches) did not change are skipped and keep their last results. Custom scenes always run, since they trace the Godot physics world.
+- **Stopped players are not simulated** - A `ResonancePlayer` that is not playing keeps its source but gets no direct, reflection or pathing simulation. 16 stopped players went from about half a core to idle.
+- **Per-source spatial output gate** - A source plays spatialized audio once the scene is ready and its first direct simulation result has arrived, instead of after a fixed global warmup of six direct passes.
+- **Geometry changes off the main thread** - Adding and removing live geometry and swapping materials are queued and applied by the simulation worker before its next scene commit, so level streaming no longer waits for a running reflections pass (static pack swap in a 32-source scene: 85 ms -> 0.2 ms median on the main thread).
+- **`export_all_children` applies to live geometry** - The live simulation now uses the same meshes as the static export. A `MeshInstance3D` that its own child `ResonanceGeometry` already exports is no longer added twice, which changes the export hash of affected scenes once.
+- **Live player config changes** - Changing `bus_override`, `bus_name`, `reverb_bus_override` or `reverb_bus_name` re-routes a playing player, turning pathing on creates the missing wet effects, and turning reflections off stops them even while pathing is on.
+- **Adaptive reflections** - The adaptive ray count and interval controllers react to the last pass that actually ran instead of a value that was 0 on most ticks, so they now lower the ray count when a pass exceeds its budget.
+- **Voice virtual state every frame** - Virtualization no longer waits for the next full parameter push when `playback_parameter_min_interval` or `playback_parameter_min_move` throttles updates.
+- **Process priorities** - `ResonanceListener`, `ResonancePlayer` and `ResonanceRuntime` run at process priorities 100, 110 and 120: after user nodes at the default 0, and in that order, which removes one frame of latency.
+- **Godot 4.4 support** - With godot-cpp 10.0.0 the extension targets Godot API 4.4, so it now loads in Godot 4.4 and newer instead of requiring 4.6. The F1 debug overlay uses `FoldableContainer`, which needs Godot 4.5.
+- **Debug overlay (F1)** - Reorganized into Simulation, Players, Reverb and Pathing sections with a health-colored title each. Shows sample rate, frame size, triangle and probe batch counts, a per-stage worker breakdown with a peak since reset, and the reflections age. Lists only players with issues (Alt+A lists all playing ones). Pathing appears only when pathing is on. Removed raw internal counters and the Alt+B detail view.
+
+### Removed
+
+- **Per-player Baked Reverb** - Removed together with the global warmup passes and the reverb split output; see Breaking changes for the full list of removed API.
 
 ### Fixed
 
+- **Garbled parametric audio and exit crash** - Parametric reflections no longer mute and freeze a voice on every fetch miss, reverb tails no longer stop dead at stream end, and quitting no longer crashes in the shared reflection effect. ([#23](https://github.com/undomick/godot-nexus-resonance/issues/23))
+- **Crash with parametric reflections** - Several playing players with Parametric reflections no longer crash Godot from the audio thread, and freeing a playing player no longer leaves a dangling pointer.
+- **Crash at exit** - Audio playbacks and bus effects that Godot releases after the extension has unloaded no longer crash in `RefCounted::unreference`. ([#20](https://github.com/undomick/godot-nexus-resonance/issues/20))
+- **Quit teardown and leaks** - The runtime's quit teardown runs again, so players no longer stay playing after the runtime left and `ResonanceAudioEffect` no longer leaks at exit. A draining voice with parametric or hybrid reflections no longer crashes at quit, and geometry that outlives the runtime no longer keeps its triangles counted for the next level.
+- **Reverb after runtime static export** - The wet bus no longer goes silent or blows up after `export_static_async`, because exporting reuses the live Steam Audio context instead of creating a second one. `export_static(_async)` with `bake_probes` runs the probe bake again. ([#22](https://github.com/undomick/godot-nexus-resonance/issues/22))
+- **Doubled static triangles** - After a runtime static export, static geometry covered by the new pack drops its live meshes instead of staying in the scene twice.
+- **Runtime-spawned players** - A one-shot `ResonancePlayer` no longer emits `finished` in its spawn frame, and players added after the runtime started get their reverb send bus. `play()` from the `finished` handler no longer ends the new run early, and an empty stream now finishes.
+- **Silent reverb send** - The reverb send child no longer stops for good when the audio thread mixes it before the player's voices start.
+- **Silent pathing-only players** - A player with pathing but without per-source reflections no longer stays silent while reporting playing.
+- **Stray pathing warning** - A new source no longer logs that it has no `pathing_probe_volume` when the worker ticks before the player's first update.
+- **Sources without reflections** - A source with reflections off no longer keeps old reflection inputs that every reflections pass traced (one reflections source among 32: pass 115 ms -> 7.6 ms).
+- **HRTF change during playback** - Direct and path effects bound to the HRTF are rebuilt on the main thread and swapped under the audio lock, so an HRTF change no longer frees effects a mix block still uses. A failed rebuild keeps the old effects.
+- **Audio thread safety** - Playback parameters reach the audio thread through a lock-free triple buffer instead of an unguarded copy that could tear, the ambisonic player no longer allocates on the audio thread for large mix requests, and stale-context cleanup runs under the audio lock.
+- **Failed buffer allocation** - When a playback's Steam Audio buffer allocation fails, the retry waits instead of running every frame and logging an error each time.
+- **Empty Uniform Floor bakes** - A probe volume no taller than `height_above_floor` now reports why the bake found no probes and shows a configuration warning. Runtime bakes that stop before the pipeline starts emit `bake_finished`, and a scene with only plain `ResonanceGeometry` nodes is accepted for static export.
+- **Log forwarding** - `ResonanceLogger` registers as an Engine singleton, so warnings from the native code and the editor bake scripts reach the logger instead of being dropped.
+- **Convolution fetch counter** - `convolution_valid_fetches` in `get_reverb_bus_instrumentation()` and the debug overlay counted nothing; it now counts every convolution, hybrid or TAN fetch with an IR.
+- **False late-mix issues** - A `ResonancePlayer` no longer reports about half its mix calls as late when the audio driver requests several blocks at once (PipeWire with a 1024-frame quantum against Godot's 512-frame mix). A call now counts as late only when the mixed audio falls behind real time, and the pause between two plays no longer counts as a late call.
+- **Runtime material swap stall** - Assigning `material` on a live `ResonanceGeometry` no longer waits on the main thread for a running reflections pass; the simulation worker applies the new material before its next scene commit.
+- **Debug overlay main thread time** - The F1 overlay always showed 0 us for the main thread; it now reads `ResonanceRuntime.get_frame_timings()`.
+- **Re-added probe volumes** - A `ResonanceProbeVolume` removed with `remove_child()` and added back reloads its probe batch, so baked reverb and pathing return for pooled or streamed level chunks. At runtime `ResonancePlayer.pathing_probe_volume` keeps pointing at the volume while it is out of the tree; only the editor clears it.
 - **Default HRTF sample rate** - The embedded default HRTF accepts only 24000, 44100, and 48000 Hz; an unsupported host mix rate such as 96000 reports that explicitly instead of the SOFA SimpleFreeFieldHRIR message.
 - **One source per ResonancePlayer** - Restarting a short stream on a timer before the previous play finishes no longer overlaps or cuts the reflection. Overlapping voices of one ResonancePlayer sum their dry audio into one `iplReflectionEffectApply` on that player's single IPLSource. A new voice does not reset the effect, so the older tail keeps ringing. The first play keeps its attack samples until the reflection IR exists. One source IR has one reader, so a second reflection effect cannot drop the tail or crash inside `iplReflectionEffectApply`.
+- **Runtime baking in exported builds** - `ResonanceRuntimeBaker` no longer fails to parse in export templates, where the editor-only `EditorInterface` class does not exist. ([#24](https://github.com/undomick/godot-nexus-resonance/pull/24) by [garthand](https://github.com/garthand))
+- **Empty runtime bake targets** - A `ResonanceProbeVolume` with `headless_baking_mode` and empty `probe_data` no longer warns about an empty probe batch when it enters the tree; it loads once the bake calls `reload_probe_batch()`. ([#24](https://github.com/undomick/godot-nexus-resonance/pull/24) by [garthand](https://github.com/garthand))
+- **Embree crash with distribution Godot packages (documented)** - Some Linux distribution Godot builds crash with `free(): invalid size` when committing an Embree scene. The README troubleshooting table and the `scene_type` tooltip point to the official Godot binary or the Default ray tracer.
 
 ## [1.1.0] - 2026-09-17
 

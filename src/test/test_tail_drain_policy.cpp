@@ -143,3 +143,18 @@ TEST_CASE("EOS pull plan: conv reflection pullable only with live mixer", "[play
     REQUIRE_FALSE(tail_drain_reflection_eos_will_pull(resonance::kReflectionConvolution, true, 512, true, false));
     REQUIRE(tail_drain_reflection_eos_will_pull(resonance::kReflectionParametric, true, 512, true, false));
 }
+
+TEST_CASE("a lone draining voice closing a silent round drains the shared reflection tail", "[playback][tail-drain]") {
+    REQUIRE(reflection_round_should_drain_tail(true, false, false, true, 4096));
+}
+
+TEST_CASE("the shared reflection tail is not drained when the round already feeds the effect", "[playback][tail-drain]") {
+    REQUIRE_FALSE(reflection_round_should_drain_tail(true, false, true, true, 4096));
+    REQUIRE_FALSE(reflection_round_should_drain_tail(true, true, false, true, 4096));
+    REQUIRE_FALSE(reflection_round_should_drain_tail(false, false, false, true, 4096));
+}
+
+TEST_CASE("a finished or foreign shared reflection tail is not drained", "[playback][tail-drain]") {
+    REQUIRE_FALSE(reflection_round_should_drain_tail(true, false, false, true, 0));
+    REQUIRE_FALSE(reflection_round_should_drain_tail(true, false, false, false, 4096));
+}

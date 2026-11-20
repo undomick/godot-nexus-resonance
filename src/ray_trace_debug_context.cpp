@@ -55,7 +55,7 @@ int RayTraceDebugContext::register_mesh(const std::vector<IPLVector3>& vertices,
                                         const IPLint32* material_indices,
                                         const IPLMatrix4x4* transform,
                                         const IPLMaterial* material) {
-    (void)material_indices; // Per-triangle materials ignored; debug context uses one material per mesh.
+    (void)material_indices; // The debug context uses one material per mesh.
     std::lock_guard<std::mutex> lock(geometry_mutex_);
 
     IPLMatrix4x4 xform = transform ? *transform : identity_matrix();
@@ -146,7 +146,7 @@ void RayTraceDebugContext::trace_reflection_rays_for_viz(const IPLVector3& origi
     const Vector3 from(origin.x, origin.y, origin.z);
 
     for (int i = 0; i < num_rays && (int)out_segments.size() < resonance::kRayDebugMaxSegments; i++) {
-        // Uniform on sphere: z uniform in [-1,1], azimuth phi uniform in [0, 2pi).
+        // Spiral over the sphere: equal z steps give equal-area bands.
         const float z = 1.0f - (2.0f * (static_cast<float>(i) + 0.5f) / n);
         const float phi = 2.0f * kPi * static_cast<float>(i) / n;
         const float r_xy = std::sqrt(std::max(0.0f, 1.0f - z * z));

@@ -38,7 +38,7 @@
 			<return type="void" />
 			<param index="0" name="p_mode" type="bool" />
 			<description>
-				When true, skips editor-only UI/disk assumptions for runtime/RAM baking ([url=#ResonanceRuntimeBaker]ResonanceRuntimeBaker[/url]). Not shown in the inspector.
+				When true, skips editor-only UI/disk assumptions for runtime/RAM baking ([url=#ResonanceRuntimeBaker]ResonanceRuntimeBaker[/url]). While [code]probe_data[/code] is empty, entering the tree does not load a probe batch; call [method reload_probe_batch] after the bake. Not shown in the inspector.
 			</description>
 		</method>
 		<method name="is_headless_baking_mode" qualifiers="const">
@@ -146,7 +146,7 @@
 			Distance between probes in meters (0.5-20). Smaller = more probes, longer bakes.
 		</member>
 		<member name="height_above_floor" type="float" setter="set_height_above_floor" getter="get_height_above_floor" default="1.5">
-			Probe plane height for Uniform Floor (0.1-5). Editable only when [member generation_type] is Uniform Floor.
+			Probe plane height for Uniform Floor (0.1-5). Must be lower than [member region_size] y, or no probes are placed. Editable only when [member generation_type] is Uniform Floor.
 		</member>
 		<member name="show_probes" type="bool" setter="set_viz_visible" getter="is_viz_visible" default="true">
 			Draw probe spheres in the editor when selected. Editor-only.

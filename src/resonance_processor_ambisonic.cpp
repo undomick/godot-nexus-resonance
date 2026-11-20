@@ -69,7 +69,7 @@ void ResonanceAmbisonicProcessor::initialize(IPLContext p_context, int p_sample_
 
     int num_channels = (ambisonic_order + 1) * (ambisonic_order + 1);
 
-    // 1. Rotation effect (optional): world-space HOA -> listener-space (combined-matrix decode path skips this)
+    // Rotates world-space HOA into listener space; the combined-matrix decode path skips it.
     if (use_ip_ambisonics_rotation_effect) {
         IPLAmbisonicsRotationEffectSettings rotSettings{};
         rotSettings.maxOrder = ambisonic_order;
@@ -80,13 +80,11 @@ void ResonanceAmbisonicProcessor::initialize(IPLContext p_context, int p_sample_
             ResonanceLog::warn_cstr(
                 "ResonanceAmbisonicProcessor: iplAmbisonicsRotationEffectCreate failed; "
                 "listener orientation is applied in the decode matrix instead (world HOA beds may sound mis-oriented).");
-            use_ip_ambisonics_rotation_effect = false;
         }
     }
 
     const IPLHRTF hrtf_for_create = (apply_hrtf && p_hrtf) ? p_hrtf : nullptr;
 
-    // 2. Decode effect: HOA -> stereo (panning or binaural)
     IPLAmbisonicsDecodeEffectSettings decSettings{};
     decSettings.speakerLayout.type = IPL_SPEAKERLAYOUTTYPE_STEREO;
     decSettings.speakerLayout.numSpeakers = 2;

@@ -192,9 +192,7 @@ void ResonanceProbeData::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_baked_ambisonics_order"), &ResonanceProbeData::get_baked_ambisonics_order);
     ClassDB::bind_method(D_METHOD("get_bake_layer_info"), &ResonanceProbeData::get_bake_layer_info);
 
-    // Using PROPERTY_USAGE_STORAGE | PROPERTY_USAGE_EDITOR ensures it's saved to disk
-    // but typically huge byte arrays are hidden from the Inspector to prevent lag,
-    // unless explicitly needed. We hide it from the inspector view but keep storage.
+    // Storage only: these arrays are too large to show in the inspector without lag.
     ADD_PROPERTY(PropertyInfo(Variant::PACKED_BYTE_ARRAY, "data", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_STORAGE), "set_data", "get_data");
     ADD_PROPERTY(PropertyInfo(Variant::PACKED_VECTOR3_ARRAY, "probe_positions", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_STORAGE), "set_probe_positions", "get_probe_positions");
     ADD_PROPERTY(PropertyInfo(Variant::INT, "bake_params_hash", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_STORAGE), "set_bake_params_hash", "get_bake_params_hash");

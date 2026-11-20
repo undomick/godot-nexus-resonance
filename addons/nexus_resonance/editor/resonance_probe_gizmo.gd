@@ -8,10 +8,10 @@ const GIZMO_RAY_LENGTH := 10000.0
 const MIN_REGION_SIZE := 0.1
 
 var undo_redo: EditorUndoRedoManager
-## Set by plugin if ICON_PROBE_VOLUME_GIZMO is missing.
+## Used when ICON_PROBE_VOLUME_GIZMO is missing.
 var fallback_icon: Texture2D = null
 var _icon_material_created: bool = false
-## Unique material names per plugin instance (avoid cache clashes on disable/enable).
+## Per-instance material names, so disabling and re-enabling the plugin does not reuse cached materials.
 var _mat_main: String = ""
 var _mat_handles: String = ""
 var _mat_icon: String = ""
@@ -41,7 +41,7 @@ func _init() -> void:
 	create_material(_mat_main, Color(0.1, 0.8, 1.0))
 	create_handle_material(_mat_handles)
 
-	# Icon material: lazy in _redraw (no EditorInterface in _init).
+	# The icon material is created in _redraw: EditorInterface is not available in _init.
 
 
 func _ensure_icon_material(_gizmo: EditorNode3DGizmo) -> void:
@@ -120,7 +120,8 @@ func _get_handle_value(gizmo: EditorNode3DGizmo, _handle_id: int, _secondary: bo
 	return {"region_size": _get_valid_region_size(node), "global_position": node.global_position}
 
 
-## Live resize; undo in [method _commit_handle]. Alt: symmetric from center; default: one face moves (CSGBox-like).
+## Resizes live; the undo action is created in [method _commit_handle]. With Alt the box grows
+## around its center, otherwise only the dragged face moves.
 func _set_handle(
 	gizmo: EditorNode3DGizmo, handle_id: int, _secondary: bool, camera: Camera3D, point: Vector2
 ) -> void:

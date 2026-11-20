@@ -122,6 +122,7 @@ Bake `reflection_type`, pathing on/off, and ambisonics order come from [Resonanc
 | **Bake fails / no output** | Check the Godot Output/Console for Steam Audio errors. Ensure scene geometry has ResonanceGeometry with valid materials. |
 | **Probe batch rejected / no reverb** | Baked reflection type must match runtime (see Probe/Runtime Compatibility). |
 | **Pathing silent / Ambisonics warning** | Enable pathing on ResonanceRuntime and rebake pathing, or match Bake Ambisonic Order (Runtime / BakeConfig) to the baked data and rebake. Realtime Ambisonic Order is playback-only. |
+| **Linux: crash `free(): invalid size` with Embree** | Some distribution Godot packages (seen with CachyOS) link the system Embree library and export their own C++ runtime symbols, which clashes with Steam Audio's Embree tracer. Use the official Godot binary from godotengine.org, or set `ResonanceRuntimeConfig.scene_type` to `0` (Default). |
 | **Debug Reflection Rays** | Enable **Realtime Rays** (64+) in ResonanceRuntimeConfig and **Debug Reflections** in the config. Add a ResonanceListener (e.g. under Camera3D). Geometry from ResonanceGeometry or re-exported static scenes is used for ray viz. |
 
 ## Requirements

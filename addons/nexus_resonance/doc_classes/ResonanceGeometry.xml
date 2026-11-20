@@ -24,7 +24,7 @@
 			When true and [member geometry_override] is set, draws the override mesh as a semi-transparent green overlay in the editor viewport only.
 		</member>
 		<member name="export_all_children" type="bool" setter="set_export_all_children" getter="get_export_all_children" default="false">
-			When true, exports acoustic geometry from all child nodes that have a [MeshInstance3D] or [member geometry_override]. Same idea as Steam Audio Export All Children. Hidden on dynamic geometry nodes.
+			When true, visible descendant [MeshInstance3D] meshes count as part of this geometry, both in the live simulation and in static scene export. Meshes claimed by a nested [ResonanceGeometry] are skipped. Hidden on dynamic geometry nodes.
 		</member>
 		<member name="dynamic" type="bool" setter="set_dynamic" getter="is_dynamic" default="false">
 			When true, geometry is instanced and updated for moving objects. Enable path validation ([member ResonanceRuntimeConfig.path_validation_enabled] or [member ResonancePlayerConfig.path_validation_override] Enabled) when movers can block baked paths. [ResonanceStaticGeometry] and [ResonanceDynamicGeometry] fix this flag and hide it in the inspector.
@@ -47,6 +47,11 @@
 		<method name="refresh_geometry">
 			<description>
 				Recreates Steam Audio meshes from the current mesh source. Prefer [method sync_reflection_debug_viz] when only toggling reflection debug visualization. Use after changing [member material], [member geometry_override], or the parent mesh at runtime.
+			</description>
+		</method>
+		<method name="sync_static_scene_coverage">
+			<description>
+				Removes this node's live static meshes while a [ResonanceStaticScene] in the tree holds a valid asset, and registers them again once it does not. Called by [ResonanceStaticScene] when its asset changes; no effect for [member dynamic] geometry.
 			</description>
 		</method>
 		<method name="sync_reflection_debug_viz">

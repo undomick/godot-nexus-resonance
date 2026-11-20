@@ -18,17 +18,9 @@ class Viewport;
 class Camera3D;
 class ResonanceServer;
 
-// C++ port of the Nexus Resonance runtime node. Orchestrates server init, config, the per-frame tick and debug UI.
-//
-// Helpers stay in GDScript and are driven from here: ResonanceRuntimeBus (bus wiring), ResonanceReverbActivator
-// (wet-bus keep-alive), the FMOD/Coda bridges and the config/bake resources. They are instantiated via script.new()
-// and held as Variant so the RefCounted instances stay alive for the node lifetime.
-//
-// Translation units: resonance_runtime.cpp (lifecycle + bus), resonance_runtime_tick.cpp (per-frame hot path),
-// resonance_runtime_init.cpp (server init/reinit, config, signals, static scenes, bridges).
-//
-// Multiple ResonanceRuntime nodes may exist (scene handoff). Only the primary instance runs flush+tick;
-// live_game_runtime_count gates ResonanceServer shutdown when the last live runtime exits.
+// GDScript helpers (ResonanceRuntimeBus, ResonanceReverbActivator, the FMOD/Coda bridges) are held as Variant
+// so the RefCounted instances live as long as the node.
+// Several runtimes can coexist during a scene handoff: only the primary one runs flush and tick.
 class ResonanceRuntime : public Node {
     GDCLASS(ResonanceRuntime, Node)
 
@@ -40,14 +32,12 @@ class ResonanceRuntime : public Node {
     Variant fmod_bridge;
     Variant coda_bridge;
 
-    // Config-affecting node exports (mirrors the GDScript runtime).
     bool fmod_bridge_enabled = false;
     bool coda_bridge_enabled = false;
     int context_simd_level = -1;
     bool context_validation = false;
 
-    // Debug overlays + input (driven from resonance_runtime_debug.cpp). When enable_debug is off the overlay keys
-    // do nothing (hide dev tools from players). player_overlay_visible (F3) feeds debug_occlusion/debug_reflections via get_config_dict + apply_debug_flags.
+    // Without enable_debug the overlay keys do nothing, so players never see the dev tools.
     bool enable_debug = false;
     bool debug_overlay_visible = false;
     bool performance_overlay_visible = false;
@@ -56,20 +46,20 @@ class ResonanceRuntime : public Node {
     int64_t performance_overlay_toggle_key = KEY_F2;
     int64_t player_overlay_toggle_key = KEY_F3;
 
-    // Debugger performance monitors + audio-aggregate sampling (GDScript ResonanceRuntimePerfMonitors instance).
+    // GDScript ResonanceRuntimePerfMonitors instance.
     Variant perf_monitors;
 
     bool static_scene_reload_pending = false;
 
     // Live game runtimes; server shutdown only when this reaches 0.
     static int live_game_runtime_count;
-    // Instance that owns flush+tick (last _ready wins; elect on exit).
+    // Owns flush and tick. The last _ready wins; on exit a successor is elected.
     static ObjectID primary_runtime_id;
 
-    // Gates per-phase frame timing (Full only). Standard by default.
+    // 0 Off, 1 Core, 2 Standard, 3 Full; per-phase frame timing needs Full.
     int performance_custom_monitors = 2;
 
-    // Per-frame timing snapshot (telemetry; read by ResonanceRuntimePerfMonitors).
+    // Read by ResonanceRuntimePerfMonitors.
     int64_t main_thread_last_tick_usec = 0;
     int64_t main_thread_activator_usec = 0;
     int64_t main_thread_reinit_usec = 0;
@@ -81,14 +71,14 @@ class ResonanceRuntime : public Node {
     int64_t runtime_physics_server_tick_usec = 0;
     int64_t runtime_physics_flush_usec = 0;
 
-    // Viewport sync cache: skip redundant world / exclude RIDs / listener updates when unchanged.
+    // Lets the viewport sync skip server updates whose inputs did not change.
     bool vp_sync_cache_valid = false;
     RID vp_sync_last_world_rid;
     PackedInt64Array vp_sync_last_exclude_ids;
     Transform3D vp_sync_last_cam_xform;
     bool vp_sync_last_had_listener_nodes = false;
 
-    // Per-frame group cache (avoids duplicate get_nodes_in_group in the viewport sync).
+    // Avoids repeated get_nodes_in_group calls within one frame.
     int64_t group_cache_frame = -1;
     bool group_cache_use_physics = false;
     TypedArray<Node> cached_listener_nodes;
@@ -105,7 +95,6 @@ class ResonanceRuntime : public Node {
     void setup_activator();
     void cleanup_reverb_activator();
 
-    // Tick path (resonance_runtime_tick.cpp).
     bool uses_full_frame_timing() const;
     void refresh_group_caches_for_frame(bool use_physics_frame);
     TypedArray<RID> collect_listener_physics_exclude_rids(Viewport* vp, const TypedArray<Node>& listener_nodes) const;
@@ -116,7 +105,6 @@ class ResonanceRuntime : public Node {
     void fill_activator_buffer();
     void handle_pending_reinit_frame_size();
 
-    // Init / reinit / config / signals / scenes / bridges (resonance_runtime_init.cpp).
     Dictionary get_bake_params_for_runtime();
     void reload_static_scenes_from_tree(Node* tree_root);
     void prepare_geometry_before_reinit();
@@ -135,7 +123,6 @@ class ResonanceRuntime : public Node {
     void init_coda_bridge();
     void apply_primary_handoff_without_reinit();
 
-    // Debug overlays + profiler driving (resonance_runtime_debug.cpp).
     void create_debug_overlay();
     void toggle_debug_overlay();
     void create_performance_overlay();
@@ -184,7 +171,7 @@ class ResonanceRuntime : public Node {
 
     static int get_live_game_runtime_count();
     bool is_primary_runtime() const;
-    /// True when a primary ResonanceRuntime owns viewport listener sync (ResonanceListener skips duplicate pose push).
+    /// ResonanceListener then skips its own pose push.
     static bool primary_runtime_syncs_viewport_listeners();
 
     // Callable targets for ResonanceRuntimeBus and the debug overlay.
@@ -207,7 +194,7 @@ class ResonanceRuntime : public Node {
     void request_static_scene_reload();
     void perform_deferred_static_scene_reload();
     void reload_after_reinit();
-    void deferred_reset_spatial_audio_warmup_passes();
+    void deferred_arm_spatial_audio_output_gate();
 
     void on_native_engine_reinit_requested(const Variant& arg);
     void on_runtime_live_config_changed(const Variant& arg);
@@ -217,7 +204,6 @@ class ResonanceRuntime : public Node {
     Ref<RefCounted> get_fmod_bridge() const;
     Ref<RefCounted> get_coda_bridge() const;
 
-    void on_scene_tree_exiting();
     void on_window_close_requested();
 
     // Hard-stop players + detach ResonanceAudioEffect so AudioServer can retire them before
@@ -227,7 +213,8 @@ class ResonanceRuntime : public Node {
   private:
     void _connect_quit_teardown_signals();
     void _disconnect_quit_teardown_signals();
-    /// Mute mix, stop players/bus effects, join Phonon worker. Quit / last-runtime only.
+    void _teardown_if_last_game_runtime();
+    /// Quit or last runtime only: mutes the mix, stops players and bus effects, joins the Phonon worker.
     void _arm_phonon_quit_teardown();
 };
 

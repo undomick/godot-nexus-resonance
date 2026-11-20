@@ -5,12 +5,11 @@
 
 namespace resonance {
 
-/// Direct effect has no internal tail in Steam Audio; EOS spatial drain is binaural/HOA GetTail.
+/// Steam Audio's direct effect normally reports no tail; the end-of-stream drain comes from binaural/HOA GetTail.
 inline bool direct_effect_has_eos_tail(int direct_tail_samples) {
     return direct_tail_samples > 0;
 }
 
-/// True while any spatialization stage in the direct chain still reports tail samples.
 inline bool direct_spatial_tail_active(bool use_binaural, bool use_hoa_binaural_path, int direct_tail_samples,
                                        int binaural_tail_samples, int hoa_binaural_tail_samples) {
     if (direct_effect_has_eos_tail(direct_tail_samples))
@@ -22,12 +21,12 @@ inline bool direct_spatial_tail_active(bool use_binaural, bool use_hoa_binaural_
     return false;
 }
 
-/// FMOD cascade: while direct GetTail is active, downstream spatialization uses Apply on that mono.
+/// While the direct effect still has a tail, the spatial stages run Apply on its mono output.
 inline bool direct_spatial_tail_uses_apply_on_direct_mono(int direct_tail_samples) {
     return direct_effect_has_eos_tail(direct_tail_samples);
 }
 
-/// After direct tail is complete, binaural/HOA must drain via GetTail (not Apply).
+/// Once the direct tail is done, binaural/HOA must drain via GetTail, not Apply.
 inline bool direct_spatial_tail_uses_spatial_get_tail(int direct_tail_samples) {
     return !direct_effect_has_eos_tail(direct_tail_samples);
 }
@@ -36,12 +35,12 @@ inline bool direct_spatial_tail_produced(IPLAudioEffectState state) {
     return state != IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
 }
 
-/// spatial_blend mid-path: keep draining until both binaural and HOA binaural tails are complete.
+/// With a partial spatial_blend both binaural and HOA binaural tails must finish.
 inline bool direct_spatial_blend_tail_active(IPLAudioEffectState binaural_state, IPLAudioEffectState hoa_binaural_state) {
     return direct_spatial_tail_produced(binaural_state) || direct_spatial_tail_produced(hoa_binaural_state);
 }
 
-/// Max reported tail length across active direct-chain spatial stages (for EOS hold / residue checks).
+/// Longest reported tail across the active spatial stages of the direct chain.
 inline int direct_spatial_tail_sample_budget(bool use_binaural, bool use_hoa_binaural_path, int direct_tail_samples,
                                              int binaural_tail_samples, int hoa_binaural_tail_samples) {
     if (!direct_spatial_tail_active(use_binaural, use_hoa_binaural_path, direct_tail_samples, binaural_tail_samples,

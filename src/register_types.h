@@ -3,7 +3,6 @@
 
 #include <godot_cpp/core/class_db.hpp>
 
-// Forward declaration of module initialization and uninitialization functions.
 void initialize_nexus_resonance_module(godot::ModuleInitializationLevel p_level);
 void uninitialize_nexus_resonance_module(godot::ModuleInitializationLevel p_level);
 

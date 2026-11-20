@@ -1,9 +1,7 @@
 extends RefCounted
 
-## Debugger [Performance] monitors for [ResonanceRuntime]. The runtime node owns one instance and drives it:
-## [method register](owner, level), [method tick](owner) per frame, [method unregister_all] on exit. Monitor callables
-## point at this instance; frame timings come from [method ResonanceRuntime.get_frame_timings], the rest is read
-## straight from [ResonanceServer]. Levels [constant PERF_MONITORS_OFF]–[constant PERF_MONITORS_FULL].
+## Debugger [Performance] monitors for [ResonanceRuntime]. The runtime owns one instance and calls [method register],
+## [method tick] every frame and [method unregister_all] on exit. Values are in microseconds unless the id says otherwise.
 
 const PERF_MONITORS_OFF := 0
 const PERF_MONITORS_CORE := 1
@@ -12,17 +10,17 @@ const PERF_MONITORS_FULL := 3
 
 const MON_MAIN := "Nexus Resonance/Main/runtime_last_tick_us"
 const MON_MAIN_VP := "Nexus Resonance/Main/runtime_viewport_sync_us"
-## Server tick slice inside [code]_process[/code]. Non-zero only at [constant PERF_MONITORS_FULL] (sub-timing of [constant MON_MAIN]).
+## Server tick part of [constant MON_MAIN]. Non-zero only at [constant PERF_MONITORS_FULL].
 const MON_MAIN_TICK := "Nexus Resonance/Main/runtime_server_tick_us"
 const MON_MAIN_FLUSH := "Nexus Resonance/Main/runtime_flush_sources_us"
-## [code]_physics_process[/code] timing. Used when Custom tracer is active; otherwise unused (still FULL-tier only).
+## [code]_physics_process[/code] timing. Stays zero unless the Custom tracer is active.
 const MON_PHYS := "Nexus Resonance/Main/runtime_physics_tick_us"
 const MON_PHYS_VP := "Nexus Resonance/Main/runtime_physics_viewport_us"
 const MON_PHYS_TICK := "Nexus Resonance/Main/runtime_physics_server_tick_us"
 const MON_PHYS_FLUSH := "Nexus Resonance/Main/runtime_physics_flush_us"
 const MON_W_SUM := "Nexus Resonance/Worker/last_tick_sum_us"
 
-## Aggregate main/physics monitors; each row has [code]min_level[/code] ([constant PERF_MONITORS_CORE]–[constant PERF_MONITORS_FULL]).
+# Each row is registered from its min_level up.
 const _MAIN_PHYS_MONITORS: Array[Dictionary] = [
 	{"id": MON_MAIN, "callable": "_nexus_perf_read_main_usec", "min_level": PERF_MONITORS_CORE},
 	{
@@ -63,7 +61,7 @@ const _MAIN_PHYS_MONITORS: Array[Dictionary] = [
 	{"id": MON_W_SUM, "callable": "_nexus_perf_read_worker_sum", "min_level": PERF_MONITORS_CORE},
 ]
 
-## Worker timing keys from [method ResonanceServer.get_simulation_worker_timing] → monitor id; µs unless noted. [code]min_level[/code] per row.
+# Maps keys of ResonanceServer.get_simulation_worker_timing() to monitor ids.
 const _WORKER_US_MONITORS: Array[Dictionary] = [
 	{
 		"id": "Nexus Resonance/Worker/direct_us",
@@ -120,7 +118,7 @@ const _WORKER_US_MONITORS: Array[Dictionary] = [
 		"key": "main_last_dynamic_transform_enqueue_us",
 		"min_level": PERF_MONITORS_STANDARD,
 	},
-	## 0/1 heavy-wake flag (not µs); legacy monitor id for dashboards.
+	# 0/1 flag, not microseconds.
 	{
 		"id": "Nexus Resonance/Worker/heavy_tick_flag",
 		"key": "worker_last_wake_heavy",
@@ -133,18 +131,16 @@ const MON_AUDIO_CONV_APPLY := "Nexus Resonance/Audio/convolution_reflection_appl
 const MON_AUDIO_CONV_BUS := "Nexus Resonance/Audio/convolution_reverb_bus_last_us"
 const MON_AUDIO_MIXER_SANITIZE_AMBI := "Nexus Resonance/Audio/mixer_sanitize_ambi_last_us"
 const MON_AUDIO_MIXER_SANITIZE_STEREO := "Nexus Resonance/Audio/mixer_sanitize_stereo_last_us"
-## Audio-thread aggregates (~4 Hz via [ResonanceRuntime] sampling); per-player lifetime until [method ResonancePlayer.reset_audio_instrumentation].
+## Audio thread aggregates, sampled about 4 times per second. Totals count since [method ResonancePlayer.reset_audio_instrumentation].
 const MON_AUDIO_OUTPUT_UNDERRUNS := "Nexus Resonance/Audio/output_underruns_total"
 const MON_AUDIO_LATE_MIX := "Nexus Resonance/Audio/late_mix_total"
 const MON_AUDIO_MAX_BLOCK := "Nexus Resonance/Audio/max_block_time_us"
-## Peak block time across players in the last aggregate sample (lifetime max per voice until reset).
+## Highest per-player peak block time in the last sample; each peak is kept until reset.
 const MON_AUDIO_LAST_BLOCK := "Nexus Resonance/Audio/last_block_time_us"
 const MON_AUDIO_VOICE_COUNT := "Nexus Resonance/Audio/active_voice_count"
-## Active native sources (players/sources with valid config).
 const MON_SERVER_SOURCE_COUNT := "Nexus Resonance/Server/active_source_count"
 const MON_SERVER_PROBE_BATCH_COUNT := "Nexus Resonance/Server/active_probe_batch_count"
 
-## Owner callables (post–worker rows): id, method on [param owner], [code]min_level[/code].
 const _EXTRA_MONITORS: Array[Dictionary] = [
 	{
 		"id": MON_PATHING_RAN,
@@ -208,13 +204,10 @@ const _EXTRA_MONITORS: Array[Dictionary] = [
 	},
 ]
 
-## Owning [ResonanceRuntime] node; set on [method register] / [method tick]. Source of [method ResonanceRuntime.get_frame_timings].
 var _owner: Node = null
 var _level: int = PERF_MONITORS_OFF
-## Last frame timing snapshot from the owner (refreshed in [method tick]); read by the main/physics monitor callables.
 var _frame_timings: Dictionary = {}
 
-## Sampled audio aggregates ([method _sample_audio_aggregates_if_due]); per-player lifetime until [method ResonancePlayer.reset_audio_instrumentation].
 var _audio_agg_output_underruns_total: int = 0
 var _audio_agg_late_mix_total: int = 0
 var _audio_agg_max_block_time_us: int = 0
@@ -236,12 +229,12 @@ static func monitor_ids_for_level(level: int) -> Array[String]:
 	return out
 
 
-## All ids ([method monitor_ids_for_level]([constant PERF_MONITORS_FULL])).
+## All monitor ids, as registered at [constant PERF_MONITORS_FULL].
 static func monitor_ids() -> Array[String]:
 	return monitor_ids_for_level(PERF_MONITORS_FULL)
 
 
-## Sum of selected µs fields from [method ResonanceServer.get_simulation_worker_timing] (last worker tick).
+## Sum of the stage timings of the last worker tick, in microseconds.
 static func simulation_worker_timing_sum(w: Dictionary) -> int:
 	return (
 		int(w.get("us_dynamic_instanced_apply", 0))
@@ -389,7 +382,7 @@ func _nexus_perf_read_mixer_sanitize_stereo_last_us() -> int:
 	return int(t.get("us_mixer_sanitize_stereo_last", 0))
 
 
-## Refresh audio aggregates from all [code]resonance_player[/code] nodes (throttled by [constant AUDIO_AGGREGATE_SAMPLE_PERIOD_SEC]).
+## Throttled by [constant AUDIO_AGGREGATE_SAMPLE_PERIOD_SEC].
 func _sample_audio_aggregates_if_due(owner: Node) -> void:
 	var now_sec := float(Time.get_ticks_msec()) * 0.001
 	if (

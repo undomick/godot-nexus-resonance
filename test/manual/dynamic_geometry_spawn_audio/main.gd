@@ -1,6 +1,6 @@
 extends Node3D
 
-## Manual / headless regression for spatial cutout on ResonanceDynamicGeometry spawn.
+## Manual or headless check that spatial audio does not cut out when ResonanceDynamicGeometry spawns.
 ## Plays a looping tone, waits [member spawn_delay_sec], then spawns a dynamic mesh.
 ## Passes if is_spatial_audio_output_ready() stays true and the player keeps playing.
 ##
@@ -45,7 +45,7 @@ func _ready() -> void:
 	add_child(_make_dynamic_mesh_branch("BaselineBlock", Vector3(0, 1, -4), Vector3(3, 2, 0.4)))
 
 	var config := ResonancePlayerConfig.new()
-	config.reflections_enabled = 0
+	config.reflections_enabled = false
 	config.pathing_enabled_override = 0
 
 	_player = ClassDB.instantiate("ResonancePlayer") as ResonancePlayer
@@ -72,7 +72,6 @@ func _process(delta: float) -> void:
 			simulating = bool(srv.is_simulating())
 	var playing: bool = is_instance_valid(_player) and (_player.playing or _player.is_playing())
 
-	# Progress log once per second while waiting for baseline readiness.
 	if not _spawned and int(_elapsed) != int(_elapsed - delta):
 		_set_status(
 			"Waiting… t=%.1f srv=%s simulating=%s spatial_ready=%s playing=%s"
@@ -80,7 +79,7 @@ func _process(delta: float) -> void:
 		)
 
 	if not _spawned:
-		# Require simulation (registered triangles) so we are past cold-start, not "ready" with empty scene.
+		# Spatial output already reports ready for an empty scene; wait for the simulation as well.
 		if spatial_ready and simulating:
 			_ready_before_spawn = true
 		if _elapsed >= spawn_delay_sec and _ready_before_spawn:

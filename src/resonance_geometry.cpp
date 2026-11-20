@@ -7,6 +7,7 @@
 #include "resonance_log.h"
 #include "resonance_material_update_policy.h"
 #include "resonance_mesh_ipl_godot.h"
+#include "resonance_scene_manager.h"
 #include "resonance_server.h"
 #include "resonance_static_scene.h"
 #include "resonance_utils.h"
@@ -54,18 +55,8 @@ static void log_dynamic_instanced_mesh_registered(ResonanceServer* server, int t
                        ", triangles=" + String::num_int64(tri_count) + ").");
 }
 
-static IPLMaterial get_default_ipl_material() {
-    IPLMaterial m{};
-    m.absorption[0] = resonance::kSceneExportAbsorptionLow;
-    m.absorption[1] = resonance::kSceneExportAbsorptionMid;
-    m.absorption[2] = resonance::kSceneExportAbsorptionHigh;
-    m.scattering = resonance::kSceneExportScattering;
-    m.transmission[0] = m.transmission[1] = m.transmission[2] = resonance::kSceneExportTransmission;
-    return m;
-}
-
-/// When ResonanceDynamicGeometry sits next to a glTF/instance subtree (parent is Node3D, not MeshInstance3D),
-/// geometry_override matches the visual mesh but vertices are in mesh space - use that MeshInstance3D's global transform.
+/// Under an imported glTF the parent is a plain Node3D: the transform for geometry_override then comes from the
+/// MeshInstance3D that draws the same mesh.
 static MeshInstance3D* find_mesh_instance_using_mesh(Node* node, const Ref<Mesh>& mesh, int depth_left) {
     if (!node || mesh.is_null() || depth_left < 0)
         return nullptr;
@@ -110,11 +101,9 @@ void ResonanceGeometry::_ready() {
 void ResonanceGeometry::_exit_tree() {
     server_init_retry_pending_ = false;
     server_init_retry_count_ = 0;
-    // Godot frees child nodes automatically when parent is removed; do not queue_free.
+    // Godot frees the child with us; do not queue_free it.
     viz_geometry_override = nullptr;
-    // Live despawn must not call begin_tree_teardown (that is Quit-only via ResonanceRuntime).
-    // Always detach IPL handles under simulation_mutex. Bake uses an isolated temp scene, so
-    // editor scene switches no longer race a multi-minute live-scene bake lock.
+    // A live despawn must not call begin_tree_teardown; that is for quit only.
     _clear_meshes();
 }
 
@@ -212,9 +201,11 @@ bool ResonanceGeometry::is_show_geometry_override_in_viewport() const {
 }
 
 void ResonanceGeometry::set_export_all_children(bool p_export) {
-    if (export_all_children != p_export) {
-        export_all_children = p_export;
-    }
+    if (export_all_children == p_export)
+        return;
+    export_all_children = p_export;
+    if (is_inside_tree() && !dynamic_object)
+        _create_meshes();
 }
 
 bool ResonanceGeometry::get_export_all_children() const {
@@ -251,6 +242,59 @@ Transform3D ResonanceGeometry::get_mesh_bake_transform() const {
     return ResonanceUtils::node3d_export_transform(this);
 }
 
+Ref<Mesh> ResonanceGeometry::get_source_mesh() const {
+    if (geometry_override.is_valid())
+        return geometry_override;
+    MeshInstance3D* mesh_instance = Object::cast_to<MeshInstance3D>(get_parent());
+    return mesh_instance ? mesh_instance->get_mesh() : Ref<Mesh>();
+}
+
+static bool has_resonance_geometry_child(Node* node) {
+    for (int i = 0; i < node->get_child_count(); i++) {
+        if (Object::cast_to<ResonanceGeometry>(node->get_child(i)))
+            return true;
+    }
+    return false;
+}
+
+// Visible MeshInstance3D descendants that no other ResonanceGeometry claims: the walk stops at a nested
+// ResonanceGeometry and skips a MeshInstance3D whose own child geometry already uses its mesh.
+static void collect_unclaimed_mesh_instances(Node* from, std::vector<MeshInstance3D*>& out) {
+    for (int i = 0; i < from->get_child_count(); i++) {
+        Node* child = from->get_child(i);
+        if (!child || Object::cast_to<ResonanceGeometry>(child))
+            continue;
+        MeshInstance3D* mi = Object::cast_to<MeshInstance3D>(child);
+        if (mi && mi->get_mesh().is_valid() && ResonanceUtils::node3d_visible_for_export(mi) && !has_resonance_geometry_child(mi))
+            out.push_back(mi);
+        collect_unclaimed_mesh_instances(child, out);
+    }
+}
+
+bool ResonanceGeometry::includes_child_meshes() const {
+    return export_all_children && !dynamic_object;
+}
+
+bool ResonanceGeometry::append_meshes_to_ipl(std::vector<IPLVector3>& out_vertices, std::vector<IPLTriangle>& out_triangles,
+                                             std::vector<IPLint32>& out_mat_indices, IPLint32 mat_index) {
+    const size_t triangles_before = out_triangles.size();
+    const Transform3D xform = dynamic_object ? Transform3D() : get_mesh_bake_transform();
+    append_godot_mesh_to_ipl(get_source_mesh(), xform, out_vertices, out_triangles, &out_mat_indices, mat_index);
+    if (includes_child_meshes()) {
+        std::vector<MeshInstance3D*> child_meshes;
+        collect_unclaimed_mesh_instances(this, child_meshes);
+        for (MeshInstance3D* mi : child_meshes) {
+            append_godot_mesh_to_ipl(mi->get_mesh(), ResonanceUtils::node3d_export_transform(mi), out_vertices, out_triangles,
+                                     &out_mat_indices, mat_index);
+        }
+    }
+    return out_triangles.size() > triangles_before;
+}
+
+bool ResonanceGeometry::_has_mesh_source() const {
+    return get_source_mesh().is_valid() || includes_child_meshes();
+}
+
 void ResonanceGeometry::_update_viz_geometry_override() {
     if (!Engine::get_singleton() || !Engine::get_singleton()->is_editor_hint())
         return;
@@ -280,7 +324,7 @@ void ResonanceGeometry::_update_viz_geometry_override() {
 }
 
 void ResonanceGeometry::_clear_meshes_impl(bool notify_server, bool for_shutdown) {
-    // Do not drop static-scene-root cache here: _create_meshes often clears then rebuilds the same frame.
+    // Keep the static scene lookup: _create_meshes often clears and rebuilds in the same frame.
     _invalidate_topology_caches(false);
     ResonanceServer* server = ResonanceServer::get_singleton();
 
@@ -289,44 +333,17 @@ void ResonanceGeometry::_clear_meshes_impl(bool notify_server, bool for_shutdown
         debug_mesh_id = -1;
     }
 
-    // Clean up Steam Audio resources. Caller must hold simulation_mutex when server is valid.
-    // Dynamic geometry: static_meshes live in sub_scene; instanced_mesh is in the global scene.
-    // Detach InstancedMesh from the global scene before removing static meshes from sub_scene (runtime crash otherwise).
     if (server && server->is_initialized()) {
-        if (dynamic_object && instanced_mesh) {
-            server->cancel_pending_dynamic_instanced_mesh_transform(instanced_mesh);
-            IPLScene global_scene_handle = server->get_scene_handle();
-            iplInstancedMeshRemove(instanced_mesh, global_scene_handle);
-            iplInstancedMeshRelease(&instanced_mesh);
-            instanced_mesh = nullptr;
-            // Phonon: InstancedMeshRemove requires iplSceneCommit on the parent scene before other scene edits.
-            // During tree teardown the whole scene is released once after worker join - skip per-node Embree rebuilds.
-            if (global_scene_handle && !for_shutdown)
-                iplSceneCommit(global_scene_handle);
-        }
-
-        IPLScene scene_for_static = dynamic_object ? sub_scene : server->get_scene_handle();
-        // Dynamic sub_scene: after InstancedMesh detach+commit on global scene, per-mesh Remove/Release on
-        // sub_scene can crash (Phonon 4.8.x). Drop handles; iplSceneRelease(sub_scene) owns mesh cleanup.
-        if (dynamic_object && sub_scene) {
-            static_meshes.clear();
-        } else {
-            for (auto& mesh : static_meshes) {
-                if (scene_for_static)
-                    iplStaticMeshRemove(mesh, scene_for_static);
-                iplStaticMeshRelease(&mesh);
-            }
-            static_meshes.clear();
-        }
-
-        // Notify change if we removed triangles (caller holds simulation_mutex via _clear_meshes).
-        // Rebuild paths pass notify_server=false and issue a single net notify after create.
-        // Shutdown: scene is going away; do not re-dirty / re-wake the (already joined) worker.
+        if (for_shutdown)
+            _detach_meshes_now(server);
+        else
+            _queue_mesh_detach(server);
+        // On shutdown the worker is already joined; do not dirty the scene or wake it.
         if (notify_server && triangle_count > 0 && !for_shutdown) {
-            server->notify_geometry_changed_assume_locked(-triangle_count);
+            server->notify_geometry_changed(-triangle_count);
         }
     } else {
-        // Fallback cleanup (just release handles, don't touch scene)
+        // Without a live server, release the handles without touching the scene.
         if (dynamic_object && instanced_mesh) {
             iplInstancedMeshRelease(&instanced_mesh);
             instanced_mesh = nullptr;
@@ -342,7 +359,6 @@ void ResonanceGeometry::_clear_meshes_impl(bool notify_server, bool for_shutdown
             iplInstancedMeshRelease(&instanced_mesh);
     }
 
-    // Sub-scene belongs to this object, not the global scene directly
     if (sub_scene) {
         if (dynamic_object)
             iplSceneCommit(sub_scene);
@@ -355,30 +371,100 @@ void ResonanceGeometry::_clear_meshes_impl(bool notify_server, bool for_shutdown
     triangle_count = 0;
 }
 
+// Hands every handle to the server queue; the worker detaches them from the global scene between passes.
+void ResonanceGeometry::_queue_mesh_detach(ResonanceServer* server) {
+    if (dynamic_object) {
+        if (instanced_mesh) {
+            server->cancel_pending_dynamic_instanced_mesh_transform(instanced_mesh);
+            server->queue_scene_instanced_mesh_remove(instanced_mesh, sub_scene);
+            instanced_mesh = nullptr;
+            sub_scene = nullptr;
+        }
+        // Per-mesh Remove/Release on a sub_scene can crash Phonon 4.8.x; releasing the sub_scene frees the meshes.
+        if (sub_scene) {
+            static_meshes.clear();
+            return;
+        }
+        for (auto& mesh : static_meshes)
+            iplStaticMeshRelease(&mesh);
+        static_meshes.clear();
+        return;
+    }
+    for (IPLStaticMesh mesh : static_meshes)
+        server->queue_scene_static_mesh_remove(mesh);
+    static_meshes.clear();
+}
+
+// Caller holds the simulation lock; used while the scene is torn down and the worker is gone.
+void ResonanceGeometry::_detach_meshes_now(ResonanceServer* server) {
+    // Detach the instance from the global scene before touching its sub_scene, or Phonon crashes.
+    if (dynamic_object && instanced_mesh) {
+        server->cancel_pending_dynamic_instanced_mesh_transform(instanced_mesh);
+        iplInstancedMeshRemove(instanced_mesh, server->get_scene_handle());
+        iplInstancedMeshRelease(&instanced_mesh);
+        instanced_mesh = nullptr;
+    }
+
+    IPLScene scene_for_static = dynamic_object ? sub_scene : server->get_scene_handle();
+    // Per-mesh Remove/Release on a sub_scene can crash Phonon 4.8.x; releasing the sub_scene frees the meshes.
+    if (dynamic_object && sub_scene) {
+        static_meshes.clear();
+        return;
+    }
+    for (auto& mesh : static_meshes) {
+        if (scene_for_static)
+            iplStaticMeshRemove(mesh, scene_for_static);
+        iplStaticMeshRelease(&mesh);
+    }
+    static_meshes.clear();
+}
+
 void ResonanceGeometry::_clear_meshes() {
     ResonanceServer* server = ResonanceServer::get_singleton();
     if (server && server->is_initialized()) {
-        const bool shutting_down = ResonanceServer::is_shutting_down();
+        if (!ResonanceServer::is_shutting_down()) {
+            _clear_meshes_impl(true, false);
+            return;
+        }
         auto lock = server->scoped_simulation_lock();
-        _clear_meshes_impl(!shutting_down, shutting_down);
+        server->apply_queued_scene_mesh_changes_assume_locked();
+        _clear_meshes_impl(false, true);
     } else {
         _clear_meshes_impl();
     }
 }
 
-static bool _scene_has_static_scene_asset(Node* node) {
-    if (!node)
+bool ResonanceGeometry::_is_covered_by_static_scene() const {
+    if (dynamic_object)
         return false;
-    if (node->is_class("ResonanceStaticScene")) {
-        ResonanceStaticScene* ss = Object::cast_to<ResonanceStaticScene>(node);
-        if (ss && ss->has_valid_asset())
-            return true;
+    // The editor never registers static packs, so live meshes stay there.
+    if (Engine::get_singleton() && Engine::get_singleton()->is_editor_hint())
+        return false;
+    Node* root = get_parent();
+    if (!root)
+        return false;
+    while (root->get_parent())
+        root = root->get_parent();
+    const ObjectID root_oid(root->get_instance_id());
+    if (!static_scene_asset_query_valid_ || cached_scene_tree_root_id_ != root_oid) {
+        cached_scene_tree_root_id_ = root_oid;
+        cached_root_has_static_scene_asset_ = subtree_has_static_scene(root, StaticSceneQuery::WithValidAsset);
+        static_scene_asset_query_valid_ = true;
     }
-    for (int i = 0; i < node->get_child_count(); i++) {
-        if (_scene_has_static_scene_asset(node->get_child(i)))
-            return true;
+    return cached_root_has_static_scene_asset_;
+}
+
+void ResonanceGeometry::sync_static_scene_coverage() {
+    // A pending server-init retry builds the meshes itself; building here too would rebuild them twice.
+    if (dynamic_object || server_init_retry_pending_)
+        return;
+    _invalidate_topology_caches();
+    if (_is_covered_by_static_scene()) {
+        if (!static_meshes.empty())
+            _clear_meshes();
+        return;
     }
-    return false;
+    refresh_geometry();
 }
 
 void ResonanceGeometry::_create_meshes() {
@@ -387,47 +473,27 @@ void ResonanceGeometry::_create_meshes() {
     if (!node3d || !node3d->is_visible_in_tree())
         return;
 
-    // static geometry is in the exported scene; skip when ResonanceStaticScene provides it
-    if (!dynamic_object && (!Engine::get_singleton() || !Engine::get_singleton()->is_editor_hint())) {
-        Node* root = this;
-        while (root->get_parent())
-            root = root->get_parent();
-        const ObjectID root_oid(root->get_instance_id());
-        if (!static_scene_asset_query_valid_ || cached_scene_tree_root_id_ != root_oid) {
-            cached_scene_tree_root_id_ = root_oid;
-            cached_root_has_static_scene_asset_ = _scene_has_static_scene_asset(root);
-            static_scene_asset_query_valid_ = true;
-        }
-        if (cached_root_has_static_scene_asset_) {
-            // Live ResonanceMaterial / mesh upload is skipped; Steam uses the serialized StaticScene asset.
-            if (material.is_valid()) {
-                static bool warned_static_skips_live_material = false;
-                if (!warned_static_skips_live_material) {
-                    warned_static_skips_live_material = true;
-                    UtilityFunctions::push_warning(
-                        "Nexus Resonance: ResonanceGeometry material is ignored at runtime while a "
-                        "ResonanceStaticScene asset is loaded. Re-export the static scene so transmission/"
-                        "absorption match the Inspector (F3 Hit0 T shows the first closestHit material).");
-                }
+    if (_is_covered_by_static_scene()) {
+        if (!static_meshes.empty())
+            _clear_meshes();
+        // The serialized static scene asset already carries mesh and material; live changes do not apply.
+        if (material.is_valid()) {
+            static bool warned_static_skips_live_material = false;
+            if (!warned_static_skips_live_material) {
+                warned_static_skips_live_material = true;
+                UtilityFunctions::push_warning(
+                    "Nexus Resonance: ResonanceGeometry material is ignored at runtime while a "
+                    "ResonanceStaticScene asset is loaded. Re-export the static scene so transmission/"
+                    "absorption match the Inspector (F3 Hit0 T shows the first closestHit material).");
             }
-            return;
         }
+        return;
     }
 
     const int previous_triangle_count = triangle_count;
     const bool use_asset_path = dynamic_object && mesh_asset.is_valid() && mesh_asset->is_valid();
-    MeshInstance3D* mesh_instance = Object::cast_to<MeshInstance3D>(parent);
-
-    Ref<Mesh> mesh_for_geom;
-    if (!use_asset_path) {
-        if (geometry_override.is_valid()) {
-            mesh_for_geom = geometry_override;
-        } else if (mesh_instance) {
-            mesh_for_geom = mesh_instance->get_mesh();
-        }
-        if (mesh_for_geom.is_null())
-            return;
-    }
+    if (!use_asset_path && !_has_mesh_source())
+        return;
 
     ResonanceServer* server = ResonanceServer::get_singleton();
     if (!server || !server->is_initialized()) {
@@ -449,168 +515,181 @@ void ResonanceGeometry::_create_meshes() {
         return;
     }
 
-    Transform3D xform = dynamic_object ? Transform3D() : get_mesh_bake_transform();
-
-    if (use_asset_path) {
-        // Build new IPL resources into locals first; only clear the previous mesh after success
-        // so a failed reload does not leave global_triangle_count permanently reduced.
-        IPLSceneSettings sceneSettings{};
-        sceneSettings.type = server->get_phonon_mesh_scene_type();
-        sceneSettings.embreeDevice = server->get_embree_device_handle();
-        sceneSettings.radeonRaysDevice = server->get_radeon_rays_device_handle();
-
-        const int64_t blob_sz = mesh_asset->get_size();
-        const uint8_t* blob = mesh_asset->get_data_ptr();
-        if (!blob || blob_sz <= 0) {
-            ResonanceLog::error("ResonanceGeometry: mesh_asset has no serialized data (asset path).");
-            return;
-        }
-
-        IPLScene new_sub = nullptr;
-        IPLStaticMesh local_mesh = nullptr;
-        IPLInstancedMesh new_inst = nullptr;
-        auto lock = server->scoped_simulation_lock();
-
-        if (iplSceneCreate(server->get_context_handle(), &sceneSettings, &new_sub) != IPL_STATUS_SUCCESS) {
-            ResonanceLog::error("ResonanceGeometry: iplSceneCreate failed (asset path).");
-            return;
-        }
-
-        IPLSerializedObjectSettings serialSettings{};
-        serialSettings.data = const_cast<IPLbyte*>(reinterpret_cast<const IPLbyte*>(blob));
-        serialSettings.size = static_cast<IPLsize>(blob_sz);
-        IPLSerializedObject serialObj = nullptr;
-        if (iplSerializedObjectCreate(server->get_context_handle(), &serialSettings, &serialObj) != IPL_STATUS_SUCCESS) {
-            ResonanceLog::error("ResonanceGeometry: iplSerializedObjectCreate failed.");
-            iplSceneRelease(&new_sub);
-            return;
-        }
-
-        IPLerror loadErr = iplStaticMeshLoad(new_sub, serialObj, nullptr, nullptr, &local_mesh);
-        iplSerializedObjectRelease(&serialObj);
-        if (loadErr != IPL_STATUS_SUCCESS || !local_mesh) {
-            ResonanceLog::error("ResonanceGeometry: iplStaticMeshLoad failed.");
-            iplSceneRelease(&new_sub);
-            return;
-        }
-
-        iplStaticMeshAdd(local_mesh, new_sub);
-        if (material.is_valid()) {
-            IPLMaterial mat = material->get_ipl_material();
-            iplStaticMeshSetMaterial(local_mesh, new_sub, &mat, 0);
-        }
-        iplSceneCommit(new_sub);
-
-        IPLInstancedMeshSettings instSettings{};
-        instSettings.subScene = new_sub;
-        instSettings.transform = ResonanceUtils::to_ipl_matrix(get_mesh_bake_transform());
-        if (iplInstancedMeshCreate(server->get_scene_handle(), &instSettings, &new_inst) != IPL_STATUS_SUCCESS) {
-            ResonanceLog::error("ResonanceGeometry: iplInstancedMeshCreate failed (asset path).");
-            iplStaticMeshRemove(local_mesh, new_sub);
-            iplStaticMeshRelease(&local_mesh);
-            iplSceneRelease(&new_sub);
-            return;
-        }
-
-        _clear_meshes_impl(false);
-        sub_scene = new_sub;
-        static_meshes.push_back(local_mesh);
-        instanced_mesh = new_inst;
-        iplInstancedMeshAdd(instanced_mesh, server->get_scene_handle());
-        triangle_count = mesh_asset->get_triangle_count();
-        log_dynamic_instanced_mesh_registered(server, triangle_count);
-    } else {
-        // --- Runtime mesh parsing: parse outside lock to reduce lock duration ---
-        Ref<Mesh> mesh = mesh_for_geom;
-        std::vector<IPLVector3> ipl_vertices;
-        std::vector<IPLTriangle> ipl_triangles;
-        std::vector<IPLint32> ipl_mat_indices;
-
-        if (!append_godot_mesh_to_ipl(mesh, xform, ipl_vertices, ipl_triangles, &ipl_mat_indices))
-            return;
-
-        IPLMaterial mat_settings = material.is_valid() ? material->get_ipl_material() : get_default_ipl_material();
-
-        IPLStaticMeshSettings mesh_settings{};
-        mesh_settings.numVertices = (IPLint32)ipl_vertices.size();
-        mesh_settings.numTriangles = (IPLint32)ipl_triangles.size();
-        mesh_settings.numMaterials = 1;
-        mesh_settings.vertices = ipl_vertices.data();
-        mesh_settings.triangles = ipl_triangles.data();
-        mesh_settings.materials = &mat_settings;
-        mesh_settings.materialIndices = ipl_mat_indices.data();
-
-        {
-            auto lock = server->scoped_simulation_lock();
-
-            if (dynamic_object) {
-                IPLSceneSettings sceneSettings{};
-                sceneSettings.type = server->get_phonon_mesh_scene_type();
-                sceneSettings.embreeDevice = server->get_embree_device_handle();
-                sceneSettings.radeonRaysDevice = server->get_radeon_rays_device_handle();
-
-                IPLScene new_sub = nullptr;
-                IPLStaticMesh local_mesh = nullptr;
-                IPLInstancedMesh new_inst = nullptr;
-
-                if (iplSceneCreate(server->get_context_handle(), &sceneSettings, &new_sub) != IPL_STATUS_SUCCESS) {
-                    ResonanceLog::error("ResonanceGeometry: iplSceneCreate failed (dynamic).");
-                    return;
-                }
-                if (iplStaticMeshCreate(new_sub, &mesh_settings, &local_mesh) != IPL_STATUS_SUCCESS) {
-                    ResonanceLog::error("ResonanceGeometry: iplStaticMeshCreate failed (dynamic).");
-                    iplSceneRelease(&new_sub);
-                    return;
-                }
-                iplStaticMeshAdd(local_mesh, new_sub);
-                iplSceneCommit(new_sub);
-
-                IPLInstancedMeshSettings instSettings{};
-                instSettings.subScene = new_sub;
-                instSettings.transform = ResonanceUtils::to_ipl_matrix(get_mesh_bake_transform());
-                if (iplInstancedMeshCreate(server->get_scene_handle(), &instSettings, &new_inst) != IPL_STATUS_SUCCESS) {
-                    ResonanceLog::error("ResonanceGeometry: iplInstancedMeshCreate failed (dynamic).");
-                    iplStaticMeshRemove(local_mesh, new_sub);
-                    iplStaticMeshRelease(&local_mesh);
-                    iplSceneRelease(&new_sub);
-                    return;
-                }
-
-                _clear_meshes_impl(false);
-                sub_scene = new_sub;
-                static_meshes.push_back(local_mesh);
-                instanced_mesh = new_inst;
-                iplInstancedMeshAdd(instanced_mesh, server->get_scene_handle());
-                triangle_count = (int)ipl_triangles.size();
-                log_dynamic_instanced_mesh_registered(server, triangle_count);
-            } else {
-                IPLStaticMesh new_mesh = nullptr;
-                if (iplStaticMeshCreate(server->get_scene_handle(), &mesh_settings, &new_mesh) != IPL_STATUS_SUCCESS) {
-                    ResonanceLog::error("ResonanceGeometry: iplStaticMeshCreate failed (static).");
-                    return;
-                }
-                _clear_meshes_impl(false);
-                iplStaticMeshAdd(new_mesh, server->get_scene_handle());
-                static_meshes.push_back(new_mesh);
-                triangle_count = (int)ipl_triangles.size();
-            }
-
-            if (triangle_count > 0 && server->wants_debug_reflection_viz()) {
-                Transform3D tr = dynamic_object ? get_mesh_bake_transform() : Transform3D();
-                IPLMatrix4x4 ipl_xform = ResonanceUtils::to_ipl_matrix(tr);
-                debug_mesh_id = server->register_debug_mesh(ipl_vertices, ipl_triangles, ipl_mat_indices.data(), &ipl_xform, &mat_settings);
-                resonance::debug_log_raw("resonance_geometry:register_debug", "mesh_registered", triangle_count, debug_mesh_id);
-            }
-        }
-    }
+    const bool created = use_asset_path ? _create_meshes_from_asset(server) : _create_meshes_from_mesh(server);
+    if (!created)
+        return;
 
     const int net_triangles = triangle_count - previous_triangle_count;
     if (net_triangles != 0) {
         server->notify_geometry_changed(net_triangles);
     } else {
-        // Mesh replaced with the same triangle count; still need iplSceneCommit.
+        // Same triangle count, but the replaced mesh still needs a commit.
         server->mark_scene_commit_pending();
     }
+}
+
+static IPLSceneSettings mesh_sub_scene_settings(ResonanceServer* server) {
+    IPLSceneSettings settings{};
+    settings.type = server->get_phonon_mesh_scene_type();
+    settings.embreeDevice = server->get_embree_device_handle();
+    settings.radeonRaysDevice = server->get_radeon_rays_device_handle();
+    return settings;
+}
+
+// Builds the instance before releasing the previous mesh, so a failed rebuild keeps the old one and the
+// global triangle count stays correct. Takes ownership of new_sub and new_mesh.
+bool ResonanceGeometry::_install_dynamic_instance(ResonanceServer* server, IPLScene new_sub, IPLStaticMesh new_mesh,
+                                                  int new_triangle_count) {
+    IPLInstancedMeshSettings inst_settings{};
+    inst_settings.subScene = new_sub;
+    inst_settings.transform = ResonanceUtils::to_ipl_matrix(get_mesh_bake_transform());
+    IPLInstancedMesh new_inst = nullptr;
+    if (iplInstancedMeshCreate(server->get_scene_handle(), &inst_settings, &new_inst) != IPL_STATUS_SUCCESS) {
+        ResonanceLog::error("ResonanceGeometry: iplInstancedMeshCreate failed (dynamic).");
+        iplStaticMeshRemove(new_mesh, new_sub);
+        iplStaticMeshRelease(&new_mesh);
+        iplSceneRelease(&new_sub);
+        return false;
+    }
+
+    _clear_meshes_impl(false);
+    sub_scene = new_sub;
+    static_meshes.push_back(new_mesh);
+    instanced_mesh = new_inst;
+    server->queue_scene_instanced_mesh_add(iplInstancedMeshRetain(instanced_mesh));
+    triangle_count = new_triangle_count;
+    log_dynamic_instanced_mesh_registered(server, triangle_count);
+    return true;
+}
+
+bool ResonanceGeometry::_create_meshes_from_asset(ResonanceServer* server) {
+    const int64_t blob_sz = mesh_asset->get_size();
+    const uint8_t* blob = mesh_asset->get_data_ptr();
+    if (!blob || blob_sz <= 0) {
+        ResonanceLog::error("ResonanceGeometry: mesh_asset has no serialized data (asset path).");
+        return false;
+    }
+
+    IPLSceneSettings scene_settings = mesh_sub_scene_settings(server);
+    IPLScene new_sub = nullptr;
+    if (iplSceneCreate(server->get_context_handle(), &scene_settings, &new_sub) != IPL_STATUS_SUCCESS) {
+        ResonanceLog::error("ResonanceGeometry: iplSceneCreate failed (asset path).");
+        return false;
+    }
+
+    IPLSerializedObjectSettings serial_settings{};
+    serial_settings.data = const_cast<IPLbyte*>(reinterpret_cast<const IPLbyte*>(blob));
+    serial_settings.size = static_cast<IPLsize>(blob_sz);
+    IPLSerializedObject serial_obj = nullptr;
+    if (iplSerializedObjectCreate(server->get_context_handle(), &serial_settings, &serial_obj) != IPL_STATUS_SUCCESS) {
+        ResonanceLog::error("ResonanceGeometry: iplSerializedObjectCreate failed.");
+        iplSceneRelease(&new_sub);
+        return false;
+    }
+
+    IPLStaticMesh new_mesh = nullptr;
+    const IPLerror load_err = iplStaticMeshLoad(new_sub, serial_obj, nullptr, nullptr, &new_mesh);
+    iplSerializedObjectRelease(&serial_obj);
+    if (load_err != IPL_STATUS_SUCCESS || !new_mesh) {
+        ResonanceLog::error("ResonanceGeometry: iplStaticMeshLoad failed.");
+        iplSceneRelease(&new_sub);
+        return false;
+    }
+
+    iplStaticMeshAdd(new_mesh, new_sub);
+    if (material.is_valid()) {
+        IPLMaterial mat = material->get_ipl_material();
+        iplStaticMeshSetMaterial(new_mesh, new_sub, &mat, 0);
+    }
+    iplSceneCommit(new_sub);
+
+    return _install_dynamic_instance(server, new_sub, new_mesh, mesh_asset->get_triangle_count());
+}
+
+bool ResonanceGeometry::_create_meshes_from_mesh(ResonanceServer* server) {
+    // Parse outside the simulation lock to keep the lock short.
+    std::vector<IPLVector3> ipl_vertices;
+    std::vector<IPLTriangle> ipl_triangles;
+    std::vector<IPLint32> ipl_mat_indices;
+    if (!append_meshes_to_ipl(ipl_vertices, ipl_triangles, ipl_mat_indices, 0))
+        return false;
+
+    IPLMaterial mat_settings = ResonanceMaterial::ipl_material_or_default(material);
+
+    IPLStaticMeshSettings mesh_settings{};
+    mesh_settings.numVertices = static_cast<IPLint32>(ipl_vertices.size());
+    mesh_settings.numTriangles = static_cast<IPLint32>(ipl_triangles.size());
+    mesh_settings.numMaterials = 1;
+    mesh_settings.vertices = ipl_vertices.data();
+    mesh_settings.triangles = ipl_triangles.data();
+    mesh_settings.materials = &mat_settings;
+    mesh_settings.materialIndices = ipl_mat_indices.data();
+
+    if (dynamic_object) {
+        IPLSceneSettings scene_settings = mesh_sub_scene_settings(server);
+        IPLScene new_sub = nullptr;
+        if (iplSceneCreate(server->get_context_handle(), &scene_settings, &new_sub) != IPL_STATUS_SUCCESS) {
+            ResonanceLog::error("ResonanceGeometry: iplSceneCreate failed (dynamic).");
+            return false;
+        }
+        IPLStaticMesh new_mesh = nullptr;
+        if (iplStaticMeshCreate(new_sub, &mesh_settings, &new_mesh) != IPL_STATUS_SUCCESS) {
+            ResonanceLog::error("ResonanceGeometry: iplStaticMeshCreate failed (dynamic).");
+            iplSceneRelease(&new_sub);
+            return false;
+        }
+        iplStaticMeshAdd(new_mesh, new_sub);
+        iplSceneCommit(new_sub);
+        if (!_install_dynamic_instance(server, new_sub, new_mesh, static_cast<int>(ipl_triangles.size())))
+            return false;
+    } else {
+        IPLStaticMesh new_mesh = nullptr;
+        if (iplStaticMeshCreate(server->get_scene_handle(), &mesh_settings, &new_mesh) != IPL_STATUS_SUCCESS) {
+            ResonanceLog::error("ResonanceGeometry: iplStaticMeshCreate failed (static).");
+            return false;
+        }
+        _clear_meshes_impl(false);
+        server->queue_scene_static_mesh_add(iplStaticMeshRetain(new_mesh));
+        static_meshes.push_back(new_mesh);
+        triangle_count = static_cast<int>(ipl_triangles.size());
+    }
+
+    if (triangle_count > 0 && server->wants_debug_reflection_viz()) {
+        _store_reflection_debug_parse(std::move(ipl_vertices), std::move(ipl_triangles), std::move(ipl_mat_indices));
+        _register_reflection_debug_mesh(server, mat_settings);
+    }
+    return true;
+}
+
+void ResonanceGeometry::_store_reflection_debug_parse(std::vector<IPLVector3>&& vertices, std::vector<IPLTriangle>&& triangles,
+                                                      std::vector<IPLint32>&& mat_indices) {
+    reflection_debug_parsed_mesh_ = get_source_mesh();
+    reflection_debug_parsed_xform_ = dynamic_object ? Transform3D() : get_mesh_bake_transform();
+    reflection_debug_parsed_vertices_ = std::move(vertices);
+    reflection_debug_parsed_triangles_ = std::move(triangles);
+    reflection_debug_parsed_mat_indices_ = std::move(mat_indices);
+}
+
+// Child meshes are not part of the cache key, so a parse that includes them is never reused.
+bool ResonanceGeometry::_reflection_debug_parse_is_current() const {
+    if (includes_child_meshes() || reflection_debug_parsed_triangles_.empty())
+        return false;
+    const Transform3D xform = dynamic_object ? Transform3D() : get_mesh_bake_transform();
+    return reflection_debug_parsed_mesh_ == get_source_mesh() && reflection_debug_parsed_xform_ == xform;
+}
+
+void ResonanceGeometry::_register_reflection_debug_mesh(ResonanceServer* server, const IPLMaterial& mat) {
+    if (debug_mesh_id >= 0) {
+        server->unregister_debug_mesh(debug_mesh_id);
+        debug_mesh_id = -1;
+    }
+    // Dynamic buffers are in mesh space and follow the instance; static buffers are already in world space.
+    const Transform3D tr = dynamic_object ? get_mesh_bake_transform() : Transform3D();
+    const IPLMatrix4x4 ipl_xform = ResonanceUtils::to_ipl_matrix(tr);
+    debug_mesh_id = server->register_debug_mesh(reflection_debug_parsed_vertices_, reflection_debug_parsed_triangles_,
+                                                reflection_debug_parsed_mat_indices_.data(), &ipl_xform, &mat);
+    resonance::debug_log_raw("resonance_geometry:register_debug", "mesh_registered",
+                             static_cast<int>(reflection_debug_parsed_triangles_.size()), debug_mesh_id);
 }
 
 bool ResonanceGeometry::consume_transform_coalesce_tick() {
@@ -629,8 +708,8 @@ void ResonanceGeometry::_update_dynamic_transform() {
 
     IPLMatrix4x4 mat = ResonanceUtils::to_ipl_matrix(get_mesh_bake_transform());
 
-    // Queue for worker: avoids simulation_mutex on the main thread; see ResonanceServer::_apply_queued_dynamic_instanced_mesh_transforms_assume_locked.
-    // Per-instance coalesce; flush_dynamic_acoustic_transform bypasses interval throttle for a final pose.
+    // Queued to the worker so the main thread never takes simulation_mutex. Throttled; the final pose comes
+    // from flush_dynamic_acoustic_transform.
     if (!consume_transform_coalesce_tick())
         return;
     server->enqueue_dynamic_instanced_mesh_transform(instanced_mesh, mat);
@@ -642,11 +721,8 @@ void ResonanceGeometry::flush_dynamic_acoustic_transform() {
     ResonanceServer* server = ResonanceServer::get_singleton();
     if (!server)
         return;
-    // Phase 1: do not take simulation_mutex on the main thread. The dynamic instanced mesh transform queue
-    // drained by the worker in _apply_queued_dynamic_instanced_mesh_transforms_assume_locked already covers
-    // this transform; the synchronous iplInstancedMeshUpdateTransform here was redundant with the queue and
-    // caused main-thread stalls up to 200ms when the worker was mid-RunReflections. scene_dirty is atomic,
-    // no lock required to request a scene commit.
+    // Goes through the worker queue too: taking simulation_mutex here stalls the main thread while the
+    // worker runs reflections.
     IPLMatrix4x4 mat = ResonanceUtils::to_ipl_matrix(get_mesh_bake_transform());
     server->flush_dynamic_instanced_mesh_transform(instanced_mesh, mat);
 }
@@ -684,7 +760,7 @@ void ResonanceGeometry::set_material(const Ref<ResonanceMaterial>& p_material) {
         resonance::geometry_material_update_path(false, is_inside_tree(), !static_meshes.empty());
     if (path == resonance::GeometryMaterialUpdatePath::None)
         return;
-    // Prefer iplStaticMeshSetMaterial on live handles so Embree stays intact (SDK 4.8.1).
+    // Setting the material on live handles keeps Embree intact; a rebuild can lose dynamic occlusion.
     if (path == resonance::GeometryMaterialUpdatePath::InPlace)
         _update_material_inplace();
     else
@@ -695,23 +771,16 @@ void ResonanceGeometry::_update_material_inplace() {
     ResonanceServer* server = ResonanceServer::get_singleton();
     if (!server || !server->is_initialized() || static_meshes.empty())
         return;
-
-    IPLScene target = dynamic_object ? sub_scene : server->get_scene_handle();
-    if (!target)
+    if (dynamic_object && !sub_scene)
         return;
 
-    IPLMaterial mat = material.is_valid() ? material->get_ipl_material() : get_default_ipl_material();
-    // Single material per ResonanceGeometry (numMaterials == 1 at create time).
-    constexpr IPLint32 kMaterialIndex = 0;
-
-    {
-        auto lock = server->scoped_simulation_lock();
-        for (IPLStaticMesh mesh : static_meshes) {
-            if (!mesh)
-                continue;
-            iplStaticMeshSetMaterial(mesh, target, &mat, kMaterialIndex);
-        }
-        iplSceneCommit(target);
+    // The worker traces a dynamic sub-scene through its instance in the global scene, so it is queued too.
+    IPLMaterial mat = ResonanceMaterial::ipl_material_or_default(material);
+    for (IPLStaticMesh mesh : static_meshes) {
+        if (!mesh)
+            continue;
+        IPLScene retained_sub_scene = dynamic_object ? iplSceneRetain(sub_scene) : nullptr;
+        server->queue_scene_static_mesh_material(iplStaticMeshRetain(mesh), retained_sub_scene, mat);
     }
 
     if (server->wants_debug_reflection_viz() && debug_mesh_id >= 0)
@@ -726,8 +795,7 @@ Error ResonanceGeometry::export_dynamic_mesh_to_asset(const String& p_path) {
     if (!parent || !node3d || !node3d->is_visible_in_tree())
         return ERR_INVALID_PARAMETER;
 
-    MeshInstance3D* mesh_instance = Object::cast_to<MeshInstance3D>(parent);
-    Ref<Mesh> mesh = geometry_override.is_valid() ? geometry_override : (mesh_instance ? mesh_instance->get_mesh() : Ref<Mesh>());
+    const Ref<Mesh> mesh = get_source_mesh();
     if (mesh.is_null())
         return ERR_INVALID_PARAMETER;
 
@@ -735,96 +803,18 @@ Error ResonanceGeometry::export_dynamic_mesh_to_asset(const String& p_path) {
     std::vector<IPLTriangle> ipl_triangles;
     std::vector<IPLint32> ipl_mat_indices;
 
-    Transform3D xform; // Identity for dynamic (local space)
+    Transform3D xform; // Dynamic meshes are stored in mesh space
     if (!append_godot_mesh_to_ipl(mesh, xform, ipl_vertices, ipl_triangles, &ipl_mat_indices))
         return ERR_INVALID_PARAMETER;
 
-    IPLMaterial mat_settings = material.is_valid() ? material->get_ipl_material() : get_default_ipl_material();
-
-    IPLStaticMeshSettings mesh_settings{};
-    mesh_settings.numVertices = (IPLint32)ipl_vertices.size();
-    mesh_settings.numTriangles = (IPLint32)ipl_triangles.size();
-    mesh_settings.numMaterials = 1;
-    mesh_settings.vertices = ipl_vertices.data();
-    mesh_settings.triangles = ipl_triangles.data();
-    mesh_settings.materials = &mat_settings;
-    mesh_settings.materialIndices = ipl_mat_indices.data();
-
-    // Standalone export: create minimal Phonon context/scene (no ResonanceServer required)
-    IPLContext export_context = nullptr;
-    IPLContextSettings ctx_settings{};
-    ctx_settings.version = STEAMAUDIO_VERSION;
-    if (iplContextCreate(&ctx_settings, &export_context) != IPL_STATUS_SUCCESS) {
-        ResonanceLog::error("ResonanceGeometry: iplContextCreate failed (export_dynamic_mesh_to_asset).");
+    std::vector<IPLMaterial> ipl_materials{ResonanceMaterial::ipl_material_or_default(material)};
+    ResonanceServer* live_server = ResonanceServer::get_singleton();
+    const Ref<ResonanceGeometryAsset> asset = ResonanceSceneManager::build_geometry_asset(
+        ipl_vertices, ipl_triangles, ipl_mat_indices, ipl_materials, live_server ? live_server->get_context_handle() : nullptr);
+    if (asset.is_null())
         return ERR_CANT_CREATE;
-    }
 
-    IPLSceneSettings scene_settings{};
-    scene_settings.type = IPL_SCENETYPE_DEFAULT;
-
-    IPLScene temp_scene = nullptr;
-    if (iplSceneCreate(export_context, &scene_settings, &temp_scene) != IPL_STATUS_SUCCESS) {
-        ResonanceLog::error("ResonanceGeometry: iplSceneCreate failed (export_dynamic_mesh_to_asset).");
-        iplContextRelease(&export_context);
-        return ERR_CANT_CREATE;
-    }
-
-    IPLStaticMesh temp_mesh = nullptr;
-    if (iplStaticMeshCreate(temp_scene, &mesh_settings, &temp_mesh) != IPL_STATUS_SUCCESS) {
-        ResonanceLog::error("ResonanceGeometry: iplStaticMeshCreate failed (export_dynamic_mesh_to_asset).");
-        iplSceneRelease(&temp_scene);
-        iplContextRelease(&export_context);
-        return ERR_CANT_CREATE;
-    }
-
-    iplStaticMeshAdd(temp_mesh, temp_scene);
-    iplSceneCommit(temp_scene);
-
-    IPLSerializedObjectSettings serial_settings{};
-    IPLSerializedObject serial_obj = nullptr;
-    if (iplSerializedObjectCreate(export_context, &serial_settings, &serial_obj) != IPL_STATUS_SUCCESS) {
-        ResonanceLog::error("ResonanceGeometry: iplSerializedObjectCreate failed (export_dynamic_mesh_to_asset).");
-        iplStaticMeshRelease(&temp_mesh);
-        iplSceneRelease(&temp_scene);
-        iplContextRelease(&export_context);
-        return ERR_CANT_CREATE;
-    }
-
-    iplStaticMeshSave(temp_mesh, serial_obj);
-
-    IPLsize size = iplSerializedObjectGetSize(serial_obj);
-    IPLbyte* data = iplSerializedObjectGetData(serial_obj);
-    if (!data || size == 0) {
-        ResonanceLog::error("ResonanceGeometry: iplStaticMeshSave produced no data (export_dynamic_mesh_to_asset).");
-        iplSerializedObjectRelease(&serial_obj);
-        iplStaticMeshRelease(&temp_mesh);
-        iplSceneRelease(&temp_scene);
-        iplContextRelease(&export_context);
-        return ERR_CANT_CREATE;
-    }
-
-    Ref<ResonanceGeometryAsset> asset;
-    asset.instantiate();
-    PackedByteArray pba;
-    pba.resize((int64_t)size);
-    memcpy(pba.ptrw(), data, size);
-    asset->set_mesh_data(pba);
-    asset->set_triangle_count((int)ipl_triangles.size());
-
-    iplSerializedObjectRelease(&serial_obj);
-    iplStaticMeshRelease(&temp_mesh);
-    iplSceneRelease(&temp_scene);
-    iplContextRelease(&export_context);
-
-    String path = p_path;
-    if (!path.ends_with(".tres") && !path.ends_with(".res")) {
-        path += ".tres";
-    }
-    ProjectSettings* ps = ProjectSettings::get_singleton();
-    if (ps && (path.begins_with("res://") || path.begins_with("user://"))) {
-        path = ps->globalize_path(path);
-    }
-
+    const String path = ResonanceSceneManager::resource_save_path(p_path);
     Error save_err = ResourceSaver::get_singleton()->save(asset, path, ResourceSaver::FLAG_CHANGE_PATH);
     if (save_err == OK) {
         mesh_asset = asset;
@@ -839,8 +829,8 @@ void ResonanceGeometry::sync_reflection_debug_viz() {
     if (!server || !server->is_initialized())
         return;
 
-    // Never block the main thread on simulation_mutex (worker may hold it for a multi-second
-    // iplSimulatorRunReflections on the Default tracer). Retry next idle frame.
+    // Never block the main thread on simulation_mutex: the worker can hold it for seconds during
+    // iplSimulatorRunReflections on the default tracer. Retry next idle frame.
     const auto try_sim_lock_or_defer = [&]() -> std::unique_lock<std::mutex> {
         auto lock = server->try_scoped_simulation_lock();
         if (!lock.owns_lock())
@@ -870,20 +860,9 @@ void ResonanceGeometry::sync_reflection_debug_viz() {
         return;
     }
 
-    if (!dynamic_object && (!Engine::get_singleton() || !Engine::get_singleton()->is_editor_hint())) {
-        Node* root = this;
-        while (root->get_parent())
-            root = root->get_parent();
-        const ObjectID root_oid(root->get_instance_id());
-        if (!static_scene_asset_query_valid_ || cached_scene_tree_root_id_ != root_oid) {
-            cached_scene_tree_root_id_ = root_oid;
-            cached_root_has_static_scene_asset_ = _scene_has_static_scene_asset(root);
-            static_scene_asset_query_valid_ = true;
-        }
-        if (cached_root_has_static_scene_asset_) {
-            clear_debug_registration();
-            return;
-        }
+    if (_is_covered_by_static_scene()) {
+        clear_debug_registration();
+        return;
     }
 
     const bool use_asset_path = dynamic_object && mesh_asset.is_valid() && mesh_asset->is_valid();
@@ -892,57 +871,31 @@ void ResonanceGeometry::sync_reflection_debug_viz() {
         return;
     }
 
-    MeshInstance3D* mesh_instance = Object::cast_to<MeshInstance3D>(parent);
-    Ref<Mesh> mesh_for_geom;
-    if (geometry_override.is_valid()) {
-        mesh_for_geom = geometry_override;
-    } else if (mesh_instance) {
-        mesh_for_geom = mesh_instance->get_mesh();
-    }
-    if (mesh_for_geom.is_null()) {
+    if (!_has_mesh_source()) {
         clear_debug_registration();
         return;
     }
 
-    Transform3D xform = dynamic_object ? Transform3D() : get_mesh_bake_transform();
-
-    const bool reuse_parsed =
-        dynamic_object && reflection_debug_parsed_mesh_ == mesh_for_geom && !reflection_debug_parsed_triangles_.empty();
-    if (!reuse_parsed) {
-        reflection_debug_parsed_mesh_ = mesh_for_geom;
-        reflection_debug_parsed_vertices_.clear();
-        reflection_debug_parsed_triangles_.clear();
-        reflection_debug_parsed_mat_indices_.clear();
-        if (!append_godot_mesh_to_ipl(mesh_for_geom, xform, reflection_debug_parsed_vertices_, reflection_debug_parsed_triangles_,
-                                      &reflection_debug_parsed_mat_indices_)) {
+    if (!_reflection_debug_parse_is_current()) {
+        std::vector<IPLVector3> vertices;
+        std::vector<IPLTriangle> triangles;
+        std::vector<IPLint32> mat_indices;
+        if (!append_meshes_to_ipl(vertices, triangles, mat_indices, 0)) {
             clear_debug_registration();
             return;
         }
+        _store_reflection_debug_parse(std::move(vertices), std::move(triangles), std::move(mat_indices));
     }
 
-    IPLMaterial mat_settings = material.is_valid() ? material->get_ipl_material() : get_default_ipl_material();
-
-    {
-        auto lock = try_sim_lock_or_defer();
-        if (!lock.owns_lock())
-            return;
-        if (debug_mesh_id >= 0) {
-            server->unregister_debug_mesh(debug_mesh_id);
-            debug_mesh_id = -1;
-        }
-        Transform3D tr = dynamic_object ? get_mesh_bake_transform() : Transform3D();
-        IPLMatrix4x4 ipl_xform = ResonanceUtils::to_ipl_matrix(tr);
-        debug_mesh_id =
-            server->register_debug_mesh(reflection_debug_parsed_vertices_, reflection_debug_parsed_triangles_,
-                                        reflection_debug_parsed_mat_indices_.data(), &ipl_xform, &mat_settings);
-        resonance::debug_log_raw("resonance_geometry:sync_reflection_debug_viz", "mesh_registered",
-                                 (int)reflection_debug_parsed_triangles_.size(), debug_mesh_id);
-    }
+    const IPLMaterial mat_settings = ResonanceMaterial::ipl_material_or_default(material);
+    auto lock = try_sim_lock_or_defer();
+    if (!lock.owns_lock())
+        return;
+    _register_reflection_debug_mesh(server, mat_settings);
 }
 
 void ResonanceGeometry::refresh_geometry() {
-    // Idempotent: skip when IPL meshes are already live. A tear-down/rebuild (e.g. after
-    // init retry + deferred refresh) breaks Embree occlusion; see sync_reflection_debug_viz.
+    // Skip when the meshes are live: a needless tear-down and rebuild breaks Embree occlusion.
     if ((dynamic_object && instanced_mesh) || (!dynamic_object && !static_meshes.empty()))
         return;
     _create_meshes();
@@ -955,10 +908,10 @@ void ResonanceGeometry::discard_meshes_before_scene_release() {
         debug_mesh_id = -1;
     }
 
-    // Release IPL resources before scene teardown. Phonon uses refcounting; meshes must be
-    // explicitly removed and released. Static meshes are in global scene (static path) or sub_scene (dynamic path).
+    // Meshes must be removed and released explicitly before the scene goes; refcounting alone does not do it.
     if (server && server->is_initialized()) {
         auto lock = server->scoped_simulation_lock();
+        server->apply_queued_scene_mesh_changes_assume_locked();
         if (dynamic_object && instanced_mesh) {
             server->cancel_pending_dynamic_instanced_mesh_transform(instanced_mesh);
             IPLScene global_scene_handle = server->get_scene_handle();
@@ -1019,6 +972,7 @@ void ResonanceGeometry::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_material", "p_material"), &ResonanceGeometry::set_material);
     ClassDB::bind_method(D_METHOD("get_material"), &ResonanceGeometry::get_material);
     ClassDB::bind_method(D_METHOD("refresh_geometry"), &ResonanceGeometry::refresh_geometry);
+    ClassDB::bind_method(D_METHOD("sync_static_scene_coverage"), &ResonanceGeometry::sync_static_scene_coverage);
     ClassDB::bind_method(D_METHOD("flush_dynamic_acoustic_transform"), &ResonanceGeometry::flush_dynamic_acoustic_transform);
     ClassDB::bind_method(D_METHOD("sync_reflection_debug_viz"), &ResonanceGeometry::sync_reflection_debug_viz);
     ClassDB::bind_method(D_METHOD("get_mesh_bake_transform"), &ResonanceGeometry::get_mesh_bake_transform);

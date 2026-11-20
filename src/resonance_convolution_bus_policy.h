@@ -5,8 +5,7 @@
 
 namespace resonance {
 
-/// When no source has ever fed the shared reflection mixer and there is no decoded wet to hold, skip
-/// iplReflectionMixerApply (dry bus chain is already copied into the output buffer).
+/// The dry bus chain is already in the output buffer, so an unfed mixer with no held wet needs no Apply.
 inline bool convolution_bus_skip_empty_mixer_apply(uint64_t mixer_feed_count, bool have_decoded_wet_hold_last) {
     if (mixer_feed_count != 0)
         return false;

@@ -15,8 +15,7 @@
 
 namespace godot {
 
-/// Probe placement grids and IPL bakes (reflection IRs, pathing, static endpoint variations) into `ResonanceProbeData`.
-/// Optional `progress_callback` args are invoked synchronously on the calling thread (blocking bake).
+/// Bakes block the calling thread; progress_callback runs synchronously on it.
 class ResonanceBaker {
   public:
     ResonanceBaker() = default;
@@ -37,8 +36,8 @@ class ResonanceBaker {
         int generation_type,
         float height_above_floor);
 
-    /// Scene-aware probe placement (`iplProbeArrayGenerateProbes`); only GEN_CENTROID / GEN_UNIFORM_FLOOR - use `bake_manual_grid` for GEN_VOLUME.
-    /// `progress_callback`: optional synchronous progress; `pathing_scheduled`: defer disk save until pathing bake finishes.
+    /// Supports GEN_CENTROID and GEN_UNIFORM_FLOOR only; GEN_VOLUME goes through bake_manual_grid.
+    /// pathing_scheduled defers the save to disk until the pathing bake finishes.
     bool bake_with_probe_array(
         IPLContext context,
         IPLScene scene,
@@ -60,8 +59,8 @@ class ResonanceBaker {
         int num_threads = 2,
         int ambisonics_order = resonance::kBakeDefaultAmbisonicsOrder);
 
-    // Fixed probe positions -> bake IRs. spacing sets IPLSphere.radius (Steam UniformFloor: radius = spacing).
-    // reflection_type selects convolution/parametric/hybrid bake flags; GPU devices needed for Radeon scene type.
+    // spacing (clamped) becomes each probe's influence radius, as in Steam Audio's uniform floor placement.
+    // The GPU devices are needed only for the Radeon Rays scene type.
     bool bake_manual_grid(
         IPLContext context,
         IPLScene scene,
@@ -93,7 +92,7 @@ class ResonanceBaker {
         void* progress_user_data = nullptr,
         int num_threads = 2);
 
-    /// Baked IRs for `IPL_BAKEDDATAVARIATION_STATICSOURCE` (probes must exist). `influence_radius` limits which probes get data.
+    /// Probes must already exist. influence_radius limits which probes get data.
     bool bake_static_source(
         IPLContext context,
         IPLScene scene,
@@ -110,7 +109,6 @@ class ResonanceBaker {
         int num_threads = 2,
         int ambisonics_order = resonance::kBakeDefaultAmbisonicsOrder);
 
-    /// Same for `IPL_BAKEDDATAVARIATION_STATICLISTENER` (static listener endpoint).
     bool bake_static_listener(
         IPLContext context,
         IPLScene scene,
@@ -127,28 +125,28 @@ class ResonanceBaker {
         int num_threads = 2,
         int ambisonics_order = resonance::kBakeDefaultAmbisonicsOrder);
 
-    /// Probe count in serialized probe data, or -1 if load fails.
+    /// -1 if the probe data fails to load.
     int32_t probe_data_get_num_probes(IPLContext context, Ref<ResonanceProbeData> probe_data_res) const;
 
-    /// `iplProbeBatchRemoveProbe` + reserialize; drop matching `probe_positions` entry; clears pathing hash - reload batch in runtime if live.
+    /// Clears the pathing hash. Volumes already using the resource need reload_probe_batch.
     bool probe_data_remove_probe_at_index(IPLContext context, Ref<ResonanceProbeData> probe_data_res, int32_t index) const;
 
-    /// `iplProbeBatchRemoveData`: type 0 = reflections, 1 = pathing; variation 0-3 = reverb / static source / static listener / dynamic.
-    /// Endpoint sphere must match the original bake for static variations.
+    /// baked_data_type: 0 = reflections, 1 = pathing. variation: 0 reverb, 1 static source, 2 static listener, 3 dynamic.
+    /// For static variations the endpoint sphere must match the original bake.
     bool probe_data_remove_baked_data_layer(IPLContext context, Ref<ResonanceProbeData> probe_data_res, int baked_data_type,
                                             int variation, Vector3 endpoint, float influence_radius) const;
 
-    /// Weighted sum of STATICSOURCE energy fields from probes near [listener_position] (audit / cliff diagnosis).
+    /// Inverse-distance-squared blend of the static source energy of probes near listener_position.
     float probe_data_static_source_interpolated_energy(IPLContext context, Ref<ResonanceProbeData> probe_data_res, Vector3 endpoint_position,
                                                        float influence_radius, Vector3 listener_position, float neighbor_radius_m,
                                                        int* out_probes_with_data = nullptr, int* out_probes_missing = nullptr) const;
 
-    /// Baked reflections layer at a probe index (Steam 4.7 energy field readback). [baked_variation]: 0=reverb, 1=static source, 2=static listener.
+    /// baked_variation: 0 reverb, 1 static source, 2 static listener.
     Dictionary probe_data_query_baked_at_probe_index(IPLContext context, Ref<ResonanceProbeData> probe_data_res, int32_t probe_index,
                                                      int baked_variation, Vector3 endpoint_position, float influence_radius,
                                                      bool reconstruct_ir, int sampling_rate) const;
 
-    /// Interpolate baked reflections at [world_position] from neighboring probes (inverse-distance squared).
+    /// Inverse-distance-squared blend of the probes near world_position.
     Dictionary probe_data_query_baked_at_point(IPLContext context, Ref<ResonanceProbeData> probe_data_res, Vector3 world_position,
                                                int baked_variation, Vector3 endpoint_position, float influence_radius, float neighbor_radius_m,
                                                bool reconstruct_ir, int sampling_rate) const;

@@ -9,12 +9,12 @@ ResonanceDirectivityDrawer::ResonanceDirectivityDrawer() {
     material_dipole_.instantiate();
     material_dipole_->set_shading_mode(BaseMaterial3D::SHADING_MODE_UNSHADED);
     material_dipole_->set_flag(BaseMaterial3D::FLAG_DISABLE_DEPTH_TEST, true);
-    material_dipole_->set_albedo(Color(1.0f, 0.75f, 0.15f)); // amber for directional pattern
+    material_dipole_->set_albedo(Color(1.0f, 0.75f, 0.15f));
 
     material_omni_.instantiate();
     material_omni_->set_shading_mode(BaseMaterial3D::SHADING_MODE_UNSHADED);
     material_omni_->set_flag(BaseMaterial3D::FLAG_DISABLE_DEPTH_TEST, true);
-    material_omni_->set_albedo(Color(0.25f, 0.85f, 1.0f)); // cyan for omni / user-defined
+    material_omni_->set_albedo(Color(0.25f, 0.85f, 1.0f));
 }
 
 ResonanceDirectivityDrawer::~ResonanceDirectivityDrawer() {

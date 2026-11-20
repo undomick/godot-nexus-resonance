@@ -1,7 +1,7 @@
 @tool
 extends RefCounted
 
-## Static/dynamic export, OBJ, probe cleanup. Shared from the editor plugin.
+## Editor actions for static and dynamic geometry export, OBJ export and probe data cleanup.
 
 const ResonanceFsPaths = preload("res://addons/nexus_resonance/scripts/resonance_fs_paths.gd")
 const ResonanceSceneUtils = preload("res://addons/nexus_resonance/scripts/resonance_scene_utils.gd")
@@ -75,7 +75,7 @@ func _end_export_job() -> void:
 		_job_progress.hide_job()
 
 
-## Cancel in-flight export UI and drop editor refs (plugin _exit_tree).
+## Cancels a running export job and drops editor references.
 func shutdown() -> void:
 	if _job_progress:
 		_job_progress.cancel_requested = true
@@ -111,7 +111,7 @@ func _show_gdextension_error() -> void:
 	)
 
 
-## Returns ResonanceServer singleton or null after showing error. Checks required_method if non-empty.
+## Returns the server, or shows an error and returns null if it is missing or lacks [param required_method].
 func get_resonance_server_or_show_error(required_method: String = "") -> Variant:
 	if not ResonanceServerAccess.has_server():
 		_show_gdextension_error()
@@ -129,7 +129,7 @@ func get_resonance_server_or_show_error(required_method: String = "") -> Variant
 	return srv
 
 
-## Returns main scene path or empty string after showing error.
+## Returns the main scene path, or shows an error and returns an empty string.
 func get_main_scene_path_or_show_error() -> String:
 	var main_path: String = ProjectSettings.get_setting("application/run/main_scene", "")
 	if main_path.is_empty():
@@ -152,7 +152,7 @@ func get_main_scene_path_or_show_error() -> String:
 	return main_path
 
 
-## Ensures a logical res:// output directory exists. Returns true on success.
+## Creates the res:// directory if needed. Shows an error and returns false on failure.
 func ensure_output_dir(logical_path: String) -> bool:
 	var fs_path: String = ResonanceFsPaths.filesystem_path_for_dir_access(logical_path)
 	if DirAccess.dir_exists_absolute(fs_path):
@@ -170,22 +170,19 @@ func ensure_output_dir(logical_path: String) -> bool:
 	return true
 
 
-## Ensures statics/ under the bake output root exists.
 func ensure_statics_dir() -> bool:
 	return ensure_output_dir(ResonancePaths.get_statics_dir())
 
 
-## Ensures dynamics/ under the bake output root exists.
 func ensure_dynamics_dir() -> bool:
 	return ensure_output_dir(ResonancePaths.get_dynamics_dir())
 
 
-## Ensures batches/ under the bake output root exists.
 func ensure_batches_dir() -> bool:
 	return ensure_output_dir(ResonancePaths.get_batches_dir())
 
 
-## update_file + reimport_files for new OBJ paths (avoids full scan + reimport race).
+## Reimports only the new OBJ files; a full scan would race with the reimport.
 func _request_obj_reimport(paths: PackedStringArray) -> void:
 	if paths.is_empty():
 		return
@@ -207,7 +204,7 @@ func collect_scene_paths_for_obj(node: Node, out: Dictionary) -> void:
 		collect_scene_paths_for_obj(c, out)
 
 
-## Only scenes that already own a ResonanceStaticScene (no auto-create candidates).
+## Keeps only scenes that already contain a ResonanceStaticScene.
 func filter_scene_paths_by_existing_static_scene(paths_dict: Dictionary) -> PackedStringArray:
 	var filtered: PackedStringArray = []
 	for path in paths_dict:
@@ -241,8 +238,8 @@ func collect_tscn_files_recursive(dir: String, out: PackedStringArray) -> void:
 		out.append(p)
 
 
-## Returns scene paths from main scene tree (for build). Keys: paths, skipped.
-## filter_existing_static_scene: if true, only paths that already declare a ResonanceStaticScene.
+## Returns [code]{ paths, skipped }[/code] for the main scene and every scene instanced under it.
+## With [param filter_existing_static_scene], only scenes that already have a ResonanceStaticScene.
 func _get_scene_paths_from_build(filter_existing_static_scene: bool = false) -> Dictionary:
 	var main_path: String = get_main_scene_path_or_show_error()
 	if main_path.is_empty():
@@ -269,9 +266,9 @@ func _get_scene_paths_from_build(filter_existing_static_scene: bool = false) -> 
 	return {"paths": PackedStringArray(paths_dict.keys()), "skipped": 0}
 
 
-## Static export SSOT: asset file + ResonanceStaticScene fields (+ optional .tscn save).
-## Returns OK on success; 1 = no exportable static content / missing RSS when create_if_missing false;
-## 2 = nested packs only (no local geometry); 3 = unchanged (skip_unchanged); other = export/save errors.
+## Writes the static asset and updates the ResonanceStaticScene, optionally saving the scene.
+## Returns OK, 1 = no static content or no ResonanceStaticScene with create_if_missing off,
+## 2 = only nested packs, 3 = unchanged with skip_unchanged, or an error code.
 func _export_static_scene_ssot(
 	root: Node, scene_path: String, srv: Variant, opts: Dictionary = {}
 ) -> int:
@@ -293,26 +290,25 @@ func _export_static_scene_ssot(
 	if not static_scene_node and not create_if_missing:
 		return 1
 	ResonanceSceneUtils.warn_static_scenes_without_asset_covering_geometry(root)
-	var current_hash: int = (
-		srv.get_static_scene_hash(root) if srv.has_method("get_static_scene_hash") else 0
+	if not srv.has_method("build_static_scene_export"):
+		return ERR_UNAVAILABLE
+	var skip_if_hash: int = (
+		static_scene_node.export_hash
+		if skip_unchanged and _static_scene_asset_on_disk(static_scene_node, save_path)
+		else 0
 	)
+	var scene_export: Dictionary = srv.build_static_scene_export(root, skip_if_hash)
+	var current_hash: int = scene_export.get("hash", 0)
 	if current_hash == 0:
 		if ResonanceSceneUtils.has_nested_resonance_static_scene(root):
 			return 2
 		return 1
-	if (
-		skip_unchanged
-		and static_scene_node
-		and static_scene_node.export_hash == current_hash
-		and current_hash != 0
-	):
-		var has_valid: bool = (
-			static_scene_node.has_method("has_valid_asset") and static_scene_node.has_valid_asset()
-		)
-		var file_exists: bool = ResonanceFsPaths.file_exists_for_path(save_path)
-		if has_valid and file_exists:
-			return 3
-	var err: int = srv.export_static_scene_to_asset(root, save_path)
+	if current_hash == skip_if_hash:
+		return 3
+	var built_asset: Resource = scene_export.get("asset")
+	if built_asset == null:
+		return ERR_CANT_CREATE
+	var err: int = srv.save_geometry_asset(built_asset, save_path)
 	if err != OK:
 		return err
 	if not static_scene_node:
@@ -341,6 +337,16 @@ func _export_static_scene_ssot(
 	return OK
 
 
+func _static_scene_asset_on_disk(static_scene_node: Node, save_path: String) -> bool:
+	if not static_scene_node:
+		return false
+	if not (
+		static_scene_node.has_method("has_valid_asset") and static_scene_node.has_valid_asset()
+	):
+		return false
+	return ResonanceFsPaths.file_exists_for_path(save_path)
+
+
 func _export_one_static_scene(path: String, srv: Variant) -> int:
 	var scene_path: String = ResonanceFsPaths.resolve_resource_path(path)
 	if scene_path.is_empty() or scene_path.begins_with("uid://"):
@@ -359,8 +365,7 @@ func _export_one_static_scene(path: String, srv: Variant) -> int:
 	return err
 
 
-## Exports static geometry from scene paths.
-## Returns {exported, skipped_no_static, failed}.
+## Returns [code]{ exported, skipped_no_static, failed }[/code].
 func _export_static_scenes_batch(paths: PackedStringArray) -> Dictionary:
 	var srv: Variant = get_resonance_server_or_show_error("export_static_scene_to_asset")
 	if srv == null:
@@ -384,7 +389,7 @@ func _export_static_scenes_batch(paths: PackedStringArray) -> Dictionary:
 
 
 func _static_export_is_empty_skip(err: int) -> bool:
-	# Matches _export_static_scene_ssot: 1 = no content, 2 = nested only, 3 = unchanged.
+	# Skip codes of _export_static_scene_ssot.
 	return err == 1 or err == 2 or err == 3
 
 
@@ -480,8 +485,9 @@ func _export_static_scenes_batch_async(paths: PackedStringArray, success_fmt: St
 	_end_export_job()
 
 
-## Exports ResonanceDynamicGeometry from scene paths. make_save_path(scene_path, scene_base, geom) -> String.
-## dedup: if true, skip geoms with same scene_path|parent_name. Returns {exported: int, scenes_saved: int}.
+## [param make_save_path] is called as (scene_path, scene_base, geom) -> String.
+## With [param dedup], geometry with the same scene and parent name is exported once.
+## Returns [code]{ exported, scenes_saved }[/code].
 func _export_dynamic_objects_batch(
 	paths: PackedStringArray, make_save_path: Callable, dedup: bool = false
 ) -> Dictionary:
@@ -527,13 +533,13 @@ func _export_dynamic_objects_batch(
 	return {"exported": exported, "scenes_saved": scenes_saved}
 
 
-## Export static ResonanceGeometry (dynamic=false) to merged asset. Creates/updates ResonanceStaticScene.
-## Used as bake_runner.export_static_callback (called before bake when static scene needs export).
+## Exports the static ResonanceGeometry of the active scene into one asset and creates or updates
+## its ResonanceStaticScene.
 func export_active_scene(_unused: Variant = null) -> void:
 	_dispatch_export_async(Callable(self, "_export_active_scene_async"))
 
 
-## Synchronous export for bake_runner.export_static_callback (no export-job guard or menu toast).
+## Synchronous variant for the bake runner: no export job and no toast.
 func export_active_scene_sync_for_bake(_unused: Variant = null) -> void:
 	_export_active_scene_core()
 
@@ -596,8 +602,8 @@ func _export_active_scene_core() -> void:
 		)
 
 
-## Re-export static packs for scenes in the main build tree that already have a ResonanceStaticScene.
-## Does not create new ResonanceStaticScene nodes; use Export Active Scene for first-time export.
+## Re-exports static geometry for scenes under the main scene that already have a ResonanceStaticScene.
+## Does not create new ResonanceStaticScene nodes; use Export Active Scene for a first export.
 func export_static_scenes_in_build(_unused: Variant = null) -> void:
 	if _block_if_playing_scene():
 		return
@@ -613,7 +619,7 @@ func export_static_scenes_in_build(_unused: Variant = null) -> void:
 	)
 
 
-## Export static ResonanceGeometry from active scene to OBJ+MTL (debug/collada workflow).
+## Exports the static ResonanceGeometry of the active scene to OBJ and MTL.
 func export_scene_obj(_unused: Variant = null) -> void:
 	if _block_if_playing_scene():
 		return
@@ -853,7 +859,7 @@ func find_referenced_probe_data_paths() -> PackedStringArray:
 	return ProbeRefIndex.merge_referenced_paths(referenced, _collect_live_edited_probe_data_paths())
 
 
-## Delete ResonanceProbeData assets in batches/ that are not referenced by any scene or prefab.
+## Offers to delete ResonanceProbeData files in batches/ that no scene references.
 func clear_unreferenced_probe_data(_unused: Variant = null) -> void:
 	_dispatch_export_async(Callable(self, "_clear_unreferenced_probe_data_async"))
 
@@ -872,7 +878,7 @@ func _clear_unreferenced_probe_data_async() -> void:
 		probe_files, referenced, scan_cancelled
 	)
 	if plan.get("aborted", false):
-		# Partial scan must not offer deletes: unscanned scenes still reference live bake data.
+		# A canceled scan must not offer deletes: unscanned scenes may still reference the data.
 		_end_export_job()
 		return
 	var to_delete: PackedStringArray = plan.get("to_delete", PackedStringArray())
@@ -904,8 +910,8 @@ func _clear_unreferenced_probe_data_async() -> void:
 
 
 func _collect_live_edited_probe_data_paths() -> PackedStringArray:
-	# Bake saves probe .res immediately but only marks the scene unsaved. Disk .tscn
-	# scans miss that reference until Save - protect live edited-tree probe_data paths.
+	# A bake saves probe data right away but only marks the scene unsaved, so the
+	# .tscn on disk does not reference it yet.
 	if editor_interface == null:
 		return PackedStringArray()
 	var edited_root: Node = EditorInterface.get_edited_scene_root()

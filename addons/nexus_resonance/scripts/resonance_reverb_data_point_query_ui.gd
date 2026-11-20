@@ -68,7 +68,7 @@ static func band_energies_from_field(ef: Dictionary) -> PackedFloat32Array:
 	if not (data is PackedFloat32Array) or channels <= 0 or bins <= 0:
 		return out
 	var arr: PackedFloat32Array = data
-	# Layout: ch * bands * bins + band * bins + bin
+	# Index layout: ch * bands * bins + band * bins + bin
 	for ch in range(channels):
 		for band in range(mini(bands, BANDS)):
 			var base := ch * bands * bins + band * bins

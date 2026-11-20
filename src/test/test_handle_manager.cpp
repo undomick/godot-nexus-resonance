@@ -8,8 +8,7 @@
 #include <unordered_set>
 #include <vector>
 
-// Replicates HandleManagerBase alloc/recycle logic for unit testing without phonon.h.
-// Tests overflow, add/remove consistency, and kMaxProbeBatches.
+// Copy of HandleManagerBase alloc/recycle logic; the real one needs phonon.h.
 namespace {
 
 struct TestHandleManager {
@@ -81,7 +80,7 @@ TEST_CASE("HandleManager remove and re-add reuses handles", "[handle_manager]") 
     REQUIRE(m.remove(h0));
     REQUIRE(m.get(h0) == -1);
     int32_t h2 = m.add(30);
-    REQUIRE(h2 == h0); // Reused
+    REQUIRE(h2 == h0);
     REQUIRE(m.get(h2) == 30);
     REQUIRE(m.get(h1) == 20);
 }
@@ -118,8 +117,7 @@ TEST_CASE("kMaxProbeBatches is 1024", "[handle_manager]") {
 }
 
 TEST_CASE("HandleManager remove without recycle blocks reuse until recycle", "[handle_manager]") {
-    // Mirrors SourceManager destroy deferral: handle must not be reused while lifecycle queues
-    // still reference it (pending add / post-remove cleanup).
+    // Like SourceManager: a handle must not be reused while lifecycle queues still reference it.
     struct DeferRecycleManager {
         int32_t next_handle = 0;
         std::priority_queue<int32_t, std::vector<int32_t>, std::greater<int32_t>> free_handles;
@@ -165,10 +163,10 @@ TEST_CASE("HandleManager remove without recycle blocks reuse until recycle", "[h
     int32_t h0 = m.add(10);
     REQUIRE(m.remove(h0, false));
     int32_t h1 = m.add(20);
-    REQUIRE(h1 != h0); // Must not reuse while deferred
+    REQUIRE(h1 != h0);
     REQUIRE(m.recycle(h0));
     int32_t h2 = m.add(30);
-    REQUIRE(h2 == h0); // Reuse only after recycle
+    REQUIRE(h2 == h0);
     REQUIRE(m.items[h2] == 30);
 }
 
@@ -201,6 +199,6 @@ TEST_CASE("HandleManager overflow returns -1", "[handle_manager]") {
     int32_t h1 = m.add(2);
     REQUIRE(h1 >= 0);
     int32_t h2 = m.add(3);
-    REQUIRE(h2 == -1); // Overflow
+    REQUIRE(h2 == -1);
     REQUIRE(m.size() == 2u);
 }

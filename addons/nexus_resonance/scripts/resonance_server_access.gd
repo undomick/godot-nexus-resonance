@@ -1,7 +1,7 @@
 extends RefCounted
 class_name ResonanceServerAccess
 
-## Typed helpers for the [ResonanceServer] GDExtension singleton ([method get_server] / [method get_server_if_initialized] → [Variant]).
+## Typed helpers for the [ResonanceServer] GDExtension singleton ([method get_server] / [method get_server_if_initialized] -> [Variant]).
 
 ## Engine singleton registration name.
 const SINGLETON_NAME := &"ResonanceServer"

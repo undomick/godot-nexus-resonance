@@ -2,7 +2,7 @@
 extends EditorImportPlugin
 
 ## Imports .sofa HRTF files as ResonanceSOFAAsset.
-## Volume and norm can be adjusted per-file in import options.
+## Volume and normalization are set per file in the import options.
 
 
 func _get_importer_name() -> String:
@@ -78,7 +78,7 @@ func _import(
 	var err := ResourceSaver.save(asset, out_path)
 	if err != OK:
 		return err
-	# Also save beside .sofa for easy reference
+	# The copy next to the .sofa file is easier to find than the one under .godot/imported.
 	var beside_path := source_file.get_basename() + ".tres"
 	if beside_path != out_path:
 		var beside_err := ResourceSaver.save(asset, beside_path)

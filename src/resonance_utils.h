@@ -23,8 +23,6 @@ static inline Vector3 to_godot_vector3(const IPLVector3& v) {
     return Vector3(v.x, v.y, v.z);
 }
 
-/// Normalize vector with minimum length guard to avoid division-by-zero from degenerate transforms.
-/// Returns fallback when length is below kSafeUnitVectorMinLength.
 static inline Vector3 safe_unit_vector(const Vector3& v, const Vector3& fallback = Vector3(0, 1, 0)) {
     real_t len = v.length();
     if (len < kSafeUnitVectorMinLength)
@@ -64,8 +62,7 @@ static inline IPLMatrix4x4 to_ipl_matrix(const Transform3D& tr) {
     return mat;
 }
 
-/// Build transform for IPLProbeGenerationParams. Steam Audio expects the cube (-0.5,-0.5,-0.5) to (0.5,0.5,0.5)
-/// to be mapped to the volume (not (0,0,0)-(1,1,1)).
+/// Steam Audio maps the cube (-0.5, -0.5, -0.5) to (0.5, 0.5, 0.5) onto the probe volume, so the origin is its center.
 static inline IPLMatrix4x4 create_volume_transform_rotated(const Transform3D& global_transform, const Vector3& extents) {
     Vector3 safe_extents(extents.x > 0.0f ? extents.x : 0.001f,
                          extents.y > 0.0f ? extents.y : 0.001f,
@@ -75,12 +72,10 @@ static inline IPLMatrix4x4 create_volume_transform_rotated(const Transform3D& gl
     new_basis = new_basis.scaled(size);
     Transform3D final_tr;
     final_tr.basis = new_basis;
-    final_tr.origin = global_transform.origin; // Center, not min corner; core samples [-0.5,0.5]^3
+    final_tr.origin = global_transform.origin;
     return to_ipl_matrix(final_tr);
 }
 
-// --- Volume Ramping ---
-// Delegates to resonance_math.h for testable pure C++ implementation.
 static inline void apply_volume_ramp(float start_vol, float end_vol, int num_samples, float* buffer) {
     resonance::apply_volume_ramp(start_vol, end_vol, num_samples, buffer);
 }

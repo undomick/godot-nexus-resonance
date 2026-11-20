@@ -3,8 +3,7 @@
 
 namespace resonance {
 
-/// Playback distance/attenuation must use the same ResonanceServer listener pose as spatialization (seqlock),
-/// not a stale camera-only fallback updated later in the frame.
+/// Attenuation must use the server listener pose that spatialization uses, not a camera pose updated later in the frame.
 inline bool playback_should_sync_viewport_listener_before_attenuation(bool server_initialized) {
     return server_initialized;
 }

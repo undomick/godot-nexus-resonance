@@ -1,8 +1,7 @@
 extends GutTest
 
-## Exposed AudioStreamPlayer3D knobs on ResonancePlayer (with player_config).
-## Volume/max_db: source loudness before Steam DSP (see get_effective_volume_linear_cached).
-## pitch_scale / playing / autoplay / stream_paused / max_polyphony: Godot transport.
+## AudioStreamPlayer3D properties exposed on ResonancePlayer. volume_db and max_db set the source
+## gain before Steam Audio; the rest are Godot playback controls.
 
 var _player: ResonancePlayer
 var _runtime: Node
@@ -11,8 +10,8 @@ var _config: ResonancePlayerConfig
 
 func before_each() -> void:
 	_config = ResonancePlayerConfig.new()
-	# Keep sim light for unit tests (distance only; no reflections/pathing needed for transport knobs).
-	_config.reflections_enabled = 0
+	# Playback controls only need the direct path.
+	_config.reflections_enabled = false
 	_config.pathing_enabled_override = 0
 
 	_runtime = ClassDB.instantiate("ResonanceRuntime")
@@ -22,7 +21,7 @@ func before_each() -> void:
 	_player.player_config = _config
 	_player.stream = _make_tone_stream()
 	add_child_autoqfree(_player)
-	# Volume cache and sim push live in Node._process (not physics).
+	# The volume cache updates in _process, not in physics.
 	await wait_process_frames(2)
 
 
@@ -72,7 +71,7 @@ func test_volume_db_and_max_db_feed_host_gain_after_steam_not_ipl() -> void:
 	assert_almost_eq(float(inst["godot_max_db"]), 3.0, 0.001)
 	assert_almost_eq(float(inst["effective_volume_linear"]), expected, 0.001)
 
-	# max_db ceiling: volume above max must not raise host gain above max_db.
+	# volume_db above max_db is clamped to max_db.
 	_player.volume_db = 12.0
 	_player.max_db = 0.0
 	await wait_process_frames(2)
@@ -95,8 +94,8 @@ func test_playing_via_play_and_stop() -> void:
 	await wait_process_frames(2)
 	assert_true(_player.playing or _player.is_playing(), "play() should mark the player playing")
 	_player.stop()
-	# Soft-stop drains on the audio thread; Dummy driver may need the main-thread watchdog
-	# (max_reverb_duration + 0.5s). Poll with process frames.
+	# With the Dummy driver the soft-stop may only end through the main-thread watchdog,
+	# after realtime_simulation_duration + 0.5 s.
 	var settled := false
 	for _i in 360:
 		await wait_process_frames(1)

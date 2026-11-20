@@ -1,5 +1,6 @@
 #include "resonance_listener.h"
 #include "resonance_constants.h"
+#include "resonance_listener_reverb_policy.h"
 #include "resonance_listener_sync_policy.h"
 #include "resonance_runtime.h"
 #include "resonance_server.h"
@@ -18,8 +19,17 @@ void ResonanceListener::_enter_tree() {
     call_deferred("_apply_process_mode_for_tracer");
 }
 
+static_assert(ResonanceListener::REVERB_REALTIME == resonance::kListenerReverbRealtime);
+static_assert(ResonanceListener::REVERB_BAKED == resonance::kListenerReverbBaked);
+
 void ResonanceListener::_exit_tree() {
     remove_from_group("resonance_listener");
+    if (!reverb_pushed_to_server_)
+        return;
+    reverb_pushed_to_server_ = false;
+    ResonanceServer* server = ResonanceServer::get_singleton();
+    if (server && server->is_initialized())
+        server->set_listener_reverb(false, reverb_type);
 }
 
 bool ResonanceListener::_listener_sync_uses_physics() const {
@@ -55,6 +65,8 @@ bool ResonanceListener::_push_listener_pose_if_active(Camera3D* cam) {
     Vector3 forward = -gt.basis.get_column(2);
     Vector3 up = gt.basis.get_column(1);
     server->update_listener(position, forward, up);
+    server->set_listener_reverb(apply_reverb, reverb_type);
+    reverb_pushed_to_server_ = apply_reverb;
     return true;
 }
 
@@ -104,7 +116,7 @@ void ResonanceListener::_sync_listener_tick(double delta, bool use_physics_frame
 
     Viewport* vp = get_viewport();
     Camera3D* cam = vp ? vp->get_camera_3d() : nullptr;
-    // Pose SSOT: primary ResonanceRuntime::apply_resonance_viewport_to_server (prio 0) calls sync_viewport_listeners_to_server.
+    // A primary runtime pushes the listener pose itself, right before it ticks.
     if (resonance::listener_node_should_push_pose(ResonanceRuntime::primary_runtime_syncs_viewport_listeners()))
         _push_listener_pose_if_active(cam);
 }
@@ -125,5 +137,15 @@ void ResonanceListener::_bind_methods() {
         D_METHOD("sync_viewport_listeners_to_server", "viewport", "listener_nodes"),
         &ResonanceListener::sync_viewport_listeners_to_server);
     ClassDB::bind_method(D_METHOD("_apply_process_mode_for_tracer"), &ResonanceListener::_apply_process_mode_for_tracer);
+    ClassDB::bind_method(D_METHOD("set_apply_reverb", "enabled"), &ResonanceListener::set_apply_reverb);
+    ClassDB::bind_method(D_METHOD("is_apply_reverb"), &ResonanceListener::is_apply_reverb);
+    ClassDB::bind_method(D_METHOD("set_reverb_type", "type"), &ResonanceListener::set_reverb_type);
+    ClassDB::bind_method(D_METHOD("get_reverb_type"), &ResonanceListener::get_reverb_type);
     ADD_PROPERTY(PropertyInfo(Variant::BOOL, "listener_valid"), "set_listener_valid", "is_listener_valid");
+    ADD_GROUP("Reverb", "");
+    ADD_PROPERTY(PropertyInfo(Variant::BOOL, "apply_reverb"), "set_apply_reverb", "is_apply_reverb");
+    ADD_PROPERTY(PropertyInfo(Variant::INT, "reverb_type", PROPERTY_HINT_ENUM, "Realtime,Baked"), "set_reverb_type",
+                 "get_reverb_type");
+    BIND_ENUM_CONSTANT(REVERB_REALTIME);
+    BIND_ENUM_CONSTANT(REVERB_BAKED);
 }

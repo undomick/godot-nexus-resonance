@@ -2,6 +2,7 @@
 #include "resonance_server.h"
 
 #include <godot_cpp/classes/engine.hpp>
+#include <godot_cpp/classes/scene_tree.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/core/object.hpp>
 
@@ -58,11 +59,18 @@ void ResonanceStaticScene::_register_static_pack() {
     }
     server_init_retry_count_ = 0;
     const uint64_t id = get_instance_id();
-    if (!has_valid_asset()) {
+    if (has_valid_asset())
+        srv->add_or_replace_static_pack(id, static_scene_asset, get_global_transform());
+    else
         srv->remove_static_pack(id);
+    _sync_live_static_geometry();
+}
+
+void ResonanceStaticScene::_sync_live_static_geometry() {
+    SceneTree* tree = get_tree();
+    if (tree == nullptr)
         return;
-    }
-    srv->add_or_replace_static_pack(id, static_scene_asset, get_global_transform());
+    tree->call_group("resonance_geometry", "sync_static_scene_coverage");
 }
 
 void ResonanceStaticScene::_unregister_static_pack() {
@@ -145,4 +153,17 @@ void ResonanceStaticScene::_bind_methods() {
                  "set_static_scene_asset", "get_static_scene_asset");
     ADD_PROPERTY(PropertyInfo(Variant::STRING, "scene_name_when_exported"), "set_scene_name_when_exported", "get_scene_name_when_exported");
     ADD_PROPERTY(PropertyInfo(Variant::INT, "export_hash", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), "set_export_hash", "get_export_hash");
+}
+
+bool godot::subtree_has_static_scene(Node* p_node, StaticSceneQuery p_query) {
+    if (!p_node)
+        return false;
+    const ResonanceStaticScene* static_scene = Object::cast_to<ResonanceStaticScene>(p_node);
+    if (static_scene && (p_query == StaticSceneQuery::Any || static_scene->has_valid_asset()))
+        return true;
+    for (int i = 0; i < p_node->get_child_count(); i++) {
+        if (subtree_has_static_scene(p_node->get_child(i), p_query))
+            return true;
+    }
+    return false;
 }

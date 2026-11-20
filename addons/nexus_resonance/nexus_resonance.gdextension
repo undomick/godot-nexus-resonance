@@ -1,7 +1,7 @@
 [configuration]
 
 entry_symbol = "nexus_resonance_library_init"
-compatibility_minimum = "4.1"
+compatibility_minimum = "4.4"
 doc_path = "res://addons/nexus_resonance/doc_classes"
 
 [libraries]

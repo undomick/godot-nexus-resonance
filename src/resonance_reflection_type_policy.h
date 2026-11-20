@@ -13,19 +13,18 @@ inline int bake_reflection_type_from_runtime(int runtime_reflection_type) {
         return kBakedReflectionParametric;
     if (runtime_reflection_type == kReflectionHybrid)
         return kBakedReflectionHybrid;
-    // Convolution and TAN (and unknown) -> Convolution bake layer.
     return kBakedReflectionConvolution;
 }
 
-/// Exact bake/runtime match for gizmos and load_probe_batch. Legacy baked_type -1 is always OK.
-/// Hybrid bake is not a universal key: type change after bake requires rebake.
+/// A negative baked_type (baked before the type was stored) matches anything. Any other mismatch,
+/// Hybrid included, needs a rebake.
 inline bool baked_reflection_type_matches_runtime(int baked_type, int runtime_reflection_type) {
     if (baked_type < 0)
         return true;
     return baked_type == bake_reflection_type_from_runtime(runtime_reflection_type);
 }
 
-/// Effect params for Apply/process_mix. Hybrid may fall back to parametric when IR or bands are missing.
+/// Hybrid falls back to parametric when the IR or bands are missing.
 inline IPLReflectionEffectType reflection_effect_type_for_mode(int reflection_type, bool hybrid_convolution_and_parametric) {
     if (reflection_type == kReflectionParametric)
         return IPL_REFLECTIONEFFECTTYPE_PARAMETRIC;

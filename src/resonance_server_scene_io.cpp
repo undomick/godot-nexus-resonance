@@ -20,10 +20,6 @@
 
 using namespace godot;
 
-// Scene graph I/O: triangle/transform notifications, OBJ/serialized loads, dynamic instanced mesh queues, static-scene export hashes.
-
-// scene_dirty gates iplSceneCommit on the worker (set by geometry edits, coalesced transforms, or explicit mark_scene_commit_pending).
-
 namespace {
 
 void refresh_geometry_recursive(Node* node) {
@@ -45,7 +41,7 @@ void ResonanceServer::notify_geometry_changed_assume_locked(int triangle_delta) 
     const int after = global_triangle_count.fetch_add(triangle_delta, std::memory_order_release) + triangle_delta;
     const int before = after - triangle_delta;
     scene_dirty.store(true, std::memory_order_release);
-    // Arm gate only when entering a non-empty scene (cold / first triangles), not on incremental add/remove.
+    // Arm the gate only when the scene goes from empty to non-empty, not on every add or remove.
     if (resonance::spatial_audio_geometry_notify_should_arm_gate(before, after))
         arm_spatial_audio_output_gate();
 }
@@ -91,7 +87,7 @@ void ResonanceServer::save_scene_obj(String file_base_name) {
         if (ps)
             abs_path = ps->globalize_path(file_base_name);
     }
-    // Phonon OBJ export uses the path verbatim (append .obj if missing).
+    // Steam Audio uses the path verbatim and adds no extension.
     if (!abs_path.ends_with(".obj")) {
         abs_path = abs_path + ".obj";
     }
@@ -115,8 +111,7 @@ void ResonanceServer::load_scene_data(String filename) {
     bool loaded = false;
     {
         std::lock_guard<std::mutex> lock(simulation_mutex);
-        // Drop instanced packs before SceneManager releases the IPL scene; otherwise pack
-        // handles dangle and later remove/replace calls into a freed scene.
+        // Drop the instanced packs before the scene is released, or their handles point into a freed scene.
         _clear_static_packs_assume_locked();
         loaded = scene_manager_.load_scene_data(_ctx(), &scene, simulator, _tracer_type_for_mesh_operations(), _embree(), _radeon(), filename,
                                                 &global_triangle_count);
@@ -136,7 +131,6 @@ void ResonanceServer::refresh_all_geometry_from_scene_tree() {
     Window* win = tree->get_root();
     if (!win)
         return;
-    // SceneTree root is Window (extends Viewport -> Node); use Node entry for traversal.
     Node* root = static_cast<Node*>(static_cast<Viewport*>(win));
     refresh_geometry_recursive(root);
 }
@@ -147,19 +141,35 @@ void ResonanceServer::_deferred_refresh_all_geometry_after_scene_load() {
 }
 
 Ref<ResonanceGeometryAsset> ResonanceServer::export_static_scene_to_geometry_asset(Node* scene_root) {
-    return scene_manager_.export_static_scene_to_geometry_asset(scene_root);
+    return scene_manager_.export_static_scene_to_geometry_asset(scene_root, _ctx());
 }
 
 Error ResonanceServer::export_static_scene_to_asset(Node* scene_root, const String& p_path) {
-    return scene_manager_.export_static_scene_to_asset(scene_root, p_path);
+    return scene_manager_.export_static_scene_to_asset(scene_root, p_path, _ctx());
 }
 
 Error ResonanceServer::export_static_scene_to_obj(Node* scene_root, const String& file_base_name) {
-    return scene_manager_.export_static_scene_to_obj(scene_root, file_base_name);
+    return scene_manager_.export_static_scene_to_obj(scene_root, file_base_name, _ctx());
+}
+
+StaticSceneHashFn ResonanceServer::_static_scene_hash_fn() {
+    return [](const PackedByteArray& pba) { return _hash_probe_data(pba); };
 }
 
 int64_t ResonanceServer::get_static_scene_hash(Node* scene_root) {
-    return scene_manager_.get_static_scene_hash(scene_root, [this](const PackedByteArray& pba) { return _hash_probe_data(pba); });
+    return scene_manager_.get_static_scene_hash(scene_root, _static_scene_hash_fn());
+}
+
+Dictionary ResonanceServer::build_static_scene_export(Node* scene_root, int64_t skip_if_hash) {
+    const StaticSceneExport result = scene_manager_.build_static_scene_export(scene_root, _ctx(), _static_scene_hash_fn(), skip_if_hash);
+    Dictionary out;
+    out["hash"] = result.hash;
+    out["asset"] = result.asset;
+    return out;
+}
+
+Error ResonanceServer::save_geometry_asset(const Ref<ResonanceGeometryAsset>& p_asset, const String& p_path) {
+    return ResonanceSceneManager::save_geometry_asset_atomic(p_asset, p_path);
 }
 
 int64_t ResonanceServer::get_geometry_asset_hash(const Ref<ResonanceGeometryAsset>& p_asset) const {
@@ -223,8 +233,103 @@ void ResonanceServer::cancel_pending_dynamic_instanced_mesh_transform(IPLInstanc
     dynamic_instanced_transform_queue_.erase(mesh);
 }
 
-// Applies queued instanced-mesh transforms; may defer under dynamic_scene_commit_min_interval_ (re-queue transforms if not due).
-// flush_dynamic_instanced_mesh_transform sets force_apply to bypass the interval without disabling the default throttle.
+void ResonanceServer::queue_scene_static_mesh_add(IPLStaticMesh mesh) {
+    _queue_scene_mesh_change({SceneMeshChangeKind::AddStatic, mesh, nullptr, nullptr});
+}
+
+void ResonanceServer::queue_scene_static_mesh_remove(IPLStaticMesh mesh) {
+    _queue_scene_mesh_change({SceneMeshChangeKind::RemoveStatic, mesh, nullptr, nullptr});
+}
+
+void ResonanceServer::queue_scene_instanced_mesh_add(IPLInstancedMesh mesh) {
+    _queue_scene_mesh_change({SceneMeshChangeKind::AddInstanced, nullptr, mesh, nullptr});
+}
+
+void ResonanceServer::queue_scene_instanced_mesh_remove(IPLInstancedMesh mesh, IPLScene sub_scene) {
+    _queue_scene_mesh_change({SceneMeshChangeKind::RemoveInstanced, nullptr, mesh, sub_scene});
+}
+
+void ResonanceServer::queue_scene_static_mesh_material(IPLStaticMesh mesh, IPLScene sub_scene,
+                                                       const IPLMaterial& material) {
+    SceneMeshChange change{SceneMeshChangeKind::SetStaticMaterial, mesh, nullptr, sub_scene};
+    change.material = material;
+    _queue_scene_mesh_change(change);
+}
+
+void ResonanceServer::_queue_scene_mesh_change(const SceneMeshChange& change) {
+    {
+        std::lock_guard<std::mutex> qlock(scene_mesh_queue_mutex_);
+        scene_mesh_queue_.push_back(change);
+    }
+    scene_dirty.store(true, std::memory_order_release);
+    _wake_phonon_worker_for_lifecycle();
+}
+
+bool ResonanceServer::_has_pending_scene_mesh_changes() {
+    std::lock_guard<std::mutex> qlock(scene_mesh_queue_mutex_);
+    return !scene_mesh_queue_.empty();
+}
+
+void ResonanceServer::apply_queued_scene_mesh_changes_assume_locked() {
+    std::vector<SceneMeshChange> changes;
+    {
+        std::lock_guard<std::mutex> qlock(scene_mesh_queue_mutex_);
+        changes.swap(scene_mesh_queue_);
+    }
+    for (SceneMeshChange& change : changes)
+        _apply_scene_mesh_change_assume_locked(change);
+}
+
+void ResonanceServer::_apply_scene_mesh_change_assume_locked(SceneMeshChange& change) {
+    switch (change.kind) {
+    case SceneMeshChangeKind::AddStatic:
+        if (scene)
+            iplStaticMeshAdd(change.static_mesh, scene);
+        iplStaticMeshRelease(&change.static_mesh);
+        break;
+    case SceneMeshChangeKind::RemoveStatic:
+        if (scene)
+            iplStaticMeshRemove(change.static_mesh, scene);
+        iplStaticMeshRelease(&change.static_mesh);
+        break;
+    case SceneMeshChangeKind::AddInstanced:
+        if (scene)
+            iplInstancedMeshAdd(change.instanced_mesh, scene);
+        iplInstancedMeshRelease(&change.instanced_mesh);
+        break;
+    case SceneMeshChangeKind::RemoveInstanced:
+        if (scene) {
+            iplInstancedMeshRemove(change.instanced_mesh, scene);
+            // The parent scene must commit the removal before the sub-scene goes away.
+            iplSceneCommit(scene);
+        }
+        iplInstancedMeshRelease(&change.instanced_mesh);
+        if (change.sub_scene) {
+            iplSceneCommit(change.sub_scene);
+            iplSceneRelease(&change.sub_scene);
+        }
+        break;
+    case SceneMeshChangeKind::SetStaticMaterial:
+        _apply_static_mesh_material_assume_locked(change);
+        break;
+    }
+    scene_dirty.store(true, std::memory_order_release);
+}
+
+void ResonanceServer::_apply_static_mesh_material_assume_locked(SceneMeshChange& change) {
+    constexpr IPLint32 kMaterialIndex = 0;
+    IPLScene mesh_scene = change.sub_scene ? change.sub_scene : scene;
+    if (mesh_scene) {
+        iplStaticMeshSetMaterial(change.static_mesh, mesh_scene, &change.material, kMaterialIndex);
+        if (change.sub_scene)
+            iplSceneCommit(change.sub_scene);
+    }
+    iplStaticMeshRelease(&change.static_mesh);
+    if (change.sub_scene)
+        iplSceneRelease(&change.sub_scene);
+}
+
+// Transforms that are not due under dynamic_scene_commit_min_interval_ go back into the queue.
 bool ResonanceServer::_apply_queued_dynamic_instanced_mesh_transforms_assume_locked() {
     if (!_ctx() || !scene)
         return false;
@@ -280,7 +385,6 @@ bool ResonanceServer::_apply_queued_dynamic_instanced_mesh_transforms_assume_loc
 
 void ResonanceServer::set_physics_world(const Ref<World3D>& world) {
     godot_physics_bridge_.set_world(world);
-    // Load preset map once when Custom physics world first becomes available (not every tick).
     if (world.is_valid() && !godot_physics_bridge_.has_material_map())
         godot_physics_bridge_.refresh_material_map();
 }

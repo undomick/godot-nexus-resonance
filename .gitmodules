@@ -1,7 +1,3 @@
-[submodule "src/lib/godot-cpp"]
-	path = src/lib/godot-cpp
-	url = https://github.com/godotengine/godot-cpp
-	branch = 4.5
 [submodule "src/lib/pffft"]
 	path = src/lib/pffft
 	url = https://github.com/marton78/pffft

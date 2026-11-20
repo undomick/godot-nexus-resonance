@@ -1,10 +1,8 @@
 #ifndef RESONANCE_KEY_ENUM_HINT_H
 #define RESONANCE_KEY_ENUM_HINT_H
 
-// Key is a @GlobalScope enum, not a ClassDB class. class_get_integer_constant_list("Key") returns
-// nothing, so the inspector falls back to raw integers. PROPERTY_HINT_ENUM needs an explicit
-// "Label:value,..." list (GDExtension enum properties; see Godot Object class docs).
-// Regenerate: python scripts/gen_key_enum_hint.py
+// Key is a @GlobalScope enum, not a ClassDB class, so class_get_integer_constant_list("Key") is empty
+// and PROPERTY_HINT_ENUM needs this explicit list. Values mirror Godot's Key enum.
 
 namespace resonance {
 

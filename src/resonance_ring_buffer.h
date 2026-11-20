@@ -7,10 +7,8 @@
 
 namespace godot {
 
-/// SPSC FIFO for bridging Godot `mix_audio()` (variable/partial frame counts) to fixed IPL `frameSize` in ResonancePlayer / AmbisonicPlayer.
-/// Single producer, single consumer. When full, write() stores only what fits and drops the rest; compare the
-/// return value to n or poll get_overflow_drop_count() to detect loss. resize(0) makes write/read no-ops.
-/// `T` must be trivially copyable (`memcpy`).
+/// FIFO between Godot mix_audio() frame counts and the fixed IPL frameSize. Not synchronized: write() and
+/// read() must not run concurrently. T must be trivially copyable (memcpy).
 template <typename T>
 class RingBuffer {
   private:
@@ -22,7 +20,7 @@ class RingBuffer {
     size_t overflow_drop_count = 0;
 
   public:
-    /// Resize buffer; resets read/write positions. Call only before first use or when no read/write is in progress.
+    /// Not safe while a read or write is in progress. resize(0) makes write() and read() no-ops.
     void resize(size_t p_capacity) {
         buffer.resize(p_capacity, 0);
         capacity = p_capacity;
@@ -36,7 +34,7 @@ class RingBuffer {
     size_t get_available_write() const { return capacity - count; }
     size_t get_overflow_drop_count() const { return overflow_drop_count; }
 
-    /// Returns the number of elements written (may be less than n when the buffer is full).
+    /// Drops what does not fit and returns the number written; drops are counted in get_overflow_drop_count().
     size_t write(const T* data, size_t n) {
         if (capacity == 0 || n == 0) {
             return 0;

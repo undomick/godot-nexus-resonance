@@ -1,6 +1,10 @@
 extends GutTest
 
-## Epoch stamp for Coda bridge source handles (same recycle rules as ResonancePlayer / C++ policy).
+## Coda bridge source handles carry an epoch so a handle from before a server reinit is never reused.
+
+const ResonanceCodaVoiceSync = preload(
+	"res://addons/nexus_resonance/scripts/resonance_coda_voice_sync.gd"
+)
 
 
 func test_handle_matches_lifecycle_epoch_requires_non_zero_matching_epoch() -> void:
@@ -33,7 +37,7 @@ func test_reload_plan_drops_stale_handle_without_destroy() -> void:
 			stale_handle, stale_epoch, server_epoch
 		)
 	)
-	# destroy_source_if_epoch_matches is a no-op when epochs differ (covered indirectly: mismatch gate).
+	# destroy_source_if_epoch_matches uses the same check, so a mismatch skips the destroy.
 	var should_destroy := ResonanceCodaVoiceSync.handle_matches_lifecycle_epoch(
 		stale_handle, stale_epoch, server_epoch
 	)

@@ -63,9 +63,11 @@ std::string material_name_key(const String& name) {
 
 void ResonanceGodotPhysicsSceneBridge::set_world(const Ref<World3D>& world) {
     world_ = world;
+    world_bound_.store(world_.is_valid(), std::memory_order_release);
 }
 
 void ResonanceGodotPhysicsSceneBridge::clear_world() {
+    world_bound_.store(false, std::memory_order_release);
     world_.unref();
 }
 
@@ -262,7 +264,7 @@ void ResonanceGodotPhysicsSceneBridge::trace_closest(const IPLRay& ray, float mi
         return;
     dir.normalize();
 
-    // Same segment and hit-from-inside policy as trace_any / Custom ClosestHit+AnyHit.
+    // Same segment and hit-from-inside policy as trace_any.
     const float t_from = resonance::custom_scene_occlusion_ray_start_t(min_distance, max_distance);
     const Vector3 from = origin + dir * t_from;
     const Vector3 to = origin + dir * max_distance;
@@ -285,6 +287,7 @@ void ResonanceGodotPhysicsSceneBridge::trace_closest(const IPLRay& ray, float mi
     if (dist < min_distance || dist > max_distance)
         return;
 
+    // out_hit keeps a pointer to this material after the call; it stays valid until the next hit on this thread.
     thread_local static IPLMaterial s_hit_material;
 
     out_hit->distance = dist;

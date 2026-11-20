@@ -1,35 +1,55 @@
 #ifndef RESONANCE_SOURCE_UPDATE_POLICY_H
 #define RESONANCE_SOURCE_UPDATE_POLICY_H
 
+#include "resonance_constants.h"
+#include <array>
+#include <atomic>
+#include <cstddef>
+#include <cstdint>
 #include <cstring>
 
 namespace resonance {
 
-/// True when two simulation source snapshots are bitwise identical (including position).
 template <typename SourceUpdateParamsT>
 inline bool source_update_params_equal(const SourceUpdateParamsT& a, const SourceUpdateParamsT& b) {
     return std::memcmp(&a, &b, sizeof(SourceUpdateParamsT)) == 0;
 }
 
-/// Skip iplSourceSetInputs when params are unchanged.
-///
-/// Invariant: Linear/Curve attenuation tables live outside SourceUpdateParams (AttenuationEntry). When
-/// set_source_attenuation_callback_data changes a curve it sets curve_dirty; skip must stay false until
-/// SetInputs applies distanceAttenuationModel.dirty and clears curve_dirty.
-inline bool source_update_skip_unchanged_allowed(bool have_valid_snapshot, bool params_equal, bool enable_reflections,
-                                                 int baked_data_variation, bool use_listener_probe,
-                                                 bool attenuation_callback_curve_dirty) {
-    if (!have_valid_snapshot || !params_equal)
-        return false;
-    if (attenuation_callback_curve_dirty)
-        return false;
-    if (enable_reflections && use_listener_probe && baked_data_variation == 0)
-        return false;
-    return true;
-}
+/// Marks source snapshots stale from any thread without touching the worker-owned snapshot map. The
+/// worker consumes the mark before its skip-unchanged check, so the next update runs SetInputs.
+template <std::size_t N>
+class SourceSnapshotInvalidation {
+  public:
+    /// A handle outside [0, N) invalidates every snapshot.
+    void invalidate(int32_t handle) {
+        if (handle < 0 || static_cast<std::size_t>(handle) >= N) {
+            invalidate_all();
+            return;
+        }
+        handle_invalid_[static_cast<std::size_t>(handle)].store(true, std::memory_order_release);
+    }
 
-/// IPL reflections flag: override + output_reverb. Mix level ramps DSP only.
-/// Override: -1 = on, 0 = off, 1 = on.
+    void invalidate_all() { generation_.fetch_add(1, std::memory_order_acq_rel); }
+
+    /// seen_generation belongs to the snapshot record and is updated here.
+    bool consume(int32_t handle, uint32_t& seen_generation) {
+        bool invalid = false;
+        if (handle >= 0 && static_cast<std::size_t>(handle) < N)
+            invalid = handle_invalid_[static_cast<std::size_t>(handle)].exchange(false, std::memory_order_acq_rel);
+        const uint32_t generation = generation_.load(std::memory_order_acquire);
+        if (generation != seen_generation) {
+            seen_generation = generation;
+            invalid = true;
+        }
+        return invalid;
+    }
+
+  private:
+    std::array<std::atomic<bool>, N> handle_invalid_{};
+    std::atomic<uint32_t> generation_{0};
+};
+
+/// Override: -1 or 1 = on, 0 = off. Mix levels only scale the DSP and never clear the IPL flag.
 inline bool source_sim_reflections_enabled(int reflections_enabled_override, bool output_reverb) {
     if (!output_reverb)
         return false;
@@ -38,7 +58,6 @@ inline bool source_sim_reflections_enabled(int reflections_enabled_override, boo
     return true;
 }
 
-/// IPL pathing flag: override/global + output_reverb. Mix level ramps DSP only.
 /// Override: -1 = use pathing_enabled_global, 0 = off, 1 = on.
 inline bool source_sim_pathing_enabled(int pathing_enabled_override, bool pathing_enabled_global, bool output_reverb) {
     if (!output_reverb)
@@ -48,24 +67,28 @@ inline bool source_sim_pathing_enabled(int pathing_enabled_override, bool pathin
     return pathing_enabled_override != 0;
 }
 
-/// Playback DSP enable: output_* only. Mix levels ramp Apply gain separately.
 inline bool playback_enable_direct(bool output_direct) {
     return output_direct;
 }
 
-/// Wet send enable: output_reverb only. Mix 0 still runs EffectApply with silence so Overlap-Save drains.
+/// A mix level of 0 still runs EffectApply on silence so the overlap-save state drains.
 inline bool playback_enable_reverb(bool output_reverb) {
     return output_reverb;
 }
 
-/// Whether playback should allocate reflection/path IPL effects. Reflections override: -1/1 = on, 0 = off.
-/// Pathing override: -1 = use pathing_global, 0 = off, 1 = on.
+/// Overrides as in source_sim_reflections_enabled and source_sim_pathing_enabled.
 inline bool playback_wants_wet_effects(int reflections_enabled_override, int pathing_enabled_override,
                                        bool pathing_enabled_global) {
     const bool want_refl = reflections_enabled_override != 0;
     const bool want_path =
         (pathing_enabled_override == -1) ? pathing_enabled_global : (pathing_enabled_override != 0);
     return want_refl || want_path;
+}
+
+/// Only hybrid reverb comes back to each voice as ambisonics. Convolution and TAN go through the listener
+/// reverb bus, parametric reverb is mono.
+inline bool voice_needs_reverb_decoder(bool wants_wet_effects, int reflection_type) {
+    return wants_wet_effects && reflection_type == kReflectionHybrid;
 }
 
 } // namespace resonance

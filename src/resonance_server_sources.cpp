@@ -30,7 +30,7 @@ void fill_source_coordinate_space(IPLCoordinateSpace3& source, Vector3 pos, Vect
     source.right = ResonanceUtils::to_ipl_vector3(right_n);
 }
 
-// baked_data_variation: -1 realtime, 0 REVERB, 1 STATICSOURCE, 2 STATICLISTENER
+// baked_data_variation: -1 = realtime, 0 = reverb, 1 = static source, 2 = static listener.
 void fill_baked_reflection_identifier(IPLSimulationInputs& inputs, int baked_data_variation, Vector3 baked_endpoint_center,
                                       float baked_endpoint_radius, float reverb_influence_radius) {
     if (baked_data_variation == -1) {
@@ -62,33 +62,45 @@ void fill_baked_reflection_identifier(IPLSimulationInputs& inputs, int baked_dat
 
 } // namespace
 
-// IPL source handles: main-thread create/destroy queue real Add/Remove/Commit on the worker. Updates batch here and flush
-// from ResonanceRuntime; try_update_source can bypass the queue when simulation_mutex is available.
+int32_t ResonanceServer::_capped_source_count() const {
+    const int32_t count = source_manager.size_approx();
+    if (get_listener_reverb_source_handle() < 0 || count == 0)
+        return count;
+    return count - 1;
+}
 
 bool ResonanceServer::simulation_source_cap_blocks_create() const {
     return simulation_source_cap_error_emitted_ &&
-           resonance::source_count_at_simulation_limit(source_manager.size_approx(), max_simulation_sources);
+           resonance::source_count_at_simulation_limit(_capped_source_count(), max_simulation_sources);
+}
+
+IPLSourceSettings ResonanceServer::_player_source_settings() {
+    IPLSourceSettings settings{};
+    // Always created with PATHING; each source's inputs decide whether it takes part in RunPathing.
+    settings.flags = static_cast<IPLSimulationFlags>(IPL_SIMULATIONFLAGS_DIRECT | IPL_SIMULATIONFLAGS_REFLECTIONS |
+                                                     IPL_SIMULATIONFLAGS_PATHING);
+    return settings;
 }
 
 int32_t ResonanceServer::create_source_handle(Vector3 pos, float radius, const String& pathing_owner_path,
-                                              int pathing_enabled_override) {
+                                              int pathing_enabled_override, bool listener_reverb_slot) {
     if (!_ctx() || !simulator)
         return -1;
-    if (resonance::reject_simulation_source_create_at_cap(
-            source_manager.size_approx(), max_simulation_sources, simulation_source_cap_error_emitted_, [] {
+    if (!listener_reverb_slot &&
+        resonance::reject_simulation_source_create_at_cap(
+            _capped_source_count(), max_simulation_sources, simulation_source_cap_error_emitted_, [] {
                 ResonanceLog::error("ResonanceServer: max_simulation_sources exceeded (create_source_handle).");
             }))
         return -1;
-    IPLSourceSettings settings{};
-    // Sources are created with Pathing capacity; per-source SetInputs gates RunPathing.
-    settings.flags = static_cast<IPLSimulationFlags>(IPL_SIMULATIONFLAGS_DIRECT | IPL_SIMULATIONFLAGS_REFLECTIONS |
-                                                     IPL_SIMULATIONFLAGS_PATHING);
-    IPLSource src = nullptr;
-    if (iplSourceCreate(simulator, &settings, &src) != IPL_STATUS_SUCCESS || !src) {
-        ResonanceLog::error("ResonanceServer: iplSourceCreate failed (create_source_handle).");
-        return -1;
+    IPLSource src = resource_pool_.take_source();
+    if (!src) {
+        IPLSourceSettings settings = _player_source_settings();
+        if (iplSourceCreate(simulator, &settings, &src) != IPL_STATUS_SUCCESS || !src) {
+            ResonanceLog::error("ResonanceServer: iplSourceCreate failed (create_source_handle).");
+            return -1;
+        }
     }
-    // Main thread: register the IPLSource in SourceManager; iplSourceAdd runs later on the worker (see pending adds).
+    // iplSourceAdd runs later on the worker.
     const int32_t handle = source_manager.add_source(src);
     if (handle < 0) {
         iplSourceRelease(&src);
@@ -96,63 +108,39 @@ int32_t ResonanceServer::create_source_handle(Vector3 pos, float radius, const S
     }
     const bool attach_pathing = resonance::source_sim_pathing_enabled(
         pathing_enabled_override, pathing_enabled, output_reverb_enabled.load(std::memory_order_acquire));
-    if (handle < kMaxCacheHandles) {
-        // Block audio fetch before wiping recycled-handle cache slots.
+    if (handle < kMaxCacheHandles)
         _retire_reflection_ir_for_handle(handle);
-        source_attach_pending_[static_cast<size_t>(handle)].store(1, std::memory_order_release);
+    SourceUpdateParams initial = _default_new_source_params();
+    initial.position = pos;
+    initial.radius = radius;
+    source_table_.source_created(handle, initial, attach_pathing, [&] {
+        if (handle >= kMaxCacheHandles)
+            return;
         for (int slot = 0; slot < kCacheSlots; slot++) {
             occlusion_cache_[static_cast<size_t>(slot)][static_cast<size_t>(handle)].epoch = 0;
             reverb_param_cache_[static_cast<size_t>(slot)][static_cast<size_t>(handle)].epoch = 0;
             reflection_param_cache_[static_cast<size_t>(slot)][static_cast<size_t>(handle)].epoch = 0;
             pathing_param_cache_[static_cast<size_t>(slot)][static_cast<size_t>(handle)].epoch = 0;
         }
-        reflections_pending_[static_cast<size_t>(handle)].store(true, std::memory_order_release);
-        // Default per-handle flags until first _update_source_internal runs on the worker.
-        source_outputs_reflections_[static_cast<size_t>(handle)].store(1, std::memory_order_release);
-        source_outputs_realtime_reflections_[static_cast<size_t>(handle)].store(0, std::memory_order_release);
-        source_outputs_pathing_[static_cast<size_t>(handle)].store(attach_pathing ? 1 : 0, std::memory_order_release);
-        source_outputs_direct_[static_cast<size_t>(handle)].store(1, std::memory_order_release);
         last_good_reflection_valid_[static_cast<size_t>(handle)].store(0, std::memory_order_relaxed);
-        reflection_baked_energy_last_[static_cast<size_t>(handle)] = 0.0f;
-    }
-    {
-        PendingSourceAdd pa{};
-        pa.handle = handle;
-        pa.initial = _default_new_source_params();
-        pa.initial.position = pos;
-        pa.initial.radius = radius;
-        pa.initial.pathing_enabled_override = pathing_enabled_override;
-        std::lock_guard<std::mutex> lock(pending_source_lifecycle_mutex_);
-        pending_source_adds_.push_back(pa);
-    }
+        reflection_baked_energy_last_[static_cast<size_t>(handle)].store(0.0f, std::memory_order_relaxed);
+    });
     if (!pathing_owner_path.is_empty()) {
         std::lock_guard<std::mutex> o(source_pathing_owner_mutex_);
         source_pathing_owner_path_[handle] = pathing_owner_path;
     }
-    iplSourceRelease(&src); // balance create retain; SourceManager still holds the source until destroy
-    // First IR after cold-start: finish_cold_start_settle / _tick_schedule_simulation (interval policy).
+    iplSourceRelease(&src); // SourceManager keeps its own retain until destroy
     _wake_phonon_worker_for_lifecycle();
     return handle;
 }
 
-bool ResonanceServer::_is_source_attach_pending(int32_t handle) const {
-    if (handle < 0 || handle >= kMaxCacheHandles)
-        return false;
-    return source_attach_pending_[static_cast<size_t>(handle)].load(std::memory_order_acquire) != 0;
-}
-
-void ResonanceServer::ensure_fmod_reverb_source() {
-    if (fmod_reverb_source_handle_ >= 0)
-        return;
-    fmod_reverb_source_handle_ = create_source_handle(Vector3(0, 0, 0), 1.0f, String(), 0);
-}
-
-void ResonanceServer::_destroy_source_handle_under_simulation_lock(int32_t handle) {
+void ResonanceServer::_destroy_source_handle_under_simulation_lock(resonance::SimulationAccess access, int32_t handle) {
     IPLSource src = source_manager.get_source(handle);
     if (src) {
         if (simulator) {
             iplSourceRemove(src, simulator);
-            iplSimulatorCommit(simulator); // apply staging (same as after Add)
+            iplSimulatorCommit(simulator);
+            _forget_source_inputs_assume_locked(access, handle);
         }
         iplSourceRelease(&src);
     }
@@ -160,13 +148,8 @@ void ResonanceServer::_destroy_source_handle_under_simulation_lock(int32_t handl
         std::lock_guard<std::recursive_mutex> cb_lock(_attenuation_callback_mutex);
         _source_attenuation_entries.erase(handle);
     }
-    _source_update_snapshot_.erase(handle);
-    if (handle >= 0 && handle < kMaxCacheHandles) {
-        source_outputs_reflections_[static_cast<size_t>(handle)].store(0, std::memory_order_release);
-        source_outputs_realtime_reflections_[static_cast<size_t>(handle)].store(0, std::memory_order_release);
-        source_outputs_pathing_[static_cast<size_t>(handle)].store(0, std::memory_order_release);
-        source_outputs_direct_[static_cast<size_t>(handle)].store(0, std::memory_order_release);
-    }
+    source_table_.forget_snapshot(access, handle);
+    source_table_.clear_pass_outputs(handle);
     source_manager.remove_source(handle);
 }
 
@@ -192,56 +175,19 @@ void ResonanceServer::destroy_source_handle(int32_t handle) {
     if (handle < 0 || is_shutting_down_flag.load(std::memory_order_acquire) || !_ctx())
         return;
     _retire_reflection_ir_for_handle(handle);
-    // Invalidate handle on this thread immediately; worker finishes Remove + Commit + final Release.
-    IPLSource src = source_manager.get_source(handle); // retains
-    // Defer handle recycle until worker post-remove (or until a cancelled pending-add path recycles
-    // below). Otherwise create_source_handle can reuse H while pending_source_adds_ /
-    // pending_source_post_remove_cleanup_ still reference H -> double iplSourceAdd and
-    // post-remove wiping the new source's bookkeeping.
+    // The handle is invalid from here on; the worker does the Remove, Commit and final Release.
+    IPLSource src = source_manager.get_source(handle); // Retains
+    // Recycle only once no queued add or remove still refers to the handle; otherwise a new source on the
+    // same handle could be added twice or lose its state to the old source's post-remove cleanup.
     source_manager.remove_source(handle, false /* recycle */);
-    if (handle >= 0 && handle < kMaxCacheHandles)
-        source_attach_pending_[static_cast<size_t>(handle)].store(0, std::memory_order_release);
-
-    bool cancelled_pending_add = false;
-    {
-        std::lock_guard<std::mutex> lock(pending_source_lifecycle_mutex_);
-        for (auto it = pending_source_adds_.begin(); it != pending_source_adds_.end();) {
-            if (it->handle == handle) {
-                cancelled_pending_add = true;
-                it = pending_source_adds_.erase(it);
-            } else {
-                ++it;
-            }
-        }
-        if (src) {
-            if (cancelled_pending_add) {
-                // Never reached iplSourceAdd; drop retain without Remove and free the handle now.
-                IPLSource tmp = src;
-                iplSourceRelease(&tmp);
-                source_manager.recycle_source_handle(handle);
-            } else {
-                pending_source_removes_.push_back(src);
-                pending_source_post_remove_cleanup_.push_back(handle);
-            }
-        } else {
-            source_manager.recycle_source_handle(handle);
-        }
-    }
-    if (handle < kMaxCacheHandles) {
-        // Do not touch cache slot epochs (audio may still read the front slot); gate via atomics.
-        reflections_pending_[static_cast<size_t>(handle)].store(false, std::memory_order_release);
-        source_outputs_reflections_[static_cast<size_t>(handle)].store(0, std::memory_order_release);
-        source_outputs_realtime_reflections_[static_cast<size_t>(handle)].store(0, std::memory_order_release);
-        source_outputs_pathing_[static_cast<size_t>(handle)].store(0, std::memory_order_release);
-        source_outputs_direct_[static_cast<size_t>(handle)].store(0, std::memory_order_release);
-    }
+    const resonance::SourceDestroyOutcome outcome = source_table_.source_destroyed(handle, src);
+    if (outcome == resonance::SourceDestroyOutcome::kReleaseAndRecycleNow)
+        iplSourceRelease(&src);
+    if (outcome != resonance::SourceDestroyOutcome::kRemoveQueued)
+        source_manager.recycle_source_handle(handle);
     {
         std::lock_guard<std::mutex> h_lock(reverb_params_likely_available_mutex_);
         reverb_params_likely_available_.erase(handle);
-    }
-    {
-        std::lock_guard<std::mutex> b(source_update_batch_mutex_);
-        source_update_batch_.erase(handle);
     }
     {
         std::lock_guard<std::mutex> o(source_pathing_owner_mutex_);
@@ -260,13 +206,16 @@ bool ResonanceServer::try_update_source(int32_t handle, const SourceUpdateParams
     std::unique_lock<std::mutex> lock(simulation_mutex, std::defer_lock);
     if (!lock.try_lock())
         return false;
+    const resonance::SimulationAccess access(lock);
+    if (source_table_.replace_pending_add_initial(handle, params))
+        return true;
     IPLSource src = source_manager.get_source(handle);
     if (!src)
         return false;
-    _update_source_internal(src, handle, params);
+    _update_source_internal(access, src, handle, params);
     iplSourceRelease(&src);
     if (handle >= 0 && handle < kMaxCacheHandles &&
-        source_outputs_direct_[static_cast<size_t>(handle)].load(std::memory_order_acquire) != 0) {
+        source_table_.takes_part_in(resonance::SourcePass::kDirect, handle)) {
         _arm_phonon_direct_after_inline_inputs();
     }
     return true;
@@ -275,61 +224,47 @@ bool ResonanceServer::try_update_source(int32_t handle, const SourceUpdateParams
 void ResonanceServer::enqueue_source_update(int32_t handle, const SourceUpdateParams& params) {
     if (handle < 0)
         return;
-    std::lock_guard<std::mutex> lock(source_update_batch_mutex_);
-    source_update_batch_[handle] = params;
+    source_table_.enqueue_update(handle, params);
 }
 
-int ResonanceServer::_apply_source_update_batch(const std::vector<std::pair<int32_t, SourceUpdateParams>>& batch) {
+int ResonanceServer::_apply_source_update_batch(resonance::SimulationAccess access, const std::vector<SourceTable::QueuedUpdate>& batch) {
     int applied = 0;
-    for (const auto& kv : batch) {
-        IPLSource src = source_manager.get_source(kv.first);
+    for (const SourceTable::QueuedUpdate& update : batch) {
+        if (source_table_.replace_pending_add_initial(update.handle, update.params))
+            continue;
+        IPLSource src = source_manager.get_source(update.handle);
         if (!src)
             continue;
-        _update_source_internal(src, kv.first, kv.second);
+        if (_update_source_internal(access, src, update.handle, update.params))
+            applied++;
         iplSourceRelease(&src);
-        applied++;
     }
     return applied;
 }
 
-bool ResonanceServer::_flush_pending_source_updates_assume_locked() {
-    std::vector<std::pair<int32_t, SourceUpdateParams>> batch;
-    {
-        std::lock_guard<std::mutex> lock(source_update_batch_mutex_);
-        if (source_update_batch_.empty())
-            return false;
-        batch.reserve(source_update_batch_.size());
-        for (const auto& kv : source_update_batch_)
-            batch.push_back(kv);
-        source_update_batch_.clear();
-    }
-    return _apply_source_update_batch(batch) > 0;
+bool ResonanceServer::_flush_pending_source_updates_assume_locked(resonance::SimulationAccess access) {
+    const std::vector<SourceTable::QueuedUpdate> batch = source_table_.take_updates();
+    if (batch.empty())
+        return false;
+    const bool applied = _apply_source_update_batch(access, batch) > 0;
+    if (access.direct_only())
+        source_table_.requeue_not_superseded(batch);
+    return applied;
 }
 
 void ResonanceServer::flush_pending_source_updates() {
-    // If the worker holds simulation_mutex, merge back only handles not updated while flushing - never block main.
-    std::vector<std::pair<int32_t, SourceUpdateParams>> batch;
-    {
-        std::lock_guard<std::mutex> lock(source_update_batch_mutex_);
-        if (source_update_batch_.empty())
-            return;
-        batch.reserve(source_update_batch_.size());
-        for (const auto& kv : source_update_batch_)
-            batch.push_back(kv);
-        source_update_batch_.clear();
-    }
+    // Never block main: if the worker holds the mutex, requeue only the handles not updated meanwhile.
+    const std::vector<SourceTable::QueuedUpdate> batch = source_table_.take_updates();
+    if (batch.empty())
+        return;
     std::unique_lock<std::mutex> sim_lock(simulation_mutex, std::defer_lock);
     if (!sim_lock.try_lock()) {
         instrumentation_source_flush_try_lock_fail_.fetch_add(1, std::memory_order_relaxed);
-        // Latest-wins: re-queue only handles not superseded by a newer enqueue while we held the batch.
-        std::lock_guard<std::mutex> lock(source_update_batch_mutex_);
-        for (const auto& kv : batch) {
-            if (source_update_batch_.find(kv.first) == source_update_batch_.end())
-                source_update_batch_.emplace(kv.first, kv.second);
-        }
+        source_table_.requeue_not_superseded(batch);
         return;
     }
-    _apply_source_update_batch(batch);
+    const resonance::SimulationAccess access(sim_lock);
+    _apply_source_update_batch(access, batch);
 }
 
 void ResonanceServer::set_source_attenuation_callback_data(int32_t handle, int attenuation_mode, float min_distance, float max_distance, const PackedFloat32Array& curve_samples) {
@@ -366,37 +301,27 @@ void ResonanceServer::set_source_attenuation_callback_data(int32_t handle, int a
         d.curve_samples[i] = curve_samples[i];
     }
     entry_ptr->curve_dirty = true;
-    _invalidate_source_update_snapshot_valid(handle);
-}
-
-void ResonanceServer::_invalidate_source_update_snapshot_valid(int32_t handle) {
-    if (handle < 0)
-        return;
-    auto snap_it = _source_update_snapshot_.find(handle);
-    if (snap_it != _source_update_snapshot_.end())
-        snap_it->second.valid = false;
-}
-
-void ResonanceServer::_invalidate_all_source_update_snapshots() {
-    for (auto& kv : _source_update_snapshot_)
-        kv.second.valid = false;
+    if (handle >= 0)
+        source_table_.invalidate_snapshot(handle);
 }
 
 void ResonanceServer::clear_source_attenuation_callback_data(int32_t handle) {
     if (handle < 0 || !_ctx())
         return;
     std::lock_guard<std::mutex> sim_lock(simulation_mutex);
+    const resonance::SimulationAccess access(sim_lock);
     std::lock_guard<std::recursive_mutex> cb_lock(_attenuation_callback_mutex);
     _source_attenuation_entries.erase(handle);
     IPLSource src = source_manager.get_source(handle);
     if (!src)
         return;
-    auto snap_it = _source_update_snapshot_.find(handle);
-    if (snap_it == _source_update_snapshot_.end() || !snap_it->second.valid) {
+    const SourceUpdateParams* snapshot = source_table_.snapshot(access, handle);
+    if (!snapshot) {
         iplSourceRelease(&src);
         return;
     }
-    _update_source_internal(src, handle, snap_it->second.params);
+    const SourceUpdateParams params = *snapshot;
+    _update_source_internal(access, src, handle, params);
     iplSourceRelease(&src);
 }
 
@@ -410,7 +335,7 @@ void ResonanceServer::set_source_pathing_owner_path(int32_t handle, const String
         source_pathing_owner_path_[handle] = owner_path;
 }
 
-// IPL callback: mode 1 = linear 1→0, mode 2 = interpolate user curve samples between min/max distance.
+// Mode 1 = linear 1 -> 0, mode 2 = user curve samples between min and max distance.
 static float IPLCALL distance_attenuation_callback(IPLfloat32 distance, void* userData) {
     const ResonanceServer::AttenuationCallbackContext* ctx = static_cast<const ResonanceServer::AttenuationCallbackContext*>(userData);
     if (!ctx || !ctx->mutex || !ctx->data)
@@ -443,52 +368,27 @@ ResonanceServer::SourceUpdateParams ResonanceServer::_default_new_source_params(
     SourceUpdateParams p;
     p.occlusion_samples = resonance::kDefaultOcclusionSamples;
     p.num_transmission_rays = max_transmission_surfaces;
-    // Pathing off until the first real update supplies the owner's override (avoids attach-time
-    // pathing-volume warnings for generic creates / FMOD reverb source).
+    // Pathing stays off until the owner's first update, so a source without a probe volume does not warn at
+    // attach time.
     p.pathing_enabled_override = 0;
     return p;
 }
 
-void ResonanceServer::_maybe_apply_baked_reverb_listener_reflection_inputs(IPLSource src, int32_t handle, const IPLSimulationInputs& inputs,
-                                                                           const SourceUpdateParams& params, IPLSimulationFlags sim_flags,
-                                                                           bool enable_reflections) {
-    (void)handle;
-    // Baked REVERB is always listener-centric (separate REFLECTIONS slot).
-    if (params.baked_data_variation != 0 || !enable_reflections)
-        return;
-    if ((sim_flags & IPL_SIMULATIONFLAGS_REFLECTIONS) == 0)
-        return;
-    if (!pending_listener_valid.load(std::memory_order_acquire))
-        return;
-
-    const IPLCoordinateSpace3 listener_cs = _read_listener_coords_seqlock();
-    // Reflections-only struct: do not copy Direct pose/directFlags onto the wet slot.
-    IPLSimulationInputs reflections_inputs{};
-    reflections_inputs.flags = static_cast<IPLSimulationFlags>(IPL_SIMULATIONFLAGS_REFLECTIONS);
-    reflections_inputs.baked = inputs.baked;
-    reflections_inputs.bakedDataIdentifier = inputs.bakedDataIdentifier;
-    reflections_inputs.reverbScale[0] = inputs.reverbScale[0];
-    reflections_inputs.reverbScale[1] = inputs.reverbScale[1];
-    reflections_inputs.reverbScale[2] = inputs.reverbScale[2];
-    reflections_inputs.hybridReverbTransitionTime = inputs.hybridReverbTransitionTime;
-    reflections_inputs.hybridReverbOverlapPercent = inputs.hybridReverbOverlapPercent;
-    reflections_inputs.source.origin = listener_cs.origin;
-    reflections_inputs.source.ahead = listener_cs.ahead;
-    reflections_inputs.source.up = listener_cs.up;
-    reflections_inputs.source.right = listener_cs.right;
-    iplSourceSetInputs(src, IPL_SIMULATIONFLAGS_REFLECTIONS, &reflections_inputs);
+void ResonanceServer::_set_source_inputs_assume_locked(resonance::SimulationAccess access, IPLSource src, int32_t handle, IPLSimulationFlags selector,
+                                                       IPLSimulationInputs* inputs) {
+    iplSourceSetInputs(src, selector, inputs);
+    const uint64_t hash = resonance::fnv1a_hash(reinterpret_cast<const uint8_t*>(inputs), sizeof(*inputs));
+    source_table_.record_inputs(access, handle, static_cast<size_t>(selector) & 7u, hash);
 }
 
-void ResonanceServer::_update_source_internal(IPLSource src, int32_t handle, const SourceUpdateParams& params) {
+void ResonanceServer::_forget_source_inputs_assume_locked(resonance::SimulationAccess access, int32_t handle) {
+    source_table_.forget_inputs(access, handle);
+}
+
+bool ResonanceServer::_update_source_internal(resonance::SimulationAccess access, IPLSource src, int32_t handle, const SourceUpdateParams& params) {
     if (!src || !_ctx())
-        return;
+        return false;
 
-    SourceUpdateRecord& snap = _source_update_snapshot_[handle];
-
-    const bool output_reverb_preview = output_reverb_enabled.load(std::memory_order_acquire);
-    const bool enable_reflections_preview =
-        resonance::source_sim_reflections_enabled(params.reflections_enabled_override, output_reverb_preview);
-    constexpr bool use_listener_probe_preview = true;
     bool attenuation_curve_dirty = false;
     {
         std::lock_guard<std::recursive_mutex> cb_lock(_attenuation_callback_mutex);
@@ -496,21 +396,18 @@ void ResonanceServer::_update_source_internal(IPLSource src, int32_t handle, con
         if (att_it != _source_attenuation_entries.end() && att_it->second)
             attenuation_curve_dirty = att_it->second->curve_dirty;
     }
-    if (resonance::source_update_skip_unchanged_allowed(snap.valid, resonance::source_update_params_equal(snap.params, params),
-                                                        enable_reflections_preview, params.baked_data_variation,
-                                                        use_listener_probe_preview, attenuation_curve_dirty)) {
+    const resonance::SourceUpdateDecision decision =
+        source_table_.begin_update(access, handle, params, attenuation_curve_dirty);
+    if (decision == resonance::SourceUpdateDecision::kSkipUnchanged)
         instrumentation_source_update_skip_unchanged_.fetch_add(1, std::memory_order_relaxed);
-        return;
-    }
-
-    snap.params = params;
-    snap.valid = true;
+    if (decision != resonance::SourceUpdateDecision::kApply)
+        return false;
 
     IPLSimulationInputs inputs{};
-    const bool output_reverb = output_reverb_preview;
+    const bool output_reverb = output_reverb_enabled.load(std::memory_order_acquire);
     bool enable_reflections =
-        resonance::source_sim_reflections_enabled(params.reflections_enabled_override, output_reverb);
-    // Drop realtime reflections beyond cap so IPL does not raycast far sources.
+        params.simulation_active && resonance::source_sim_reflections_enabled(params.reflections_enabled_override, output_reverb);
+    // No realtime reflection rays for sources beyond the cap.
     if (enable_reflections && params.baked_data_variation == -1 && realtime_reflection_max_distance_m > 0.0f) {
         const Vector3 lip = ResonanceUtils::to_godot_vector3(get_current_listener_coords().origin);
         if (params.position.distance_to(lip) > static_cast<real_t>(realtime_reflection_max_distance_m))
@@ -518,10 +415,11 @@ void ResonanceServer::_update_source_internal(IPLSource src, int32_t handle, con
     }
 
     const bool enable_pathing =
+        params.simulation_active &&
         resonance::source_sim_pathing_enabled(params.pathing_enabled_override, pathing_enabled, output_reverb);
 
-    // Mix levels ramp DSP only. Live sources always request Direct; wet flags follow enable + output_reverb.
-    // Direct SetInputs is isolated from Reflections/Pathing.
+    // Mix levels only affect the DSP. An active source always requests Direct; the wet flags follow the
+    // enable flags and output_reverb.
     IPLSimulationFlags sim_flags =
         static_cast<IPLSimulationFlags>(resonance::source_direct_sim_flags_mask(static_cast<int>(IPL_SIMULATIONFLAGS_DIRECT)));
     if (enable_reflections)
@@ -539,6 +437,8 @@ void ResonanceServer::_update_source_internal(IPLSource src, int32_t handle, con
         inputs.directFlags = (IPLDirectSimulationFlags)(inputs.directFlags | IPL_DIRECTSIMULATIONFLAGS_AIRABSORPTION);
     if (params.directivity_weight != 0.0f || params.directivity_power != 1.0f)
         inputs.directFlags = (IPLDirectSimulationFlags)(inputs.directFlags | IPL_DIRECTSIMULATIONFLAGS_DIRECTIVITY);
+    if (!params.simulation_active)
+        inputs.directFlags = static_cast<IPLDirectSimulationFlags>(0);
 
     fill_source_coordinate_space(inputs.source, params.position, params.source_forward, params.source_up);
     inputs.airAbsorptionModel.type = IPL_AIRABSORPTIONTYPE_DEFAULT;
@@ -547,7 +447,7 @@ void ResonanceServer::_update_source_internal(IPLSource src, int32_t handle, con
     inputs.directivity.callback = nullptr;
     inputs.directivity.userData = nullptr;
 
-    // Callback userData must stay valid until iplSourceSetInputs; lookup under attenuation mutex.
+    // The callback userData must stay valid through iplSourceSetInputs.
     bool have_callback_entry = false;
     AttenuationCallbackContext* callback_ctx = nullptr;
     {
@@ -565,7 +465,6 @@ void ResonanceServer::_update_source_internal(IPLSource src, int32_t handle, con
         }
     }
 
-    // Distance attenuation master switch. Mode Disabled also forces off.
     const bool da_enabled = params.distance_attenuation && params.attenuation_mode != resonance::kAttenuationModeDisabled;
 
     auto apply_distance_model = [&](IPLDistanceAttenuationModel& model, resonance::SimDistanceModelKind kind) {
@@ -609,7 +508,7 @@ void ResonanceServer::_update_source_internal(IPLSource src, int32_t handle, con
     inputs.hybridReverbTransitionTime = hybrid_reverb_transition_time;
     inputs.hybridReverbOverlapPercent = hybrid_reverb_overlap_percent;
 
-    // Retain pathing probe batch until after SetInputs; release queued on worker drain.
+    // The probe batch stays retained past SetInputs; the worker drain releases it.
     IPLProbeBatch pathing_batch_retained = nullptr;
     if (enable_pathing && pathing_enabled) {
         IPLProbeBatch path_batch = _get_pathing_batch_for_source(handle, params.pathing_probe_batch_handle);
@@ -635,56 +534,55 @@ void ResonanceServer::_update_source_internal(IPLSource src, int32_t handle, con
         }
     }
 
-    if (handle >= 0 && handle < kMaxCacheHandles) {
-        source_outputs_reflections_[static_cast<size_t>(handle)].store(enable_reflections ? 1 : 0, std::memory_order_release);
-        if (!enable_reflections && handle >= 0 && handle < kMaxCacheHandles)
-            reflections_pending_[static_cast<size_t>(handle)].store(false, std::memory_order_release);
-        source_outputs_realtime_reflections_[static_cast<size_t>(handle)].store(
-            (enable_reflections && params.baked_data_variation == -1) ? 1 : 0, std::memory_order_release);
-        source_outputs_pathing_[static_cast<size_t>(handle)].store(((sim_flags & IPL_SIMULATIONFLAGS_PATHING) != 0) ? 1 : 0,
-                                                                   std::memory_order_release);
-        source_outputs_direct_[static_cast<size_t>(handle)].store(1, std::memory_order_release);
-    }
+    source_table_.set_direct_output(handle, params.simulation_active);
 
-    // 1) Direct slot only (occlusion/transmission/air) - never mix PATHING into this selector.
+    // Direct inputs go in their own call; PATHING must never be in this selector.
     apply_distance_model(inputs.distanceAttenuationModel, direct_kind);
     inputs.flags = static_cast<IPLSimulationFlags>(
         resonance::source_direct_set_inputs_selector_flags(static_cast<int>(IPL_SIMULATIONFLAGS_DIRECT)));
-    iplSourceSetInputs(src, IPL_SIMULATIONFLAGS_DIRECT, &inputs);
+    _set_source_inputs_assume_locked(access, src, handle, IPL_SIMULATIONFLAGS_DIRECT, &inputs);
 
-    // 2) Wet slot: Reflections and/or Pathing. Split when models differ so Pathing CALLBACK
-    // does not rewrite Reflections IR correction (split when models differ).
+    source_table_.direct_inputs_set(access, handle);
+    if (access.direct_only()) {
+        if (pathing_batch_retained)
+            iplProbeBatchRelease(&pathing_batch_retained);
+        return true;
+    }
+
+    source_table_.set_wet_outputs(access, handle, enable_reflections,
+                                  enable_reflections && params.baked_data_variation == -1,
+                                  (sim_flags & IPL_SIMULATIONFLAGS_PATHING) != 0);
+
+    // Reflections and pathing share one call unless their distance models differ; otherwise the pathing
+    // callback would rewrite the reflections IR correction.
     const bool want_reflections = enable_reflections && ((sim_flags & IPL_SIMULATIONFLAGS_REFLECTIONS) != 0);
     const bool want_pathing = (sim_flags & IPL_SIMULATIONFLAGS_PATHING) != 0;
     const int wet_inputs_flags =
         static_cast<int>(sim_flags) & (static_cast<int>(IPL_SIMULATIONFLAGS_REFLECTIONS) | static_cast<int>(IPL_SIMULATIONFLAGS_PATHING));
-    if (resonance::source_wet_set_inputs_needed(wet_inputs_flags, pathing_enabled)) {
-        const bool split = want_reflections && want_pathing &&
-                           resonance::sim_distance_models_need_split_wet_set_inputs(reflections_kind, pathing_kind);
-        if (split) {
-            apply_distance_model(inputs.distanceAttenuationModel, reflections_kind);
-            inputs.flags = static_cast<IPLSimulationFlags>(IPL_SIMULATIONFLAGS_REFLECTIONS);
-            iplSourceSetInputs(src, IPL_SIMULATIONFLAGS_REFLECTIONS, &inputs);
+    const bool split = want_reflections && want_pathing &&
+                       resonance::sim_distance_models_need_split_wet_set_inputs(reflections_kind, pathing_kind);
+    if (split) {
+        apply_distance_model(inputs.distanceAttenuationModel, reflections_kind);
+        inputs.flags = static_cast<IPLSimulationFlags>(IPL_SIMULATIONFLAGS_REFLECTIONS);
+        _set_source_inputs_assume_locked(access, src, handle, IPL_SIMULATIONFLAGS_REFLECTIONS, &inputs);
 
-            apply_distance_model(inputs.distanceAttenuationModel, pathing_kind);
-            inputs.flags = static_cast<IPLSimulationFlags>(IPL_SIMULATIONFLAGS_PATHING);
-            iplSourceSetInputs(src, IPL_SIMULATIONFLAGS_PATHING, &inputs);
-        } else {
-            resonance::SimDistanceModelKind wet_kind = resonance::SimDistanceModelKind::Default;
-            if (want_pathing)
-                wet_kind = pathing_kind;
-            else if (want_reflections)
-                wet_kind = reflections_kind;
-            apply_distance_model(inputs.distanceAttenuationModel, wet_kind);
-            inputs.flags = static_cast<IPLSimulationFlags>(wet_inputs_flags);
-            const IPLSimulationFlags wet_selector = static_cast<IPLSimulationFlags>(resonance::source_set_inputs_selector_flags(
-                wet_inputs_flags, static_cast<int>(IPL_SIMULATIONFLAGS_PATHING), pathing_enabled));
-            iplSourceSetInputs(src, wet_selector, &inputs);
-        }
+        apply_distance_model(inputs.distanceAttenuationModel, pathing_kind);
+        inputs.flags = static_cast<IPLSimulationFlags>(IPL_SIMULATIONFLAGS_PATHING);
+        _set_source_inputs_assume_locked(access, src, handle, IPL_SIMULATIONFLAGS_PATHING, &inputs);
+    } else {
+        resonance::SimDistanceModelKind wet_kind = resonance::SimDistanceModelKind::Default;
+        if (want_pathing)
+            wet_kind = pathing_kind;
+        else if (want_reflections)
+            wet_kind = reflections_kind;
+        apply_distance_model(inputs.distanceAttenuationModel, wet_kind);
+        inputs.flags = static_cast<IPLSimulationFlags>(wet_inputs_flags);
+        const IPLSimulationFlags wet_selector = static_cast<IPLSimulationFlags>(resonance::source_set_inputs_selector_flags(
+            wet_inputs_flags, static_cast<int>(IPL_SIMULATIONFLAGS_REFLECTIONS),
+            static_cast<int>(IPL_SIMULATIONFLAGS_PATHING), pathing_enabled));
+        _set_source_inputs_assume_locked(access, src, handle, wet_selector, &inputs);
     }
 
-    // 3) Baked REVERB: overwrite Reflections pose with listener (Reflections-only struct).
-    _maybe_apply_baked_reverb_listener_reflection_inputs(src, handle, inputs, params, sim_flags, enable_reflections);
     if (have_callback_entry && attenuation_curve_dirty) {
         std::lock_guard<std::recursive_mutex> cb_lock(_attenuation_callback_mutex);
         auto it = _source_attenuation_entries.find(handle);
@@ -694,30 +592,30 @@ void ResonanceServer::_update_source_internal(IPLSource src, int32_t handle, con
 
     if (pathing_batch_retained)
         pathing_probe_batches_pending_release_.push_back(pathing_batch_retained);
+    return true;
 }
 
-void ResonanceServer::_clear_source_pathing_inputs_assume_locked(IPLSource source, int32_t handle) {
+void ResonanceServer::_clear_source_pathing_inputs_assume_locked(resonance::SimulationAccess access, IPLSource source, int32_t handle) {
     if (!source)
         return;
     IPLSimulationInputs inputs{};
     inputs.flags = static_cast<IPLSimulationFlags>(0);
     inputs.pathingProbes = nullptr;
-    iplSourceSetInputs(source, IPL_SIMULATIONFLAGS_PATHING, &inputs);
-    if (handle >= 0 && handle < kMaxCacheHandles)
-        source_outputs_pathing_[static_cast<size_t>(handle)].store(0, std::memory_order_release);
+    _set_source_inputs_assume_locked(access, source, handle, IPL_SIMULATIONFLAGS_PATHING, &inputs);
+    source_table_.clear_pathing_output(handle);
 }
 
-void ResonanceServer::_collect_handles_affected_by_probe_batch_remove_assume_locked(int32_t removing_handle,
+void ResonanceServer::_collect_handles_affected_by_probe_batch_remove_assume_locked(resonance::SimulationAccess access, int32_t removing_handle,
                                                                                     std::vector<int32_t>& out_handles) {
     if (removing_handle < 0 || !simulator)
         return;
     std::vector<int32_t> handles;
     source_manager.get_all_handles(handles);
     for (int32_t h : handles) {
-        auto snap_it = _source_update_snapshot_.find(h);
-        if (snap_it == _source_update_snapshot_.end() || !snap_it->second.valid)
+        const SourceUpdateParams* snapshot = source_table_.snapshot(access, h);
+        if (!snapshot)
             continue;
-        const int32_t preferred = snap_it->second.params.pathing_probe_batch_handle;
+        const int32_t preferred = snapshot->pathing_probe_batch_handle;
         const bool preferred_usable = probe_batch_registry_.handle_has_pathing(preferred);
         if (!resonance::source_should_clear_pathing_on_batch_remove(preferred, removing_handle, preferred_usable))
             continue;
@@ -725,89 +623,76 @@ void ResonanceServer::_collect_handles_affected_by_probe_batch_remove_assume_loc
     }
 }
 
-void ResonanceServer::_clear_pathing_for_probe_batch_assume_locked(int32_t removing_handle) {
+void ResonanceServer::_clear_pathing_for_probe_batch_assume_locked(resonance::SimulationAccess access, int32_t removing_handle) {
     if (removing_handle < 0 || !simulator)
         return;
     std::vector<int32_t> affected;
-    _collect_handles_affected_by_probe_batch_remove_assume_locked(removing_handle, affected);
+    _collect_handles_affected_by_probe_batch_remove_assume_locked(access, removing_handle, affected);
     for (int32_t h : affected) {
         IPLSource src = source_manager.get_source(h);
         if (!src)
             continue;
-        _clear_source_pathing_inputs_assume_locked(src, h);
+        _clear_source_pathing_inputs_assume_locked(access, src, h);
         iplSourceRelease(&src);
     }
 }
 
-bool ResonanceServer::_drain_pending_source_lifecycle_assume_locked(uint64_t* commit_us_out) {
+bool ResonanceServer::_drain_pending_source_lifecycle_assume_locked(resonance::SimulationAccess access, uint64_t* commit_us_out) {
     if (commit_us_out)
         *commit_us_out = 0;
     if (!_ctx() || !simulator)
         return false;
-    // Worker holds simulation_mutex: batch Add/Remove, single Commit, release removed retains, then SetInputs for new sources.
 
-    std::vector<PendingSourceAdd> local_adds;
-    std::vector<IPLSource> local_removes;
-    std::vector<int32_t> local_post_remove;
-    {
-        std::lock_guard<std::mutex> lock(pending_source_lifecycle_mutex_);
-        local_adds.swap(pending_source_adds_);
-        local_removes.swap(pending_source_removes_);
-        local_post_remove.swap(pending_source_post_remove_cleanup_);
-    }
-    if (local_adds.empty() && local_removes.empty())
+    SourceTable::LifecycleDrain drain = source_table_.take_lifecycle();
+    if (drain.empty())
         return false;
+    const auto& local_adds = drain.adds;
+    const auto& local_removes = drain.removes;
 
-    for (const PendingSourceAdd& pa : local_adds) {
-        IPLSource src = source_manager.get_source(pa.handle); // retains; may be null if already destroyed
+    for (const SourceTable::PendingAdd& pa : local_adds) {
+        IPLSource src = source_manager.get_source(pa.handle); // Retains; null if already destroyed
         if (!src)
             continue;
         iplSourceAdd(src, simulator);
         iplSourceRelease(&src);
+        _forget_source_inputs_assume_locked(access, pa.handle);
     }
     for (IPLSource src : local_removes) {
         if (!src)
             continue;
         iplSourceRemove(src, simulator);
     }
+    source_table_.bump_inputs_generation(access);
     // One batched commit covers every add and remove that happened since the last worker tick.
     const uint64_t commit_us = _ipl_simulator_commit_assume_locked();
     if (commit_us_out)
         *commit_us_out = commit_us;
-    // Now that the removed sources are no longer referenced by the simulator staging lists, drop the final retain.
+    // The commit dropped the simulator's references, so the final retain can go.
     for (IPLSource src : local_removes) {
         if (src) {
             IPLSource tmp = src;
             iplSourceRelease(&tmp);
         }
     }
-    // Mark attached handles ready for fetch/cache paths (including skipped adds after destroy).
-    for (const PendingSourceAdd& pa : local_adds) {
-        if (pa.handle >= 0 && pa.handle < kMaxCacheHandles)
-            source_attach_pending_[static_cast<size_t>(pa.handle)].store(0, std::memory_order_release);
-    }
-    // Post-remove housekeeping (map entries keyed by handle that are worker-owned).
-    for (int32_t handle : local_post_remove) {
+    // Includes adds skipped because the source was already destroyed.
+    for (const SourceTable::PendingAdd& pa : local_adds)
+        source_table_.attached(pa.handle);
+    for (int32_t handle : drain.removed_handles) {
         {
             std::lock_guard<std::recursive_mutex> cb_lock(_attenuation_callback_mutex);
             _source_attenuation_entries.erase(handle);
         }
-        _source_update_snapshot_.erase(handle);
-        if (handle >= 0 && handle < kMaxCacheHandles) {
-            source_outputs_reflections_[static_cast<size_t>(handle)].store(0, std::memory_order_release);
-            source_outputs_realtime_reflections_[static_cast<size_t>(handle)].store(0, std::memory_order_release);
-            source_outputs_pathing_[static_cast<size_t>(handle)].store(0, std::memory_order_release);
-            source_outputs_direct_[static_cast<size_t>(handle)].store(0, std::memory_order_release);
-        }
-        // Safe to reuse this handle id only after post-remove bookkeeping finished.
+        source_table_.forget_snapshot(access, handle);
+        source_table_.clear_pass_outputs(handle);
+        // Recycle last, once nothing keyed by this handle is left.
         source_manager.recycle_source_handle(handle);
     }
-    // Apply initial inputs now that iplSourceAdd + Commit have run.
-    for (const PendingSourceAdd& pa : local_adds) {
+    // Initial inputs only after the add is committed.
+    for (const SourceTable::PendingAdd& pa : local_adds) {
         IPLSource src = source_manager.get_source(pa.handle);
         if (!src)
             continue;
-        _update_source_internal(src, pa.handle, pa.initial);
+        _update_source_internal(access, src, pa.handle, pa.initial);
         iplSourceRelease(&src);
     }
     return true;
@@ -824,8 +709,6 @@ void ResonanceServer::_drain_pathing_probe_batch_releases() {
 IPLSource ResonanceServer::get_source_from_handle(int32_t handle) {
     return source_manager.get_source(handle);
 }
-
-// Thin IPL helpers for editor/UI distance/air/directivity preview (not used on the audio thread hot path).
 
 float ResonanceServer::calculate_distance_attenuation(Vector3 source_pos, Vector3 listener_pos, float min_dist, float max_dist) {
     if (!_ctx())

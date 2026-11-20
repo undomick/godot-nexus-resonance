@@ -43,7 +43,6 @@ Error ResonanceSOFAAsset::load_from_file(const String& p_path) {
         return ERR_FILE_CANT_OPEN;
     const int64_t file_len = static_cast<int64_t>(f->get_length());
     sofa_data = f->get_buffer(file_len);
-    // Empty file = ERR_FILE_CORRUPT (invalid SOFA); non-empty = OK.
     return !sofa_data.is_empty() ? OK : ERR_FILE_CORRUPT;
 }
 

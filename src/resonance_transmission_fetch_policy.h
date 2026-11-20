@@ -3,10 +3,8 @@
 
 namespace resonance {
 
-/// Steam DirectSimulator can report a material transmission even when raycast occlusion is fully
-/// visible (closestHit may accept a hit at/behind the source that anyHit rejects). Direct
-/// Effect ignores T when occlusion == 1 (gain = occ + (1-occ)*T). Clear T to 1,1,1 on full LOS so
-/// F3 overlay and cached Direct params match audible Direct-Effect behavior.
+/// The direct simulator can report a transmission at full line of sight, which the direct effect ignores
+/// (gain = occ + (1 - occ) * T). Reset it so the debug overlay and cached params match what is heard.
 inline void clear_transmission_on_line_of_sight(float occlusion, float* transmission_lmh) {
     if (!transmission_lmh)
         return;

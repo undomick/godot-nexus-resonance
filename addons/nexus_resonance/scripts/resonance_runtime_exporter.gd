@@ -13,11 +13,11 @@ const ResonanceServerAccess = preload(
 
 ## Keeps the last helper-started [ResonanceRuntimeBaker] alive until [signal ResonanceRuntimeBaker.bake_finished].
 static var _pending_probe_baker: ResonanceRuntimeBaker = null
-## Holds a short-lived runner until deferred reload + fire-and-forget probe bake start.
+## Keeps the deferred bake runner alive until it has started the probe bake.
 static var _pending_deferred_bake_runner: RefCounted = null
 
 
-## Merges visible static geometry under [param scene_root] into an in-memory [ResonanceGeometryAsset] (no RSS assign / reload).
+## Merges visible static geometry under [param scene_root] into an in-memory [ResonanceGeometryAsset]. Assigns nothing and does not reload.
 static func export_asset(scene_root: Node) -> ResonanceGeometryAsset:
 	if not scene_root:
 		return null
@@ -33,7 +33,7 @@ static func export_asset(scene_root: Node) -> ResonanceGeometryAsset:
 	return asset as ResonanceGeometryAsset
 
 
-## Full replace of runtime static packs (not keyed by [ResonanceStaticScene] nodes). See [method ResonanceServer.replace_static_scenes_from_assets].
+## Replaces all runtime static scene packs, independent of [ResonanceStaticScene] nodes. See [method ResonanceServer.replace_static_scenes_from_assets].
 static func replace_static(assets: Array, transforms: Array = []) -> void:
 	var srv: Variant = ResonanceServerAccess.get_server_if_initialized()
 	if srv == null or not srv.has_method("replace_static_scenes_from_assets"):
@@ -42,7 +42,7 @@ static func replace_static(assets: Array, transforms: Array = []) -> void:
 	srv.replace_static_scenes_from_assets(assets, transforms)
 
 
-## Debounced reload of every [ResonanceStaticScene] pack via [method ResonanceRuntime.request_static_scene_reload] (primary [ResonanceRuntime]).
+## Requests a debounced static scene reload on the [ResonanceRuntime] under [param scene_root], else on the primary runtime.
 static func reload(scene_root: Node = null) -> void:
 	if scene_root:
 		var rt := _find_resonance_runtime(scene_root)
@@ -99,10 +99,10 @@ class _DeferredProbeBakeRunner:
 	extends RefCounted
 
 	var _scene_root: Node
-	var _volumes: Array
+	var _volumes: Array[Node]
 	var _caller_baker: Variant
 
-	func start(scene_root: Node, volumes: Array, caller_baker: Variant) -> void:
+	func start(scene_root: Node, volumes: Array[Node], caller_baker: Variant) -> void:
 		_scene_root = scene_root
 		_volumes = volumes
 		_caller_baker = caller_baker
@@ -123,7 +123,7 @@ class _DeferredProbeBakeRunner:
 class _ExportStaticPlan:
 	var error: Error = OK
 	var deferred_static_reload: bool = false
-	var bake_volumes: Array = []
+	var bake_volumes: Array[Node] = []
 	var caller_baker: Variant = null
 
 
@@ -148,8 +148,16 @@ static func _plan_export_static(scene_root: Node, opts: Dictionary) -> _ExportSt
 		static_scene_node = ResonanceSceneUtils.find_owned_resonance_static_scene(scene_root)
 	ResonanceSceneUtils.warn_static_scenes_without_asset_covering_geometry(scene_root)
 
-	var asset := export_asset(scene_root)
+	if not srv.has_method("build_static_scene_export"):
+		push_error("Nexus Resonance: ResonanceServer.build_static_scene_export missing.")
+		plan.error = ERR_UNAVAILABLE
+		return plan
+	var scene_export: Dictionary = srv.build_static_scene_export(scene_root, 0)
+	var current_hash: int = scene_export.get("hash", 0)
+	var asset := scene_export.get("asset") as ResonanceGeometryAsset
 	if asset == null:
+		if current_hash == 0:
+			push_warning("Nexus Resonance: No valid mesh data in static geometry.")
 		plan.error = ERR_CANT_CREATE
 		return plan
 
@@ -161,12 +169,8 @@ static func _plan_export_static(scene_root: Node, opts: Dictionary) -> _ExportSt
 			return plan
 
 	if static_scene_node:
-		var current_hash: int = (
-			srv.get_static_scene_hash(scene_root) if srv.has_method("get_static_scene_hash") else 0
-		)
 		static_scene_node.static_scene_asset = asset
-		if current_hash != 0:
-			static_scene_node.export_hash = current_hash
+		static_scene_node.export_hash = current_hash
 	else:
 		push_warning(
 			"Nexus Resonance: No owned ResonanceStaticScene; assign asset manually or use replace_static."
@@ -181,11 +185,7 @@ static func _plan_export_static(scene_root: Node, opts: Dictionary) -> _ExportSt
 			replace_static([asset], [Transform3D.IDENTITY])
 
 	if opts.get("bake_probes", false):
-		var volumes: Array = opts.get("probe_volumes", [])
-		if volumes.is_empty():
-			var collected: Array[Node] = []
-			ResonanceSceneUtils.collect_resonance_probe_volumes(scene_root, collected)
-			volumes.assign(collected)
+		var volumes := _probe_bake_volumes(scene_root, opts)
 		if volumes.is_empty():
 			push_warning(
 				"Nexus Resonance: bake_probes requested but no ResonanceProbeVolume found."
@@ -197,8 +197,17 @@ static func _plan_export_static(scene_root: Node, opts: Dictionary) -> _ExportSt
 	return plan
 
 
+## [code]probe_volumes[/code] from [param opts], or every [ResonanceProbeVolume] under [param scene_root].
+static func _probe_bake_volumes(scene_root: Node, opts: Dictionary) -> Array[Node]:
+	var volumes: Array[Node] = []
+	volumes.assign(opts.get("probe_volumes", []))
+	if volumes.is_empty():
+		ResonanceSceneUtils.collect_resonance_probe_volumes(scene_root, volumes)
+	return volumes
+
+
 static func _schedule_probe_bake_after_deferred_reload(
-	scene_root: Node, volumes: Array, caller_baker: Variant
+	scene_root: Node, volumes: Array[Node], caller_baker: Variant
 ) -> void:
 	var runner := _DeferredProbeBakeRunner.new()
 	_pending_deferred_bake_runner = runner
@@ -206,7 +215,7 @@ static func _schedule_probe_bake_after_deferred_reload(
 
 
 static func _start_probe_bake(
-	scene_root: Node, volumes: Array, caller_baker: Variant
+	scene_root: Node, volumes: Array[Node], caller_baker: Variant
 ) -> ResonanceRuntimeBaker:
 	if volumes.is_empty() or not scene_root:
 		return null

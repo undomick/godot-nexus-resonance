@@ -13,6 +13,12 @@ inline bool playback_lod_coeff_refresh_includes_position_attenuation() {
     return true;
 }
 
+// A flipped virtual state bypasses the LOD throttle so the mixer and the source simulation follow it at once.
+inline bool playback_should_apply_full_params(bool lod_gate_open, bool coeff_smoothing_active,
+                                              bool voice_virtual_state_changed) {
+    return lod_gate_open || coeff_smoothing_active || voice_virtual_state_changed;
+}
+
 } // namespace resonance
 
 #endif // RESONANCE_PLAYBACK_LOD_POLICY_H

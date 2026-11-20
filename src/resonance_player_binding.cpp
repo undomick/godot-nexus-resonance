@@ -1,4 +1,4 @@
-// GDExtension class registration for ResonancePlayer-related types (split from resonance_player.cpp).
+// GDExtension class registration for ResonancePlayer-related types.
 
 #include "resonance_player.h"
 
@@ -43,10 +43,13 @@ void ResonancePlayer::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_auto_exclude_colliders"), &ResonancePlayer::get_auto_exclude_colliders);
     ClassDB::bind_method(D_METHOD("set_player_config", "p_config"), &ResonancePlayer::set_player_config);
     ClassDB::bind_method(D_METHOD("get_player_config"), &ResonancePlayer::get_player_config);
-    ClassDB::bind_method(D_METHOD("set_reverb_split_output", "p_enable", "p_reverb_bus"), &ResonancePlayer::set_reverb_split_output, DEFVAL(StringName()));
-    ClassDB::bind_method(D_METHOD("get_reverb_split_output"), &ResonancePlayer::get_reverb_split_output);
+    ClassDB::bind_method(D_METHOD("set_reverb_send_bus", "bus"), &ResonancePlayer::set_reverb_send_bus);
+    ClassDB::bind_method(D_METHOD("get_reverb_send_bus"), &ResonancePlayer::get_reverb_send_bus);
+    ClassDB::bind_method(D_METHOD("is_reverb_send_active"), &ResonancePlayer::is_reverb_send_active);
     ClassDB::bind_method(D_METHOD("get_audio_instrumentation"), &ResonancePlayer::get_audio_instrumentation);
     ClassDB::bind_method(D_METHOD("reset_audio_instrumentation"), &ResonancePlayer::reset_audio_instrumentation);
+    ClassDB::bind_method(D_METHOD("get_spawn_timing"), &ResonancePlayer::get_spawn_timing);
+    ClassDB::bind_method(D_METHOD("is_spatial_output_ready"), &ResonancePlayer::is_spatial_output_ready);
     ClassDB::bind_method(D_METHOD("get_effective_volume_linear_cached"), &ResonancePlayer::get_effective_volume_linear_cached);
     ClassDB::bind_method(D_METHOD("_deferred_push_playback_parameters"), &ResonancePlayer::_deferred_push_playback_parameters);
     ClassDB::bind_method(D_METHOD("_apply_process_mode_for_tracer"), &ResonancePlayer::_apply_process_mode_for_tracer);

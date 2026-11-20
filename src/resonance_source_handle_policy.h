@@ -37,7 +37,7 @@ inline bool source_count_at_simulation_limit(int32_t active_count, int32_t max_s
     return active_count >= max_sources;
 }
 
-/// emit_error runs once per cap_error_emitted latch. Later refusals stay silent so a full polyphony loop does not flood the debugger.
+/// Errors once per cap_error_emitted latch so a polyphony loop at the cap does not flood the debugger.
 template <typename EmitError>
 inline bool reject_simulation_source_create_at_cap(int32_t active_count, int32_t max_sources, bool& cap_error_emitted,
                                                    EmitError emit_error) {
@@ -55,7 +55,7 @@ inline bool can_alloc_sequential_source_handle(int32_t next_handle) {
     return next_handle < kMaxSimulationSourcesUserMax;
 }
 
-/// Worker reflection/pathing gate: invalid/out-of-range handles are ignored, not treated as active.
+/// Out-of-range handles are skipped, not treated as active.
 template <typename GetOutputFlagFn>
 inline bool any_source_has_output_flag(const std::vector<int32_t>& handles, GetOutputFlagFn get_flag) {
     if (handles.empty())

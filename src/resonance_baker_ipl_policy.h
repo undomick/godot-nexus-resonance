@@ -8,7 +8,7 @@
 
 namespace resonance {
 
-/// Steam Audio 4.8.1: ipl*BakerBake is void; track outcome via progress + optional cancel flag.
+/// ipl*BakerBake returns void, so the outcome comes from the progress callback and the cancel flag.
 struct BakerProgressState {
     float last_progress = 0.0f;
     bool saw_progress = false;

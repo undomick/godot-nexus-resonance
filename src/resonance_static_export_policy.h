@@ -3,10 +3,8 @@
 
 namespace resonance {
 
-/// Parent-export prune rules for static geometry collection (no Godot types; unit-testable).
-/// - Nested ResonanceStaticScene always prunes (with or without asset).
-/// - PackedScene instance roots (non-empty scene_file_path) that contain an RSS prune the whole instance.
-/// - The export root itself is never pruned by these rules.
+/// A nested ResonanceStaticScene, or a PackedScene instance that contains one, exports its own geometry,
+/// so the parent export skips that subtree.
 inline bool should_prune_static_export_subtree(bool is_export_root, bool is_resonance_static_scene,
                                                bool has_scene_file_path, bool subtree_has_resonance_static_scene) {
     if (is_export_root)

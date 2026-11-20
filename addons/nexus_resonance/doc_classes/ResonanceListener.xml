@@ -6,15 +6,29 @@
 	<description>
 		Reports listener position and orientation to [ResonanceServer] each frame from this node's global transform (forward = -Z, up = Y). Attach as a child of a [Camera3D] so the listener follows the camera.
 		Only the listener under the active viewport camera drives the server; other listeners stay inactive so they do not overwrite the active pose. When no ResonanceListener is in the scene, [ResonanceRuntime] falls back to the active camera transform.
-		Listener updates run at process priority 101, before [ResonancePlayer] (90) and [ResonanceRuntime] (0). The runtime flushes pending source updates, then ticks the simulator so inverse distance attenuation uses the current source pose.
+		Listener updates run at process priority 100, after nodes at the default priority 0 and before [ResonancePlayer] (110) and [ResonanceRuntime] (120). The runtime flushes pending source updates, then ticks the simulator so inverse distance attenuation uses the current source pose.
 		With the Custom scene tracer, listener sync runs in `_physics_process` instead of `_process`.
 		On Windows, pathing is protected by an SEH safety net when the listener moves through solid geometry; you do not need to disable [member listener_valid] for those cases.
 	</description>
 	<tutorials>
 	</tutorials>
 	<members>
+		<member name="apply_reverb" type="bool" setter="set_apply_reverb" getter="is_apply_reverb" default="false">
+			Simulates reverb at this listener and applies it once on the reverb bus to every [ResonancePlayer] that sends there ([member ResonancePlayerConfig.reverb_send]). Only the active listener applies it.
+		</member>
+		<member name="reverb_type" type="int" setter="set_reverb_type" getter="get_reverb_type" enum="ResonanceListener.ReverbType" default="0">
+			[constant REVERB_REALTIME] ray-traces the reverb (needs [member ResonanceRuntimeConfig.realtime_rays] &gt; 0); [constant REVERB_BAKED] reads baked reverb probes.
+		</member>
 		<member name="listener_valid" type="bool" setter="set_listener_valid" getter="is_listener_valid" default="true">
 			When true, the server runs path validation for pathing. When false, pathing is skipped entirely (saves CPU). Set to false when you explicitly want to disable pathing, such as a debug camera inside geometry.
 		</member>
 	</members>
+	<constants>
+		<constant name="REVERB_REALTIME" value="0" enum="ReverbType">
+			Ray-traced reverb at the listener.
+		</constant>
+		<constant name="REVERB_BAKED" value="1" enum="ReverbType">
+			Baked reverb probes at the listener.
+		</constant>
+	</constants>
 </class>

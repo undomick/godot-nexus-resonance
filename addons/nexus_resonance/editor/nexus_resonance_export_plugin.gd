@@ -1,18 +1,16 @@
 @tool
 extends EditorExportPlugin
 
-## Adds Steam Audio runtime shared libraries to exports (same paths as [dependencies] in nexus_resonance.gdextension).
-## Windows: DLLs next to the .exe (not resolved from .pck). Linux/macOS/Android: packaged like other native deps.
+## Adds the Steam Audio runtime libraries to exports.
+## On Windows the DLLs go next to the .exe because they cannot be loaded from the .pck.
 
 const _SUPPORTED_OS := ["Windows", "Linux", "macOS", "Android"]
 
-## ABIs we ship libphonon.so for (must match bin/android/ layout).
 const _ANDROID_STEAM_AUDIO: Dictionary = {
 	"arm64-v8a": "res://addons/nexus_resonance/bin/android/arm64-v8a/libphonon.so",
 	"x86_64": "res://addons/nexus_resonance/bin/android/x86_64/libphonon.so",
 }
 
-## Godot Android preset ABIs with no Steam Audio binary in this addon.
 const _ANDROID_NO_STEAM_AUDIO_ABIS := ["armeabi-v7a", "x86"]
 
 

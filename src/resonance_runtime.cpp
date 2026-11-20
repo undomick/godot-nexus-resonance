@@ -5,8 +5,6 @@
 #include "resonance_key_enum_hint.h"
 #include "resonance_server.h"
 
-#include <godot_cpp/classes/audio_effect.hpp>
-#include <godot_cpp/classes/audio_server.hpp>
 #include <godot_cpp/classes/audio_stream_player.hpp>
 #include <godot_cpp/classes/audio_stream_player3d.hpp>
 #include <godot_cpp/classes/engine.hpp>
@@ -116,8 +114,8 @@ void ResonanceRuntime::_ready() {
     }
     set_process_priority(resonance::kResonanceRuntimeProcessPriority);
     set_physics_process_priority(resonance::kResonanceRuntimeProcessPriority);
-    // Physics tick runs only with the Custom (Godot Physics) tracer; sync_physics_process_for_custom_tracer
-    // enables it after the server reports the tracer. Off until then.
+    // Only the Custom (Godot Physics) tracer needs the physics tick; sync_physics_process_for_custom_tracer
+    // turns it on once the server reports that tracer.
     set_physics_process(false);
     set_process_input(true);
     connect_runtime_signals();
@@ -139,9 +137,6 @@ void ResonanceRuntime::_ready() {
 }
 
 void ResonanceRuntime::_connect_quit_teardown_signals() {
-    if (!is_connected("tree_exiting", Callable(this, "on_scene_tree_exiting"))) {
-        connect("tree_exiting", Callable(this, "on_scene_tree_exiting"));
-    }
     SceneTree* tree = get_tree();
     if (!tree)
         return;
@@ -154,9 +149,6 @@ void ResonanceRuntime::_connect_quit_teardown_signals() {
 }
 
 void ResonanceRuntime::_disconnect_quit_teardown_signals() {
-    if (is_connected("tree_exiting", Callable(this, "on_scene_tree_exiting"))) {
-        disconnect("tree_exiting", Callable(this, "on_scene_tree_exiting"));
-    }
     SceneTree* tree = get_tree();
     if (!tree)
         return;
@@ -182,18 +174,15 @@ void ResonanceRuntime::on_window_close_requested() {
     _arm_phonon_quit_teardown();
 }
 
-void ResonanceRuntime::on_scene_tree_exiting() {
-    // Last live game runtime only. Mesh/probe despawn must not mute mix or join the worker.
+void ResonanceRuntime::_teardown_if_last_game_runtime() {
+    // Mesh/probe despawn while another runtime lives must not mute mix or join the worker.
     if (!editor_hint() && live_game_runtime_count <= 1)
         _arm_phonon_quit_teardown();
-    cleanup_reverb_activator();
 }
 
 void ResonanceRuntime::prepare_for_shutdown() {
-    // T-10 (accepted hard cut): no soft tail drain here. Stops players immediately (not soft-stop)
-    // and removes bus effects before Godot frees GDExtension tables ahead of ~AudioServer.
-    // Wet tails may truncate unless the game soft-stopped earlier and processed frames.
-    // Needs further process frames after this call - sleep alone is not enough.
+    // Hard cut without a tail drain: wet tails are truncated unless the game soft-stopped earlier.
+    // AudioServer needs further process frames after this call; sleeping alone is not enough.
     SceneTree* tree = get_tree();
     if (!tree)
         return;
@@ -210,20 +199,11 @@ void ResonanceRuntime::prepare_for_shutdown() {
     }
 
     cleanup_reverb_activator();
-
-    AudioServer* audio = AudioServer::get_singleton();
-    if (!audio)
-        return;
-    for (int bus = 0; bus < audio->get_bus_count(); bus++) {
-        for (int idx = audio->get_bus_effect_count(bus) - 1; idx >= 0; idx--) {
-            Ref<AudioEffect> effect = audio->get_bus_effect(bus, idx);
-            if (effect.is_valid() && Object::cast_to<ResonanceAudioEffect>(effect.ptr()))
-                audio->remove_bus_effect(bus, idx);
-        }
-    }
+    detach_resonance_bus_effects();
 }
 
 void ResonanceRuntime::_exit_tree() {
+    _teardown_if_last_game_runtime();
     disconnect_runtime_signals();
     reset_viewport_sync_cache();
     _disconnect_quit_teardown_signals();
@@ -330,7 +310,6 @@ Dictionary ResonanceRuntime::get_activator_instrumentation() const {
 }
 
 void ResonanceRuntime::_bind_methods() {
-    // Runtime config, reinit, probes, and scene lifecycle.
     ClassDB::bind_method(D_METHOD("set_runtime", "config"), &ResonanceRuntime::set_runtime);
     ClassDB::bind_method(D_METHOD("get_runtime"), &ResonanceRuntime::get_runtime);
 
@@ -350,7 +329,6 @@ void ResonanceRuntime::_bind_methods() {
         D_METHOD("get_activator_instrumentation"),
         &ResonanceRuntime::get_activator_instrumentation);
     ClassDB::bind_method(D_METHOD("get_frame_timings"), &ResonanceRuntime::get_frame_timings);
-    ClassDB::bind_method(D_METHOD("on_scene_tree_exiting"), &ResonanceRuntime::on_scene_tree_exiting);
     ClassDB::bind_method(D_METHOD("on_window_close_requested"), &ResonanceRuntime::on_window_close_requested);
     ClassDB::bind_method(D_METHOD("prepare_for_shutdown"), &ResonanceRuntime::prepare_for_shutdown);
 
@@ -361,8 +339,8 @@ void ResonanceRuntime::_bind_methods() {
         &ResonanceRuntime::perform_deferred_static_scene_reload);
     ClassDB::bind_method(D_METHOD("reload_after_reinit"), &ResonanceRuntime::reload_after_reinit);
     ClassDB::bind_method(
-        D_METHOD("deferred_reset_spatial_audio_warmup_passes"),
-        &ResonanceRuntime::deferred_reset_spatial_audio_warmup_passes);
+        D_METHOD("deferred_arm_spatial_audio_output_gate"),
+        &ResonanceRuntime::deferred_arm_spatial_audio_output_gate);
     ClassDB::bind_method(
         D_METHOD("notify_volumes_runtime_config_changed"),
         &ResonanceRuntime::notify_volumes_runtime_config_changed);
@@ -383,7 +361,7 @@ void ResonanceRuntime::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_fmod_bridge"), &ResonanceRuntime::get_fmod_bridge);
     ClassDB::bind_method(D_METHOD("get_coda_bridge"), &ResonanceRuntime::get_coda_bridge);
 
-    // Optional FMOD/Coda bridges and Steam Audio context (restart-required).
+    // Changing the bridges or the Steam Audio context settings needs a restart.
     ClassDB::bind_method(D_METHOD("set_fmod_bridge_enabled", "enabled"), &ResonanceRuntime::set_fmod_bridge_enabled);
     ClassDB::bind_method(D_METHOD("is_fmod_bridge_enabled"), &ResonanceRuntime::is_fmod_bridge_enabled);
     ClassDB::bind_method(D_METHOD("set_coda_bridge_enabled", "enabled"), &ResonanceRuntime::set_coda_bridge_enabled);
@@ -416,7 +394,6 @@ void ResonanceRuntime::_bind_methods() {
     ClassDB::bind_method(
         D_METHOD("get_player_overlay_toggle_key"), &ResonanceRuntime::get_player_overlay_toggle_key);
 
-    // Inspector groups mirror editor resource layout.
     ADD_PROPERTY(
         PropertyInfo(Variant::OBJECT, "runtime", PROPERTY_HINT_RESOURCE_TYPE, "ResonanceRuntimeConfig"),
         "set_runtime",

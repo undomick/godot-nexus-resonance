@@ -1,7 +1,7 @@
 @tool
 extends RefCounted
 
-## Bake progress dialog, stage label, and details log. Used by the bake pipeline.
+## Bake progress dialog with stage label and details log.
 
 const UIStrings = preload("res://addons/nexus_resonance/scripts/resonance_ui_strings.gd")
 
@@ -113,7 +113,6 @@ func hide_ui() -> void:
 
 
 func shutdown() -> void:
-	# Disconnect signals and free the dialog so shutdown cannot leak nodes or connections.
 	hide_ui()
 	editor_interface = null
 

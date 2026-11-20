@@ -5,9 +5,9 @@ namespace resonance {
 
 /// How ResonanceGeometry::set_material should apply a new ResonanceMaterial to Steam Audio.
 enum class GeometryMaterialUpdatePath {
-    None,    // Same material ref, or node not in tree yet
-    InPlace, // Live IPLStaticMesh handles: iplStaticMeshSetMaterial (no Embree rebuild)
-    Rebuild, // No live meshes: full _create_meshes path (or StaticScene skip/warn)
+    None,
+    InPlace, // iplStaticMeshSetMaterial on the live meshes, no Embree rebuild
+    Rebuild,
 };
 
 inline GeometryMaterialUpdatePath geometry_material_update_path(bool material_unchanged, bool inside_tree,

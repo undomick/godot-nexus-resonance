@@ -12,7 +12,7 @@ struct ProbeNeighborWeight {
     float weight = 0.0f;
 };
 
-/// Inverse-distance-squared weights for probes within [neighbor_radius_m] of [query_position].
+/// Inverse-distance-squared weights for probes within neighbor_radius_m; distance is floored at 0.1 m.
 inline void probe_neighbors_inverse_distance_squared(const float* probe_xyz, int32_t probe_count, float query_x, float query_y,
                                                      float query_z, float neighbor_radius_m, std::vector<ProbeNeighborWeight>& out_neighbors,
                                                      float& out_weight_sum) {

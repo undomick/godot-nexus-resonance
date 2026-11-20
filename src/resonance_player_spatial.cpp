@@ -8,6 +8,7 @@
 #include "resonance_playback_attenuation_policy.h"
 #include "resonance_playback_lod_policy.h"
 #include "resonance_player.h"
+#include "resonance_player_reflections_policy.h"
 #include "resonance_probe_volume.h"
 #include "resonance_server.h"
 #include "resonance_sim_distance_attenuation_policy.h"
@@ -41,8 +42,6 @@
 #include <sstream>
 
 using namespace godot;
-
-// ResonancePlayer spatial/simulation: config cache, listener, attenuation, source updates, playback params.
 
 void ResonancePlayer::_resolve_playback_occ_tx_directivity(const OcclusionData& occ_data, double delta_seconds,
                                                            bool reset_smooth_state_when_not_smoothing,
@@ -128,8 +127,25 @@ bool ResonancePlayer::internal_wants_wet_effects() const {
         return true;
     ResonanceServer* srv = ResonanceServer::get_singleton();
     const bool path_global = srv && srv->is_pathing_enabled();
-    return resonance::playback_wants_wet_effects(_config_bool("reflections_enabled", true) ? 1 : 0,
+    if (config_cache_valid_)
+        return resonance::playback_wants_wet_effects(config_cache_.reflections_enabled,
+                                                     config_cache_.pathing_enabled_override, path_global);
+    return resonance::playback_wants_wet_effects(_config_bool("reflections_enabled", false) ? 1 : 0,
                                                  _config_int("pathing_enabled_override", -1), path_global);
+}
+
+bool ResonancePlayer::internal_wants_ambisonics_encode() const {
+    if (config_cache_valid_)
+        return config_cache_.use_ambisonics_encode;
+    return _config_bool("use_ambisonics_encode", false);
+}
+
+bool ResonancePlayer::_playback_wet_enabled(const ResonanceServer* srv) const {
+    if (!resonance::playback_enable_reverb(!srv || srv->is_output_reverb_enabled()))
+        return false;
+    const ConfigCache& c = config_cache_;
+    return resonance::playback_wants_wet_effects(c.reflections_enabled, c.pathing_enabled_override,
+                                                 srv && srv->is_pathing_enabled());
 }
 
 ResonanceStreamPlayback* ResonancePlayer::_get_resonance_playback() {
@@ -151,21 +167,15 @@ Ref<Curve> ResonancePlayer::_config_curve(const char* key, const Ref<Curve>& def
     return default_val;
 }
 
-// Loads AudioStreamResonancePlayerConfig keys into `config_cache_` for hot playback paths.
-// Handles legacy keys (e.g. distance_attenuation_simulation_enabled for Linear/Curve sim flag),
-// tri-state -1/0/1 overrides with older bool fallbacks, sentinel "use global" values resolved via
-// ResonanceServer, and clamps numeric ranges. Sets config_cache_valid_ on success.
-//
-// Sections below follow editor/resource grouping: distances and attenuation; air absorption; spatial
-// blend and ambisonics; path/alternate-path overrides; reflection and pathing mix/EQ; transmission
-// ray cap override; occlusion/transmission toggles and type overrides; HRTF/baked-wet/reverb TX knobs.
+// Copies the player config into config_cache_ for the hot paths, mapping legacy keys and
+// "use global" values and clamping ranges.
 void ResonancePlayer::_refresh_config_cache() {
     if (!player_config.is_valid())
         return;
     config_cache_.min_distance = _config_float("min_distance", 1.0f);
     config_cache_.max_distance = _config_float("max_distance", 500.0f);
     {
-        // occlusion_radius aliases source_radius; prefer new key when present.
+        // occlusion_radius is an alias of source_radius and wins when set.
         Variant occ_r = player_config->get(StringName("occlusion_radius"));
         if (occ_r.get_type() != Variant::NIL)
             config_cache_.source_radius = (float)occ_r;
@@ -174,6 +184,7 @@ void ResonancePlayer::_refresh_config_cache() {
     }
     config_cache_.distance_attenuation = _config_bool("distance_attenuation", true);
     config_cache_.use_distance_curve_for_reflections = _config_bool("use_distance_curve_for_reflections", false);
+    config_cache_.reverb_send = _config_bool("reverb_send", true);
     const bool legacy_dist_sim = _config_bool("distance_attenuation_simulation_enabled", true);
     int am = _config_int("attenuation_mode", 0);
     if (am == 0 && !legacy_dist_sim)
@@ -211,9 +222,8 @@ void ResonancePlayer::_refresh_config_cache() {
     };
     config_cache_.path_validation_override = read_tri_state("path_validation_override", "path_validation_enabled");
     config_cache_.find_alternate_paths_override = read_tri_state("find_alternate_paths_override", "find_alternate_paths");
-    config_cache_.reflections_type = _config_int("reflections_type", -1);
-    // Bool in player config (default on). Legacy int -1/1 still casts to true, 0 to false.
-    config_cache_.reflections_enabled = _config_bool("reflections_enabled", true) ? 1 : 0;
+    config_cache_.reflections_type = _config_int("reflections_type", resonance::kPlayerReflectionsRealtime);
+    config_cache_.reflections_enabled = _config_bool("reflections_enabled", false) ? 1 : 0;
     config_cache_.pathing_enabled_override = _config_int("pathing_enabled_override", -1);
     {
         auto read_tri_state_hrtf = [this](const char* new_key, const char* legacy_key) -> int {
@@ -245,7 +255,7 @@ void ResonancePlayer::_refresh_config_cache() {
         int tx_surfaces_def = srv ? srv->get_max_transmission_surfaces() : resonance::kDefaultPlayerConfigTransmissionRays;
         int mts_ov = _config_int("max_transmission_surfaces_override", 0);
         if (mts_ov == -1)
-            mts_ov = 0; // legacy GDScript enum "Use Global:-1"
+            mts_ov = 0; // older resources store Use Global as -1
         if (mts_ov != 0 && mts_ov != 1)
             mts_ov = 0;
         config_cache_.max_transmission_surfaces_override = mts_ov;
@@ -277,7 +287,7 @@ void ResonancePlayer::_refresh_config_cache() {
     config_cache_.simulation_transmission_enabled = _config_bool("simulation_transmission_enabled", true);
     {
         int occ_ov = _config_int("occlusion_type_override", 2);
-        // 2 = Use Global (GDScript enum; avoids negative values in .tres). -1 = legacy Use Global.
+        // 2 = Use Global, keeping .tres values non-negative; older resources store -1.
         if (occ_ov == 2 || occ_ov == -1)
             config_cache_.occlusion_type_override = -1;
         else if (occ_ov == 0 || occ_ov == 1)
@@ -296,13 +306,13 @@ void ResonancePlayer::_refresh_config_cache() {
 }
 
 bool ResonancePlayer::_steam_sim_distance_attenuation_enabled(const ConfigCache& c) {
-    // Direct simulation flag only for Inverse (Physics Based). Linear/Curve: playback DA on Direct;
-    // Pathing/Reflections CALLBACK is chosen in ResonanceServer from attenuation_mode + use_distance_curve_for_reflections.
+    // Only Inverse sets the direct simulation flag; Linear and Curve attenuate the direct path at playback.
     return resonance::sim_direct_distance_attenuation_flag(c.distance_attenuation, c.attenuation_mode);
 }
 void ResonancePlayer::_ensure_config_valid() {
     if (config_cache_frame_countdown <= 0 || !config_cache_valid_) {
         _refresh_config_cache();
+        _sync_bus_routing_with_config();
         config_cache_frame_countdown = kConfigCacheRefreshInterval;
     }
 }
@@ -312,42 +322,14 @@ void ResonancePlayer::_ensure_config_and_apply_source(int32_t pathing_batch) {
     _apply_update_source(pathing_batch, false);
 }
 
-int ResonancePlayer::_compute_baked_data_variation(const ResonanceServer* srv) const {
-    const ConfigCache& c = config_cache_;
-    // Player config reflections_type:
-    // -1 = Use Global (runtime default_reflections_mode)
-    //  0 = Realtime
-    //  1 = Baked Reverb
-    //  2 = Baked Static Source
-    //  3 = Baked Static Listener
-    //
-    // Server baked_data_variation:
-    // -1 = Realtime reflections (ray traced)
-    //  0 = Baked Reverb (probe data)
-    //  1 = Baked Static Source
-    //  2 = Baked Static Listener
-    if (c.reflections_type == -1) {
-        return (srv && srv->get_default_reflections_mode() == resonance::kDefaultReflectionsRealtime) ? -1 : 0;
-    }
-    if (c.reflections_type == 0)
-        return -1;
-    if (c.reflections_type == 2)
-        return 1;
-    if (c.reflections_type == 3)
-        return 2;
-    // c.reflections_type == 1 (Baked Reverb) or unknown -> baked reverb.
-    return 0;
-}
-
 ResonanceServer::SourceUpdateParams ResonancePlayer::_build_source_update_params(ResonanceServer* srv, int32_t pathing_batch) const {
     const ConfigCache& c = config_cache_;
     Transform3D gt = get_global_transform();
     const Vector3 forward = -gt.basis.get_column(2);
     const Vector3 up = gt.basis.get_column(1);
-    const int baked_var = _compute_baked_data_variation(srv);
+    const int baked_var = resonance::player_reflections_baked_data_variation(c.reflections_type);
 
     // Static Source: this player's pose. Static Listener: active listener pose.
-    // No separate marker NodePaths (bake targets live on ResonanceProbeVolume).
     Vector3 baked_center = get_global_position();
     if (baked_var == 2) {
         if (srv && srv->is_initialized())
@@ -382,6 +364,7 @@ ResonanceServer::SourceUpdateParams ResonancePlayer::_build_source_update_params
     params.baked_endpoint_center = baked_center;
     params.baked_endpoint_radius = resonance::kBakedEndpointRadius;
     params.pathing_probe_batch_handle = pathing_batch;
+    params.simulation_active = _source_simulation_wanted();
     params.reflections_enabled_override = c.reflections_enabled;
     params.pathing_enabled_override = c.pathing_enabled_override;
     params.occlusion_type_override = c.occlusion_type_override;
@@ -408,6 +391,7 @@ void ResonancePlayer::_apply_update_source(int32_t pathing_batch, bool defer_if_
         return;
 
     const ResonanceServer::SourceUpdateParams params = _build_source_update_params(srv, pathing_batch);
+    bool delivered = true;
     for (int32_t handle : handles) {
         if (!defer_if_sim_mutex_busy) {
             srv->update_source(handle, params);
@@ -415,9 +399,12 @@ void ResonancePlayer::_apply_update_source(int32_t pathing_batch, bool defer_if_
         }
         if (srv->uses_batch_source_updates())
             srv->enqueue_source_update(handle, params);
-        else
-            srv->try_update_source(handle, params);
+        else if (!srv->try_update_source(handle, params))
+            delivered = false;
     }
+    // A dropped activity change must stay unpushed so the next frame's sync sends it again.
+    if (delivered)
+        source_simulation_active_pushed_ = params.simulation_active;
 }
 
 void ResonancePlayer::_setup_attenuation(ResonanceServer* srv) {
@@ -531,7 +518,7 @@ void ResonancePlayer::_compute_attenuation(float dist, const OcclusionData& occ_
         return;
     }
     if (c.attenuation_mode == ATTENUATION_INVERSE) {
-        // Inverse: 1/d with min_distance knee; max_distance ignored (Phonon InverseDistance).
+        // 1/d with a min_distance knee; max_distance is ignored, as in Phonon's InverseDistance.
         out_attenuation =
             resonance::playback_inverse_distance_attenuation(dist, c.min_distance, occ_data.distance_attenuation);
     } else if (c.attenuation_mode == ATTENUATION_DISABLED) {
@@ -612,6 +599,7 @@ PlaybackParameters ResonancePlayer::_build_playback_params(const Vector3& listen
     new_params.listener_orientation = listener_orient;
     new_params.enable_direct = direct_enabled;
     new_params.enable_reverb = reverb_enabled;
+    new_params.enable_reflections = c.reflections_enabled != 0;
     new_params.has_valid_reverb = has_reverb;
     new_params.spatial_blend = c.spatial_blend;
     new_params.use_ambisonics_encode = c.use_ambisonics_encode;
@@ -625,7 +613,7 @@ PlaybackParameters ResonancePlayer::_build_playback_params(const Vector3& listen
     new_params.reflections_eq[1] = c.reflections_eq_mid;
     new_params.reflections_eq[2] = c.reflections_eq_high;
     new_params.reflections_delay = c.reflections_delay;
-    new_params.reverb_split_output = reverb_split_output_;
+    new_params.reverb_send = reverb_send_active_;
     int eff_tx_type = resonance::kTransmissionFreqIndependent;
     bool eff_hrtf_bi = false;
     if (srv) {
@@ -643,11 +631,6 @@ PlaybackParameters ResonancePlayer::_build_playback_params(const Vector3& listen
 
     // Baked REVERB wet is not multiplied by direct-path occlusion/transmission.
     new_params.wet_occlusion_factor = 1.0f;
-
-    // Air absorption on the wet path: baked REVERB only. STATICSOURCE/STATICLISTENER IRs encode endpoint geometry;
-    // runtime air absorption on the wet pre-EQ is distance-based and can over-damp at probe boundaries.
-    new_params.apply_air_absorption_to_wet =
-        c.air_absorption_enabled && srv && _compute_baked_data_variation(srv) == 0;
     return new_params;
 }
 
@@ -657,21 +640,20 @@ void ResonancePlayer::_prepare_source_for_simulation(ResonanceServer* srv) {
     _ensure_voice_sources(srv);
 
     _setup_attenuation(srv);
+    _apply_update_source(_resolve_pathing_probe_batch(), true);
+}
 
-    int32_t pathing_batch = -1;
-    if (!pathing_probe_volume.is_empty()) {
-        Node* node = get_node_or_null(pathing_probe_volume);
-        ResonanceProbeVolume* pv = Object::cast_to<ResonanceProbeVolume>(node);
-        if (pv) {
-            pathing_batch = pv->get_probe_batch_handle();
-        } else {
-            // Target node gone (deleted/reparented). Auto-clear to avoid Godot NodePath error
-            // when engine validates paths (e.g. scene save, inspector). EXIT_TREE clear on ProbeVolume
-            // handles normal deletion; this catches edge cases (undo, cross-scene refs).
-            set_pathing_probe_volume(NodePath());
-        }
-    }
-    _apply_update_source(pathing_batch, true);
+int32_t ResonancePlayer::_resolve_pathing_probe_batch() {
+    if (pathing_probe_volume.is_empty())
+        return -1;
+    Node* node = get_node_or_null(pathing_probe_volume);
+    if (ResonanceProbeVolume* pv = Object::cast_to<ResonanceProbeVolume>(node))
+        return pv->get_probe_batch_handle();
+    // Only the editor clears a dangling path: at runtime the volume may be out of the tree for now and come back.
+    Engine* eng = Engine::get_singleton();
+    if (eng && eng->is_editor_hint())
+        set_pathing_probe_volume(NodePath());
+    return -1;
 }
 
 bool ResonancePlayer::_playback_lod_should_apply_playback_params(double delta, bool debug_hud_active, const Vector3& source_pos) {
@@ -695,15 +677,13 @@ bool ResonancePlayer::_playback_lod_should_apply_playback_params(double delta, b
     return true;
 }
 
-// Pulls occlusion/transmission/directivity plus air absorption from the simulation (with optional manual overrides),
-// applies optional first-order smoothing when playback_coeff_smoothing_time > 0, and merges peek/fetch reverb
-// availability. Builds PlaybackParameters (distance curves, perspective correction, wet gates) and pushes them to
-// the audio worker via _broadcast_update_parameters. opt_debug_out mirrors key scalars for HUD/debug drawers when set.
+// Builds PlaybackParameters from the latest simulation results and pushes them to the audio worker.
+// opt_debug_out, when set, receives the values for the debug HUD.
 void ResonancePlayer::_apply_playback_params_from_simulation(ResonanceServer* srv, ResonanceDebugData* opt_debug_out, double delta_seconds) {
     if (!srv)
         return;
     _ensure_voice_sources(srv);
-    if (!srv->is_spatial_audio_output_ready())
+    if (!srv->is_source_spatial_output_ready(source_handle))
         return;
 
     const ConfigCache& c = config_cache_;
@@ -738,10 +718,9 @@ void ResonancePlayer::_apply_playback_params_from_simulation(ResonanceServer* sr
     if (!has_reverb)
         has_reverb = srv->fetch_reverb_params(source_handle, ignored_params);
 
-    // Mix levels live in PlaybackParameters and ramp DSP only. Enable gates
-    // follow output_* so Mix 0 still feeds EffectApply / Overlap-Save with silence.
+    // Mix levels only scale the DSP ramps. The enable gates follow output_*, so a mix of 0 still runs the effects on silence.
     const bool direct_enabled = resonance::playback_enable_direct(!srv || srv->is_output_direct_enabled());
-    const bool reverb_enabled = resonance::playback_enable_reverb(!srv || srv->is_output_reverb_enabled());
+    const bool reverb_enabled = _playback_wet_enabled(srv);
 
     bool apply_perspective = (c.perspective_override == 1) || (c.perspective_override == -1 && srv->is_perspective_correction_enabled());
     float perspective_factor_val = (c.perspective_override == 1) ? CLAMP(c.perspective_factor, resonance::kPlayerPerspectiveFactorMin, resonance::kPlayerPerspectiveFactorMax) : srv->get_perspective_correction_factor();
@@ -751,6 +730,7 @@ void ResonancePlayer::_apply_playback_params_from_simulation(ResonanceServer* sr
                                                            attenuation, dist, effective_source_pos,
                                                            occ_val, tx_low, tx_mid, tx_high, directivity_val, air_abs,
                                                            has_reverb, direct_enabled, reverb_enabled);
+    new_params.virtualized = voice_virtual_state_.virtualized;
 
     _broadcast_update_parameters(new_params);
     last_pushed_playback_params_ = new_params;
@@ -777,8 +757,41 @@ void ResonancePlayer::_apply_playback_params_from_simulation(ResonanceServer* sr
     }
 }
 
+bool ResonancePlayer::_update_voice_virtual_state(ResonanceServer* srv, double delta_seconds) {
+    if (!srv || !srv->is_source_spatial_output_ready(source_handle))
+        return false;
+
+    Vector3 listener_pos;
+    IPLCoordinateSpace3 listener_orient;
+    _compute_listener_data(srv, listener_pos, listener_orient);
+    const float distance = get_global_position().distance_to(listener_pos);
+    float attenuation = 1.0f;
+    _compute_attenuation(distance, srv->get_source_occlusion_data(source_handle), attenuation);
+
+    const ConfigCache& c = config_cache_;
+    resonance::VoiceAudibility audibility;
+    audibility.attenuation_uses_max_distance =
+        resonance::attenuation_mode_uses_max_distance(c.distance_attenuation, c.attenuation_mode);
+    audibility.distance = distance;
+    audibility.max_distance = c.max_distance;
+    audibility.attenuation = attenuation;
+    audibility.reflections_simulated =
+        resonance::source_sim_reflections_enabled(c.reflections_enabled, srv->is_output_reverb_enabled());
+    audibility.reflections_follow_distance_curve = c.use_distance_curve_for_reflections;
+
+    const float enter_delay = resonance::voice_virtual_enter_delay_sec(audibility.reflections_simulated,
+                                                                       srv->get_realtime_simulation_duration());
+    const bool was_virtual = voice_virtual_state_.virtualized;
+    voice_virtual_state_ = resonance::next_voice_virtual_state(
+        voice_virtual_state_, resonance::voice_is_inaudible(audibility), delta_seconds, enter_delay);
+    if (voice_virtual_state_.virtualized == was_virtual)
+        return false;
+    _sync_source_simulation_activity(srv);
+    return true;
+}
+
 void ResonancePlayer::_apply_playback_coeff_refresh_from_simulation(ResonanceServer* srv, double delta_seconds) {
-    if (!srv || !srv->is_spatial_audio_output_ready() || !last_pushed_playback_params_valid_)
+    if (!srv || !srv->is_source_spatial_output_ready(source_handle) || !last_pushed_playback_params_valid_)
         return;
     _ensure_voice_sources(srv);
 
@@ -802,7 +815,8 @@ void ResonancePlayer::_apply_playback_coeff_refresh_from_simulation(ResonanceSer
     patched.wet_occlusion_factor = 1.0f;
 
     patched.enable_direct = resonance::playback_enable_direct(srv->is_output_direct_enabled());
-    patched.enable_reverb = resonance::playback_enable_reverb(srv->is_output_reverb_enabled());
+    patched.enable_reverb = _playback_wet_enabled(srv);
+    patched.enable_reflections = config_cache_.reflections_enabled != 0;
 
     if (resonance::playback_lod_coeff_refresh_includes_position_attenuation()) {
         Viewport* vp = get_viewport();

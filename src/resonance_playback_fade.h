@@ -35,7 +35,7 @@ inline float linear_pad_fade_hold_to_zero(int k, int rem) {
     return static_cast<float>(rem - 1 - k) / static_cast<float>(rem - 1);
 }
 
-/// Cosine AM on the last `taper_len` samples of a real chunk.
+/// Cosine fade-out over the last taper_len samples of a real chunk.
 inline float eos_input_end_am_gain(int sample_index, int n_real, int taper_len) {
     if (taper_len <= 0 || n_real <= 0)
         return 1.0f;
@@ -69,7 +69,7 @@ inline void fill_geometry_gate_reopen_hold(FrameLike* buffer, int32_t frames, in
     }
 }
 
-/// Pad `buffer[valid_copy..frames)` with a cosine fade from the last valid sample (or last_mix hold).
+/// Pads buffer[valid_copy, frames) with a cosine fade from the last valid sample, or the hold values.
 template <typename FrameLike>
 inline void pad_output_with_cosine_underrun_fade(FrameLike* buffer, int32_t frames, int valid_copy, float hold_l,
                                                  float hold_r, bool hold_valid) {

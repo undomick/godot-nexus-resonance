@@ -26,7 +26,7 @@ void ambisonics_decode_orientation_row_major(const float source_row_major4[16], 
     auto S = source_row_major4;
     auto L = listener_row_major4;
 
-    // Local-to-world basis rows for the HOA bed (ahead = row 8–10, up = row 4–6).
+    // Local-to-world basis of the HOA bed: elements 8-10 hold the ahead axis, 4-6 the up axis.
     IPLVector3 source_ahead_raw = IPLVector3{S[8], S[9], S[10]};
     IPLVector3 source_up_raw = IPLVector3{S[4], S[5], S[6]};
     auto source_ahead_u = unit_vector(source_ahead_raw);

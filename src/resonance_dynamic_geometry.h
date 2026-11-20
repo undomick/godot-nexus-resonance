@@ -5,12 +5,9 @@
 
 namespace godot {
 
-/// Dynamic geometry: excluded from static bake; mesh lives in a local sub-scene and is placed in the global IPLScene
-/// as an instanced mesh.
-/// Path validation needs the acoustic pose committed (transforms queue to the simulation worker;
-/// call ResonanceGeometry::flush_dynamic_acoustic_transform when motion ends to bypass
-/// dynamic_scene_commit_min_interval re-queue latency).
-/// Use for doors, moving platforms, and other animated objects. Holds mesh_asset; export via Tools menu.
+/// Excluded from the static bake; lives in the global IPLScene as an instanced mesh of its own sub-scene.
+/// Transforms are queued to the simulation worker: call flush_dynamic_acoustic_transform when motion ends so
+/// path validation sees the final pose without waiting for dynamic_scene_commit_min_interval.
 class ResonanceDynamicGeometry : public ResonanceGeometry {
     GDCLASS(ResonanceDynamicGeometry, ResonanceGeometry)
 

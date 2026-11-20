@@ -1,6 +1,6 @@
 extends RefCounted
 
-## Per-volume bake state for the pipeline (reflections, pathing, static source/listener).
+## Per-volume bake state for the pipeline: which passes are needed and their static endpoints.
 
 const _Self = preload("res://addons/nexus_resonance/editor/resonance_bake_volume_context.gd")
 const _BakeDiscovery = preload("res://addons/nexus_resonance/editor/resonance_bake_discovery.gd")
@@ -21,17 +21,16 @@ var player_pos: Vector3
 var player_radius: float
 var listener_pos: Vector3
 var listener_radius: float
-## bake_sources resolved to { pos, radius, node } per emitter; one bake_static_source pass each.
+## One { pos, radius, node } per resolved bake source; each gets its own static source pass.
 var static_source_entries: Array = []
-## Same pattern for bake_listeners / bake_static_listener.
+## Same for bake_listeners and the static listener pass.
 var static_listener_entries: Array = []
 var bc: Resource
 var vol_info: String
 
 
-## Bake STATICSOURCE/STATICLISTENER probe influence. Runtime always queries layers with
-## kBakedEndpointRadius (10000 m in C++). Keep bake_influence_radius at default unless you
-## accept probes outside the bake sphere having no static layer at runtime.
+## The runtime always queries static layers with a 10000 m radius. A smaller bake_influence_radius
+## leaves probes outside the bake sphere without a static layer.
 static func _influence_radius(p_vol: Node, default_influence_radius: float) -> float:
 	return (
 		p_vol.get("bake_influence_radius")
@@ -48,7 +47,7 @@ static func _entries_from_nodes(nodes: Array, radius: float) -> Array:
 	return out
 
 
-## Non-empty NodePaths on the volume property (stale paths still count).
+## Counts non-empty NodePaths, including ones that no longer resolve.
 static func _bake_path_count(p_vol: Node, property: String) -> int:
 	var arr = p_vol.get(property) if p_vol and property in p_vol else []
 	if not (arr is Array):
@@ -68,7 +67,7 @@ static func _static_pass_need_hash(
 	return _BakeHashes.compute_position_radius_hash(single_pos, single_radius)
 
 
-## Resolve bake_sources / bake_listeners; gate static passes on resolved nodes (not BakeConfig flags).
+## Static passes run only for bake_sources and bake_listeners that resolve to nodes.
 static func _resolve_static_endpoints(
 	p_vol: Node, p_root: Node, default_influence_radius: float
 ) -> Dictionary:
@@ -182,7 +181,7 @@ static func build(
 	return ctx
 
 
-## Resolves static endpoints and returns the shared invalidation plan (pipeline + inspector SSOT).
+## Resolves the static endpoints, then returns [method compute_bake_needs].
 static func compute_bake_needs_for_volume(
 	p_vol: Node,
 	p_root: Node,
@@ -210,7 +209,7 @@ static func compute_bake_needs_for_volume(
 	)
 
 
-## Shared invalidation plan for pipeline skips and inspector bake status (SSOT).
+## Which bake passes are stale. The pipeline and the inspector bake status both use this.
 static func compute_bake_needs(
 	p_vol: Node,
 	p_root: Node,
@@ -243,14 +242,13 @@ static func compute_bake_needs(
 	)
 	var has_data = p_probe_data.get_data().size() > 0
 	var want_path = _BakeDiscovery.resolve_bake_pathing_enabled(p_root, bake_cfg)
-	# Bake layer from ResonanceRuntime (or BakeConfig fallback); not BakeConfig.reflection_type alone.
 	var desired_refl = _BakeDiscovery.resolve_bake_reflection_type(p_root, bake_cfg)
 	var baked_refl = (
 		p_probe_data.get_baked_reflection_type()
 		if p_probe_data.has_method("get_baked_reflection_type")
 		else -1
 	)
-	# Legacy -1 = both layers; otherwise exact bake-layer match.
+	# -1 comes from data baked before the layer was recorded and matches any layer.
 	var refl_matches = baked_refl < 0 or baked_refl == desired_refl
 	var desired_amb = _BakeDiscovery.resolve_bake_ambisonics_order(p_root, bake_cfg, p_vol)
 	var baked_amb = (
@@ -258,7 +256,7 @@ static func compute_bake_needs(
 		if p_probe_data.has_method("get_baked_ambisonics_order")
 		else -1
 	)
-	# Legacy -1 treated as order 1; otherwise exact match for rebake needs.
+	# -1 comes from data baked before the order was recorded and counts as order 1.
 	var amb_matches = (baked_amb < 0 and desired_amb == 1) or baked_amb == desired_amb
 	var hash_matches = (
 		p_probe_data.get_bake_params_hash() == p_vol.get_bake_params_hash()
@@ -271,7 +269,7 @@ static func compute_bake_needs(
 		var stored_union: int = p_probe_data.get_static_scene_params_hash()
 		if stored_union == 0 or stored_union != union_static_hash:
 			out.need_reflections = true
-	# Runtime pathing off: do not force reflections rebake just because an old pathing hash exists.
+	# With pathing off, an old pathing hash must not force a rebake.
 	var path_hash = _BakeHashes.compute_pathing_hash(p_root, bake_cfg, p_vol) if want_path else 0
 	out.need_pathing = want_path and (ph == 0 or ph != path_hash)
 	if want_path and out.need_pathing and (not has_data or not refl_matches or not amb_matches):

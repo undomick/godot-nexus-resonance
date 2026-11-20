@@ -5,22 +5,21 @@
 
 namespace resonance {
 
-/// Safety cap for _release_reflection_mixer_when_unused when readers never drop (dead audio thread).
+/// Bounds the wait for readers to drop, e.g. when the audio thread is dead.
 constexpr uint64_t kReflectionMixerReleaseWaitTimeoutMs = 5000;
 
-/// Target cap for deferred releases when reader wait times out. With stuck readers the queue may grow (soft cap + telemetry).
+/// Soft cap: with stuck readers the deferred queue grows past it.
 constexpr size_t kMaxDeferredReflectionMixerReleases = 16;
 
 inline bool reflection_mixer_deferred_at_capacity(size_t pending_count) {
     return pending_count >= kMaxDeferredReflectionMixerReleases;
 }
 
-/// When at capacity and readers drained: evict oldest deferred mixer via iplReflectionMixerRelease (never discard).
+/// The evicted mixer is released with iplReflectionMixerRelease, never dropped.
 inline bool reflection_mixer_defer_should_evict_oldest(size_t pending_count, int readers) {
     return reflection_mixer_deferred_at_capacity(pending_count) && readers <= 0;
 }
 
-/// When at capacity but readers still hold: enqueue anyway (soft cap exceeded; handle retained until readers drop).
 inline bool reflection_mixer_defer_exceeds_soft_cap(size_t pending_count, int readers) {
     return reflection_mixer_deferred_at_capacity(pending_count) && readers > 0;
 }
@@ -31,17 +30,17 @@ inline bool reflection_mixer_release_wait_finished(int readers, uint64_t elapsed
     return elapsed_ms >= kReflectionMixerReleaseWaitTimeoutMs;
 }
 
-/// IPL release is safe only when no MixerReadGuard holds the reader count.
+/// Readers are MixerReadGuard holders.
 inline bool reflection_mixer_safe_to_release(int readers) {
     return readers <= 0;
 }
 
-/// After the wait timeout with stuck readers: defer release instead of forcing iplReflectionMixerRelease (UAF risk).
+/// Forcing iplReflectionMixerRelease with stuck readers would be a use-after-free, so defer instead.
 inline bool reflection_mixer_should_defer_release(int readers, uint64_t elapsed_ms) {
     return readers > 0 && reflection_mixer_release_wait_finished(readers, elapsed_ms);
 }
 
-/// Audio thread: last reader dropped; main/worker should drain deferred mixers (never release IPL from audio).
+/// Audio thread, when its reader drops: the audio thread never releases IPL objects, so main/worker drains instead.
 inline bool reflection_mixer_should_request_deferred_drain(int readers_before_sub) {
     return readers_before_sub == 1;
 }

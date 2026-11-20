@@ -2,7 +2,7 @@
 extends RefCounted
 
 ## Converts Animation.TYPE_AUDIO tracks that target a [ResonancePlayer] into TYPE_METHOD keys that call
-## [method ResonancePlayer.play_animation_audio_clip]. Same logic as [member ResonancePlayer.convert_anim_audio_runtime] at runtime.
+## [method ResonancePlayer.play_animation_audio_clip]. [member ResonancePlayer.convert_anim_audio_runtime] does the same at runtime.
 
 const _METHOD := &"play_animation_audio_clip"
 
@@ -130,7 +130,7 @@ static func _convert_one_player(ap: AnimationPlayer, result: Dictionary) -> void
 				t = anim.get_track_count() - 1
 
 
-## Loads one PackedScene from disk, converts in memory, and saves only if tracks_converted is greater than zero.
+## Converts one scene file and saves it only if at least one track was converted.
 static func convert_packed_scene_file_on_disk(scene_path: String) -> Dictionary:
 	var out := {
 		"tracks_converted": 0,
@@ -173,7 +173,7 @@ static func convert_packed_scene_file_on_disk(scene_path: String) -> Dictionary:
 	return out
 
 
-## Converts every .tscn path in [param paths] on disk. Returns aggregate counts for the editor toast.
+## Converts every scene file in [param paths] and returns the summed counts.
 static func convert_packed_scene_files_on_disk(paths: PackedStringArray) -> Dictionary:
 	var summary := {
 		"tracks_converted": 0,

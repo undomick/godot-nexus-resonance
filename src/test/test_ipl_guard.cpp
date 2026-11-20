@@ -1,9 +1,7 @@
 #include "../lib/catch2/single_include/catch2/catch.hpp"
 #include <cstdint>
 
-// Tests the RAII scoped-release pattern used by IPLScopedRelease (resonance_ipl_guard.h).
-// We use a local implementation to avoid phonon.h dependency in unit tests.
-// IPLScopedRelease has the same behavior: release on destruction, detach() prevents release.
+// Local copy of IPLScopedRelease, which needs phonon.h: releases on destruction unless detach() was called.
 
 namespace {
 

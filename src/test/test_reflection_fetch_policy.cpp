@@ -49,13 +49,6 @@ TEST_CASE("conv wet mix level applies baked occlusion", "[reflection_fetch]") {
     REQUIRE(resonance::conv_reflection_wet_mix_level(0.0f, 0.0f) == Approx(0.0f));
 }
 
-TEST_CASE("reflection pending clears after RunReflections for eligible handles only", "[reflection_fetch]") {
-    REQUIRE_FALSE(resonance::reflection_pending_should_clear_after_run(false, true, false));
-    REQUIRE_FALSE(resonance::reflection_pending_should_clear_after_run(true, false, false));
-    REQUIRE_FALSE(resonance::reflection_pending_should_clear_after_run(true, true, true));
-    REQUIRE(resonance::reflection_pending_should_clear_after_run(true, true, false));
-}
-
 TEST_CASE("EOS TAN tail refreshes tanDevice from live device", "[reflection_fetch]") {
     IPLReflectionEffectParams p{};
     p.type = IPL_REFLECTIONEFFECTTYPE_TAN;
@@ -71,28 +64,14 @@ TEST_CASE("EOS TAN tail refreshes tanDevice from live device", "[reflection_fetc
     REQUIRE(conv.tanDevice == reinterpret_cast<IPLTrueAudioNextDevice>(0x1));
 }
 
-TEST_CASE("EOS hybrid strips stale IR but keeps parametric tail", "[reflection_fetch]") {
-    IPLReflectionEffectParams p{};
-    p.ir = reinterpret_cast<IPLReflectionEffectIR>(1);
-    p.type = IPL_REFLECTIONEFFECTTYPE_HYBRID;
-    p.reverbTimes[0] = 0.4f;
-    resonance::reflection_eos_tail_strip_stale_ir(resonance::kReflectionHybrid, 8u, 7u, p);
-    REQUIRE(p.ir == nullptr);
-    REQUIRE(p.type == IPL_REFLECTIONEFFECTTYPE_PARAMETRIC);
-    REQUIRE(p.reverbTimes[0] == Approx(0.4f));
-
-    IPLReflectionEffectParams fresh = p;
-    fresh.ir = reinterpret_cast<IPLReflectionEffectIR>(2);
-    fresh.type = IPL_REFLECTIONEFFECTTYPE_HYBRID;
-    resonance::reflection_eos_tail_strip_stale_ir(resonance::kReflectionHybrid, 8u, 8u, fresh);
-    REQUIRE(fresh.ir != nullptr);
-    REQUIRE(fresh.type == IPL_REFLECTIONEFFECTTYPE_HYBRID);
+TEST_CASE("decoder waits for the first reflection params so the transient is not consumed", "[reflection_fetch]") {
+    REQUIRE(resonance::reflection_decoder_should_wait_for_first_params(true, true, true, false, false));
+    REQUIRE_FALSE(resonance::reflection_decoder_should_wait_for_first_params(true, true, true, true, false));
+    REQUIRE_FALSE(resonance::reflection_decoder_should_wait_for_first_params(true, true, true, false, true));
+    REQUIRE_FALSE(resonance::reflection_decoder_should_wait_for_first_params(false, true, true, false, false));
+    REQUIRE_FALSE(resonance::reflection_decoder_should_wait_for_first_params(true, true, false, false, false));
 }
 
-TEST_CASE("decoder waits for the first reflection params so the transient is not consumed", "[reflection_fetch]") {
-    REQUIRE(resonance::reflection_decoder_should_wait_for_first_params(true, true, false, false));
-    REQUIRE_FALSE(resonance::reflection_decoder_should_wait_for_first_params(true, true, true, false));
-    REQUIRE_FALSE(resonance::reflection_decoder_should_wait_for_first_params(true, true, false, true));
-    REQUIRE_FALSE(resonance::reflection_decoder_should_wait_for_first_params(false, true, false, false));
-    REQUIRE_FALSE(resonance::reflection_decoder_should_wait_for_first_params(true, false, false, false));
+TEST_CASE("decoder does not wait for reflection params when only pathing enables reverb", "[reflection_fetch]") {
+    REQUIRE_FALSE(resonance::reflection_decoder_should_wait_for_first_params(true, false, true, false, false));
 }

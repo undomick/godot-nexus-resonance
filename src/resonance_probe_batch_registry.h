@@ -7,6 +7,7 @@
 #include <mutex>
 #include <phonon.h>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "handle_manager.h"
@@ -15,27 +16,29 @@
 
 namespace godot {
 
-/// Manages probe batch hash mapping, refcount, and compatibility checks.
-/// ResonanceServer delegates probe batch load/remove/clear/revalidate to this class.
+/// Probe batch dedup by data hash, refcounts and compatibility checks for ResonanceServer.
 class ResonanceProbeBatchRegistry {
   public:
     ResonanceProbeBatchRegistry() = default;
 
-    /// Load probe batch. Returns handle or -1. Caller must validate compatibility before calling.
-    /// [probe_bytes, probe_byte_size] must reference the same blob used to compute [data_hash] (no copy here).
-    /// When [sim_mutex] is non-null it is acquired before the registry mutex (same order as the simulation worker).
-    int32_t load_batch(IPLContext ctx, IPLSimulator sim, std::mutex* sim_mutex,
-                       Ref<ResonanceProbeData> data, uint64_t data_hash,
+    /// Returns the handle or -1. The caller checks compatibility first. probe_bytes must be the blob data_hash
+    /// was computed from. The batch joins the simulator on the next apply_simulator_changes; pathing skips it until then.
+    int32_t load_batch(IPLContext ctx, Ref<ResonanceProbeData> data, uint64_t data_hash,
                        const uint8_t* probe_bytes, int64_t probe_byte_size);
 
-    void remove_batch(int32_t handle, IPLSimulator sim, std::mutex* sim_mutex);
+    /// Drops one reference. The last one leaves the batch visible until apply_simulator_changes removes it,
+    /// so a reload of the same data in between keeps the batch.
+    void remove_batch(int32_t handle);
 
-    void clear_batches(IPLSimulator sim, std::mutex* sim_mutex);
+    bool has_pending_simulator_changes() const;
+    std::vector<int32_t> pending_removals() const;
+    /// Caller holds the simulation mutex.
+    void apply_simulator_changes(IPLSimulator sim);
 
-    int revalidate_with_config(IPLSimulator sim, std::mutex* sim_mutex,
-                               int reflection_type, bool pathing_enabled);
+    /// Caller holds the simulation mutex.
+    void clear_batches(IPLSimulator sim);
 
-    /// Handles that would be removed by revalidate_with_config (read-only snapshot).
+    /// Handles whose baked reflection type does not match the runtime (read-only snapshot).
     std::vector<int32_t> list_incompatible_handles(int reflection_type, bool pathing_enabled) const;
 
     struct PathingBatchResolve {
@@ -43,18 +46,16 @@ class ResonanceProbeBatchRegistry {
         resonance::PathingBatchLookup lookup{};
     };
 
-    /// Resolve pathing batch for preferred_handle using IPL layer state and lookup policy.
-    /// IMPORTANT: batch is retained. Caller MUST call iplProbeBatchRelease when done; failure to release causes leaks.
+    /// The returned batch is retained; the caller must iplProbeBatchRelease it.
     PathingBatchResolve resolve_pathing_batch(int32_t preferred_handle) const;
 
-    /// Returns pathing batch for preferred_handle if policy resolves one.
-    /// IMPORTANT: Return value is retained. Caller MUST call iplProbeBatchRelease when done; failure to release causes leaks.
+    /// The returned batch is retained; the caller must iplProbeBatchRelease it.
     IPLProbeBatch get_pathing_batch(int32_t preferred_handle) const;
 
-    /// True when [handle] is loaded and has pathing baked (same gate as get_pathing_batch preferred hit).
+    /// Same gate as a preferred hit in get_pathing_batch.
     bool handle_has_pathing(int32_t handle) const;
 
-    /// Probe data resource associated with a loaded batch handle (-1 if unknown).
+    /// Null for an unknown handle.
     Ref<ResonanceProbeData> get_probe_data_for_handle(int32_t handle) const;
 
     void for_each_probe_data(const std::function<void(int32_t handle, const Ref<ResonanceProbeData>& data)>& fn) const;
@@ -67,9 +68,13 @@ class ResonanceProbeBatchRegistry {
     void get_all_batches_for_shutdown(std::vector<IPLProbeBatch>& out);
 
     bool has_any_batches() const;
+    uint64_t simulator_generation() const { return simulator_generation_.load(std::memory_order_acquire); }
 
   private:
     static bool is_reflection_type_compatible(int baked_type, int reflection_type);
+    int32_t _reuse_loaded_batch_locked(uint64_t data_hash);
+    IPLProbeBatch _forget_handle_locked(int32_t handle);
+    void _clear_bookkeeping_locked();
 
     ProbeBatchManager probe_batch_manager_;
     std::unordered_map<uint64_t, int32_t> hash_to_handle_;
@@ -78,9 +83,14 @@ class ResonanceProbeBatchRegistry {
     std::unordered_map<int32_t, bool> handle_has_pathing_;
     std::unordered_map<int32_t, int> handle_baked_refl_;
     std::unordered_map<int32_t, Ref<ResonanceProbeData>> handle_to_probe_data_;
+    std::unordered_set<int32_t> pending_adds_;
+    /// Handles whose refcount reached zero; the worker removes them from the simulator.
+    std::unordered_set<int32_t> pending_removes_;
+    std::unordered_set<int32_t> in_simulator_;
     mutable std::mutex mutex_;
     /// Lock-free for audio fetch gate; kept in sync with handle_to_hash_ under mutex_.
     std::atomic<bool> has_any_batches_{false};
+    std::atomic<uint64_t> simulator_generation_{0};
 };
 
 } // namespace godot

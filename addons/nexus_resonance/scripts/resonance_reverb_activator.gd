@@ -1,8 +1,7 @@
 extends RefCounted
 
-## Feeds silence into the runtime reverb bus via [AudioStreamGenerator] so [ResonanceAudioEffect] stays active ([ResonanceRuntime]).
-## Uses [method ResonanceRuntimeBus.get_reverb_bus_name] only (global [member ResonanceRuntimeConfig.reverb_bus_name]).
-## Per-player custom reverb buses from [ResonancePlayerConfig] are not driven here; Parametric/Hybrid split wet needs a [ResonanceReverbOutput] child on that bus.
+## Feeds near-silence into the global reverb bus via [AudioStreamGenerator] so [ResonanceAudioEffect] keeps processing.
+## Per-player reverb buses from [ResonancePlayerConfig] are not driven here.
 
 const ResonanceRuntimeBus = preload("res://addons/nexus_resonance/scripts/resonance_runtime_bus.gd")
 
@@ -63,7 +62,7 @@ func fill_buffer(bus: ResonanceRuntimeBus) -> void:
 		return
 	var avail = playback.get_frames_available()
 	if avail <= 0:
-		# In-place counter when shape ok; else minimal dict (do not flip _instrumentation_shape_ok here).
+		# This minimal dict lacks the fill keys, so _instrumentation_shape_ok must stay false.
 		if _instrumentation_shape_ok:
 			instrumentation["avail_zero_count"] = (
 				int(instrumentation.get("avail_zero_count", 0)) + 1
@@ -102,7 +101,7 @@ func fill_buffer(bus: ResonanceRuntimeBus) -> void:
 		instrumentation["skips"] = skips
 
 
-## [method Node.free] immediately (quit may not run [method Node.queue_free]; avoids stuck generator playback).
+## Frees the player immediately: on quit [method Node.queue_free] may never run and the generator playback would hang.
 func cleanup() -> void:
 	if _player == null:
 		return

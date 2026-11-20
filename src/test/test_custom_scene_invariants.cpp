@@ -7,7 +7,7 @@
 
 namespace {
 
-// Mirrors Steam Audio direct_effect.cpp: overallGain *= occlusion + (1 - occlusion) * averageTransmissionFactor
+// Same gain formula as Steam Audio's direct effect.
 float steam_direct_occlusion_transmission_gain(float occlusion, float trans_l, float trans_m, float trans_h) {
     const float t_avg = (trans_l + trans_m + trans_h) / 3.0f;
     return occlusion + (1.0f - occlusion) * t_avg;
@@ -54,7 +54,7 @@ TEST_CASE("Default numTransmissionRays is nearest surface only", "[custom_scene]
     REQUIRE(resonance::kDefaultPlayerConfigTransmissionRays == 1);
 }
 
-// Mirrors Steam DirectSimulator::transmission: product of material T; sqrt when numHits > 1.
+// Steam Audio's direct simulator multiplies material transmission over all hits, then takes sqrt when there is more than one hit.
 TEST_CASE("Transmission product: one hit keeps material T", "[custom_scene][transmission]") {
     const float t = 0.1f;
     REQUIRE(t == Approx(0.1f).margin(1e-6f));

@@ -7,21 +7,21 @@
 
 namespace resonance {
 
-/// Built-in brick.tres transmission (addons/nexus_resonance/materials/brick.tres).
+/// Must match the built-in materials/brick.tres.
 constexpr float kBrickTransmissionLow = 0.5f;
 constexpr float kBrickTransmissionMid = 0.1f;
 constexpr float kBrickTransmissionHigh = 0.028f;
-/// Built-in wood.tres (high often unset; treat missing as 0.01 for classification).
+/// Must match the built-in wood.tres; its often unset high band counts as 0.01.
 constexpr float kWoodTransmissionLow = 0.06f;
 constexpr float kWoodTransmissionMid = 0.03f;
 constexpr float kWoodTransmissionHigh = 0.01f;
-/// Built-in plaster.tres.
+/// Must match the built-in plaster.tres.
 constexpr float kPlasterTransmissionLow = 0.04f;
 constexpr float kPlasterTransmissionMid = 0.03f;
 constexpr float kPlasterTransmissionHigh = 0.01f;
-/// Scene-export / ResonanceGeometry fallback (kSceneExportTransmission).
+/// Same value as kSceneExportTransmission, the scene-export and ResonanceGeometry fallback.
 constexpr float kDefaultExportTransmission = 0.1f;
-/// Phonon / Custom physics "generic" preset.
+/// Steam Audio "generic" material preset.
 constexpr float kGenericTransmissionLow = 0.100f;
 constexpr float kGenericTransmissionMid = 0.050f;
 constexpr float kGenericTransmissionHigh = 0.030f;
@@ -42,7 +42,7 @@ inline bool transmission_bands_match(float a0, float a1, float a2, float b0, flo
     return std::fabs(a0 - b0) <= eps && std::fabs(a1 - b1) <= eps && std::fabs(a2 - b2) <= eps;
 }
 
-/// Classify 3-band transmission against known presets (Hit0 / Steam T diagnosis).
+/// For diagnostics only: names the built-in preset a reported transmission came from.
 inline TransmissionMaterialLabel classify_transmission_material(float t0, float t1, float t2) {
     if (transmission_bands_match(t0, t1, t2, kBrickTransmissionLow, kBrickTransmissionMid, kBrickTransmissionHigh,
                                  kTransmissionMatchEpsilon))
@@ -132,7 +132,7 @@ inline int unique_transmission_hits_by_id(const int64_t* ids, const float* const
     return out_n;
 }
 
-/// Dedupe by geometry id, then Steam product+sqrt.
+/// Each geometry id counts once, at most 16.
 inline void steam_transmission_from_unique_ids(const int64_t* ids, const float* const* hit_transmission_lmh, int in_count,
                                                float* out_lmh) {
     if (!out_lmh)
@@ -147,7 +147,8 @@ inline void steam_transmission_from_unique_ids(const int64_t* ids, const float* 
     steam_transmission_from_hits(unique_hits, n, out_lmh);
 }
 
-/// With numTransmissionRays == 1, Steam's reported T is the single closestHit material (before LOS clear).
+/// With numTransmissionRays == 1, Steam's reported T is the closestHit material, read before
+/// clear_transmission_on_line_of_sight.
 inline void fill_hit0_from_single_transmission_ray(int num_transmission_rays, const float* steam_transmission_lmh,
                                                    float* out_hit0_lmh, bool* out_hit0_valid) {
     if (out_hit0_valid)

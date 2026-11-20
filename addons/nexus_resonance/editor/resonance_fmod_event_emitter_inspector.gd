@@ -1,8 +1,7 @@
 @tool
 extends EditorInspectorPlugin
 
-## Adds a DSP limitation note to ResonanceFmodEventEmitter inspector.
-## Users see the note without reading developer docs.
+## Adds a DSP limitation note to the ResonanceFmodEventEmitter inspector.
 
 const DSP_LIMITATION_NOTE := "Steam Audio DSP parameter binding is pending fmod-gdextension API support. Position sync works; full spatialization may be limited until then."
 

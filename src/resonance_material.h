@@ -2,7 +2,7 @@
 #define RESONANCE_MATERIAL_H
 
 #include <godot_cpp/classes/resource.hpp>
-#include <phonon.h> // Steam Audio types
+#include <phonon.h>
 
 namespace godot {
 
@@ -10,18 +10,14 @@ class ResonanceMaterial : public Resource {
     GDCLASS(ResonanceMaterial, Resource)
 
   private:
-    // Absorption coefficients for 3-band model: Low (up to ~800 Hz), Mid (~800 Hz - 8 kHz), High (8 kHz+).
-    // Range: 0.0 (no absorption) to 1.0 (full absorption)
+    // Bands: low up to ~800 Hz, mid ~800 Hz - 8 kHz, high above 8 kHz. All coefficients are 0..1.
     float low_freq_absorption = 0.10f;
     float mid_freq_absorption = 0.20f;
     float high_freq_absorption = 0.30f;
 
-    // Scattering: How much sound is reflected randomly (Roughness).
-    // Range: 0.0 (mirror-like) to 1.0 (fully random)
+    // 0 is mirror-like, 1 fully diffuse.
     float scattering = 0.05f;
 
-    // Transmission (3-band): How much sound passes through per frequency band. Same band boundaries as absorption.
-    // Range: 0.0 (solid wall) to 1.0 (transparent)
     float transmission_low = 0.01f;
     float transmission_mid = 0.01f;
     float transmission_high = 0.01f;
@@ -32,7 +28,6 @@ class ResonanceMaterial : public Resource {
   public:
     ResonanceMaterial() = default;
 
-    // Getters and Setters for Godot Inspector
     void set_low_freq_absorption(float p_val);
     float get_low_freq_absorption() const;
 
@@ -52,12 +47,15 @@ class ResonanceMaterial : public Resource {
     void set_transmission_high(float p_val);
     float get_transmission_high() const;
 
-    // Deprecated: convenience setter for backward compatibility; sets all three bands.
+    // Deprecated: sets all three transmission bands.
     void set_transmission(float p_val);
     float get_transmission() const;
 
-    // Helper: Converts this resource into a native Steam Audio struct
     IPLMaterial get_ipl_material() const;
+
+    /// Material used for geometry without a ResonanceMaterial.
+    static IPLMaterial default_ipl_material();
+    static IPLMaterial ipl_material_or_default(const Ref<ResonanceMaterial>& p_material);
 };
 
 } // namespace godot

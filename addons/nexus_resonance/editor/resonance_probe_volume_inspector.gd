@@ -1,7 +1,7 @@
 @tool
 extends EditorInspectorPlugin
 
-## ResonanceProbeVolume inspector: bake controls. [member bake_runner] is set by the plugin.
+## Bake controls in the ResonanceProbeVolume inspector. The plugin sets [member bake_runner].
 
 const UIStrings = preload("res://addons/nexus_resonance/scripts/resonance_ui_strings.gd")
 const ResonanceEditorDialogs = preload(
@@ -26,7 +26,7 @@ func _parse_begin(object: Object) -> void:
 	if not editor_interface:
 		return
 
-	# Node creation in the editor often skips _ready; ensure defaults when inspecting.
+	# Nodes created in the editor often skip _ready, so their default resources may be missing.
 	if ResonanceProbeVolumeDefaults.ensure_resources(object):
 		EditorInterface.mark_scene_as_unsaved()
 		if object is Object and object.has_method("notify_property_list_changed"):
@@ -51,7 +51,7 @@ func _parse_property(
 	_usage_flags: int,
 	_wide: bool
 ) -> bool:
-	# Insert below scan_targets: controls added here appear before bake_sources.
+	# Controls added here appear above bake_sources, right below scan_targets.
 	if name != "bake_sources":
 		return false
 	var base: Control = EditorInterface.get_base_control() if editor_interface else null

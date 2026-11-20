@@ -7,8 +7,7 @@
 
 namespace godot {
 
-/// Editor/analysis marker: sample baked reflections at a world point from ResonanceProbeData.
-/// Inverse-distance probe interpolation; does not affect runtime audio by itself.
+/// Samples baked reflections from ResonanceProbeData at a world point; does not affect runtime audio.
 class ResonanceReverbDataPoint : public Node3D {
     GDCLASS(ResonanceReverbDataPoint, Node3D)
 
@@ -53,7 +52,7 @@ class ResonanceReverbDataPoint : public Node3D {
 
     Dictionary get_last_query() const;
 
-    /// Sample baked layer at this node's global position. Requires live ResonanceServer context (editor or runtime).
+    /// Needs an initialized ResonanceServer, in the editor or at runtime.
     Dictionary query_baked_reverb();
     Dictionary query_baked_reverb_at(const Vector3& world_position);
 };

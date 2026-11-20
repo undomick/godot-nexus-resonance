@@ -3,6 +3,7 @@
 #include "resonance_audio_effect.h"
 #include "resonance_coda_event_emitter.h"
 #include "resonance_dynamic_geometry.h"
+#include "resonance_exit_pins.h"
 #include "resonance_fmod_bridge.h"
 #include "resonance_fmod_event_emitter.h"
 #include "resonance_geometry.h"
@@ -31,7 +32,6 @@ static ResonanceServer* _resonance_server = nullptr;
 
 void initialize_nexus_resonance_module(godot::ModuleInitializationLevel p_level) {
     if (p_level == godot::MODULE_INITIALIZATION_LEVEL_SCENE) {
-        // Core Classes
         ClassDB::register_class<ResonanceServer>();
         ClassDB::register_class<ResonanceFMODBridge>();
         ClassDB::register_class<ResonanceMaterial>();
@@ -46,28 +46,23 @@ void initialize_nexus_resonance_module(godot::ModuleInitializationLevel p_level)
         ClassDB::register_class<ResonanceCodaEventEmitter>();
         ClassDB::register_class<ResonanceProbeData>();
 
-        // Audio Effect Registration
         ClassDB::register_class<ResonanceAudioEffect>();
         ClassDB::register_internal_class<ResonanceAudioEffectInstance>();
 
-        // Player & Internal DSP
         ClassDB::register_class<ResonancePlayer>();
         ClassDB::register_internal_class<ResonanceStream>();
         ClassDB::register_internal_class<ResonanceStreamPlayback>();
         ClassDB::register_class<ResonanceReverbStream>();
         ClassDB::register_internal_class<ResonanceReverbPlayback>();
 
-        // Ambisonics
         ClassDB::register_class<ResonanceAmbisonicPlayer>();
         ClassDB::register_class<ResonanceAmbisonicInternalStream>();
         ClassDB::register_internal_class<ResonanceAmbisonicInternalPlayback>();
 
-        // Probes
         ClassDB::register_class<ResonanceProbeExclusion>();
         ClassDB::register_class<ResonanceProbeVolume>();
         ClassDB::register_class<ResonanceReverbDataPoint>();
 
-        // Runtime orchestrator (native port of the runtime node)
         ClassDB::register_class<ResonanceRuntime>();
 
         _resonance_server = memnew(ResonanceServer);
@@ -77,8 +72,14 @@ void initialize_nexus_resonance_module(godot::ModuleInitializationLevel p_level)
 
 void uninitialize_nexus_resonance_module(godot::ModuleInitializationLevel p_level) {
     if (p_level == godot::MODULE_INITIALIZATION_LEVEL_SCENE) {
-        // Shutdown Steam Audio BEFORE unregistering/destroying. Ensures clean teardown order
-        // and avoids SIGSEGV when AudioServer/engine still reference the server during exit.
+        // Godot frees the AudioServer buses only after scene extensions unload. On engine exit (no main
+        // loop left) detach our bus effects first so nothing needs pinning; a hot reload keeps them.
+        Engine* engine = Engine::get_singleton();
+        if (engine && !engine->get_main_loop())
+            detach_resonance_bus_effects();
+        resonance::pin_exit_survivors();
+        // Shut Steam Audio down before unregistering: the AudioServer can still call into the
+        // server during exit and would crash on a deleted one.
         if (_resonance_server) {
             _resonance_server->shutdown();
         }

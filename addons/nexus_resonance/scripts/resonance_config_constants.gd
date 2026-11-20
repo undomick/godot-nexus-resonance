@@ -1,7 +1,7 @@
 @tool
 extends RefCounted
 
-## Shared enums and hints for Resonance configs. Single source of truth.
+## Shared reflection type constants and enum hints for Resonance configs.
 
 const REFLECTION_TYPE_CONVOLUTION := 0
 const REFLECTION_TYPE_PARAMETRIC := 1
@@ -25,19 +25,18 @@ static func baked_reflection_type_matches_runtime(baked_type: int, runtime_type:
 	return baked_type == bake_reflection_type_from_runtime(runtime_type)
 
 
-# Display names for debug overlay and tooltips. BakeConfig only supports 0/1/2 (no TAN).
+# Indexed by reflection type. Bakes only use 0-2; TAN has no bake layer of its own.
 const REFLECTION_DISPLAY_NAMES: Array[String] = [
 	"Convolution", "Parametric", "Hybrid", "TrueAudio Next"
 ]
 
-# Export enum hints. Bake has no TAN (TrueAudio Next).
 const REFLECTION_CONVOLUTION := "Convolution:0"
 const REFLECTION_PARAMETRIC := "Parametric:1"
 const REFLECTION_HYBRID := "Hybrid:2"
 const REFLECTION_TAN := "TrueAudio Next (AMD GPU):3"
 
 
-## Runtime config hot-reload policy (SSOT lives in C++: resonance_runtime_config_policy.cpp).
+## Whether changing [param property] at runtime needs an engine reinit. Asks the C++ server; false when the extension is not loaded.
 static func runtime_config_property_requires_engine_reinit(property: StringName) -> bool:
 	if ClassDB.class_exists("ResonanceServer"):
 		return ResonanceServer.runtime_config_property_requires_engine_reinit(property)

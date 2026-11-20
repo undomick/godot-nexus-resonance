@@ -1,7 +1,7 @@
 @tool
 extends RefCounted
 
-## Generic editor progress dialog (export / project scan). Same cancel pattern as bake UI.
+## Cancelable progress dialog for long editor jobs such as export or project scan.
 
 const UIStrings = preload("res://addons/nexus_resonance/scripts/resonance_ui_strings.gd")
 

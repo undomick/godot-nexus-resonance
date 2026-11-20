@@ -1,13 +1,11 @@
 extends RefCounted
 
 ## Central UI string constants for Nexus Resonance addon.
-## Use tr() at display sites for i18n. Add .po/.csv for target languages.
+## Wrap them in tr() where they are displayed.
 
-# --- Addon ---
 const ADDON_NAME := "Nexus Resonance"
 const PREFIX := "Nexus Resonance: "
 
-# --- Buttons ---
 const BTN_BAKE_PROBES := "Bake Probes"
 const BTN_EXPORT_MESH := "Export Mesh"
 const BTN_CLEAR := "Clear"
@@ -18,10 +16,8 @@ const BTN_DOCUMENTATION := "Documentation"
 const BTN_UPDATE_TARGETS := "Update Targets"
 const BTN_SAMPLE_REVERB_HERE := "Sample Reverb Here"
 
-# --- Menu (Project > Tools > Nexus Resonance) ---
-## Static export: Active creates/updates ResonanceStaticScene on the edited root and marks unsaved.
-## Re-Export In Build walks the main scene tree and updates scenes that already have a ResonanceStaticScene
-## (no auto-create). Dynamic exports save mesh assets and the scene when saved to disk.
+## Export Active creates or updates the ResonanceStaticScene on the edited root and marks the scene unsaved.
+## Re-Export In Build only updates scenes that already have a ResonanceStaticScene.
 const MENU_EXPORT_ACTIVE_SCENE := "Export Active Scene (Marks Unsaved)"
 const MENU_EXPORT_STATIC_SCENES_IN_BUILD := "Re-Export Static Scenes In All Scenes In Build"
 const MENU_EXPORT_ACTIVE_SCENE_OBJ := "Export Active Scene To OBJ (Debug)"
@@ -35,7 +31,6 @@ const MENU_UNLINK_PROBE_VOLUME_REFS := "Unlink Probe Volume References"
 const MENU_CONVERT_ANIMATION_AUDIO_RESONANCE := "Convert Animation Audio Tracks (ResonancePlayer)…"
 const MENU_CONVERT_ANIMATION_AUDIO_ALL_SCENES := "Convert Animation Audio Tracks In All Scenes…"
 
-# --- Dialogs ---
 const DIALOG_BAKE_FAILED_TITLE := "Nexus Resonance - Bake Failed"
 const DIALOG_EXPORT_FAILED_TITLE := "Nexus Resonance - Export Failed"
 const DIALOG_SAVE_FAILED_TITLE := "Nexus Resonance - Save Failed"
@@ -45,7 +40,6 @@ const DIALOG_PROGRESS_TITLE := "Nexus Resonance - Baking"
 const DIALOG_BACKUP_TITLE := "Nexus Resonance - Backup"
 const DIALOG_BACKUP_MESSAGE := "A backup of current Probe Volume data will be created before baking. You can undo the bake to restore the previous data."
 
-# --- Progress ---
 const PROGRESS_PREPARING := "Preparing..."
 const PROGRESS_PROCESSING := "Processing..."
 const PROGRESS_BAKING_REVERB := "Baking reverb probes"
@@ -59,7 +53,6 @@ const PROGRESS_PROBES := "%d probes"
 const PROGRESS_DETAILS := "Details"
 const PROGRESS_STATUS := "Status"
 
-# --- Errors (critical = dialog) ---
 const ERR_NO_SCENE := "No scene open."
 const ERR_EDITOR_FILESYSTEM_UNAVAILABLE := "Editor file system not available."
 const ERR_EDITOR_FILESYSTEM_ROOT := "Could not scan res://."
@@ -81,7 +74,6 @@ const ERR_GDEXTENSION_SYNC_SOLUTION := "Update the Nexus Resonance addon and GDE
 const ERR_SET_MAIN_SCENE := "Set application/run/main_scene in Project Settings."
 const ERR_MKDIR_OUTPUT_DIR := "Failed to create output directory %s (error %d). Ensure res:// is writable."
 
-# --- Warnings (notification) ---
 const WARN_NO_SCENE := "No scene open."
 const WARN_NO_DYNAMIC_GEOMETRY := "No ResonanceDynamicGeometry in scene. Nothing to export."
 const WARN_SELECT_PROBE_VOLUMES := "Select one or more ResonanceProbeVolume nodes, then run this to unlink references before deleting."
@@ -109,7 +101,6 @@ const WARN_NO_DYNAMIC_EXPORTED := "No dynamic objects exported."
 const WARN_EXPORTED_BUT_SAVE_FAILED := "Exported %d mesh(es) but failed to save scene: %s"
 const WARN_SAVE_SCENE_TO_PERSIST := " - Save scene to persist mesh_asset."
 
-# --- Info (console) ---
 const DIALOG_EXPORT_JOB_TITLE := "Nexus Resonance - Export"
 const INFO_EXPORT_JOB_RUNNING := "Export in progress..."
 const WARN_EXPORT_JOB_ALREADY_RUNNING := "An export is already running. Wait for it to finish or cancel the progress dialog."
@@ -149,7 +140,6 @@ const INFO_CONVERT_ALL_SCENES_SUMMARY := (
 )
 const INFO_CONVERT_SKIPPED_BLEND := " Skipped %d audio track(s) with use blend - convert manually (method keys) for full Steam Audio."
 
-# --- Tooltips ---
 const TT_BAKE_PROBES := "Bake reflections, pathing, static source/listener. Skips up-to-date stages. Configure in bake_config."
 const TT_EXPORT_MESH := "Export this dynamic mesh to a ResonanceGeometryAsset (.tres or .res per Project Settings)."
 const TT_UPDATE_TARGETS := "Scan scan_targets roots for ResonancePlayer / ResonanceListener and replace bake_sources / bake_listeners."
@@ -157,7 +147,6 @@ const TT_SAMPLE_REVERB_HERE := "Sample baked reverb at this node's position. Sho
 const TT_CANCEL_BAKE := "Stop the current bake and close."
 const TT_HELP := "Open documentation"
 
-# --- Gizmo (Probe Volume) ---
 const GIZMO_PROBE_VOLUME_CLASS := "ResonanceProbeVolume"
 const GIZMO_PROBE_EXCLUSION_CLASS := "ResonanceProbeExclusion"
 const GIZMO_REVERB_DATA_POINT_CLASS := "ResonanceReverbDataPoint"
@@ -174,15 +163,12 @@ const GIZMO_HANDLE_SIZE_MZ := "Size -Z"
 const UNDO_CHANGE_PROBE_VOLUME_SIZE := "Change Resonance Probe Volume Size"
 const UNDO_CHANGE_PROBE_EXCLUSION_SIZE := "Change Resonance Probe Exclusion Size"
 
-# --- Icon paths (res://addons/nexus_resonance/ui/icons/) ---
 const ICON_BAKE := "res://addons/nexus_resonance/ui/icons/icon_bake.svg"
 const ICON_EXPORT := "res://addons/nexus_resonance/ui/icons/icon_export.svg"
 const ICON_CLEAR := "res://addons/nexus_resonance/ui/icons/icon_clear.svg"
 const ICON_HELP := "res://addons/nexus_resonance/ui/icons/icon_help.svg"
 
-# --- Docs ---
-## Base URL for documentation. Anchors (#bake-workflow, #probe-volume, #export) must match
-## the target docs structure. Update when docs are relocated.
+## The anchors below must match the headings of the docs site.
 const DOC_BASE_URL := "https://github.com/nexus-resonance/docs"
 const DOC_BAKE_WORKFLOW := DOC_BASE_URL + "#bake-workflow"
 const DOC_PROBE_VOLUME := DOC_BASE_URL + "#probe-volume"

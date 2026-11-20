@@ -5,7 +5,7 @@ extends RefCounted
 const EFFECT_CLASS := "ResonanceAudioEffect"
 
 
-## Ensures [ResonanceAudioEffect] is on the bus at index 0 (before EQ/compressor chain).
+## Adds [ResonanceAudioEffect] at index 0 of the bus unless the bus already has one.
 ## Call when the reverb bus already exists from [AudioBusLayout] but the effect was stripped or failed to load.
 static func ensure_resonance_reverb_effect_on_bus(bus_idx: int) -> void:
 	if bus_idx < 0:
@@ -24,12 +24,11 @@ static func ensure_resonance_reverb_effect_on_bus(bus_idx: int) -> void:
 
 var _get_bus_effective: Callable
 var _get_reverb_bus_name: Callable
-## Callable → Godot send target for the runtime reverb effect bus (matches dry [code]bus[/code]).
+## Returns the send target of the reverb bus (the dry [code]bus[/code]).
 var _get_reverb_bus_send: Callable
 
 
-## Wires the runtime callables. Separate from construction so native (C++) owners can instantiate
-## parameterless and configure afterwards; GDScript callers do new() then setup().
+## Separate from construction so native (C++) owners can instantiate without arguments.
 func setup(
 	get_bus_effective_cb: Callable,
 	get_reverb_bus_name_cb: Callable,
@@ -52,7 +51,7 @@ func get_reverb_bus_send() -> StringName:
 	return _get_reverb_bus_send.call()
 
 
-## Ensures the named bus exists, sets its send, pins [ResonanceAudioEffect] at index 0.
+## Creates the reverb bus if missing, sets its send and adds [ResonanceAudioEffect] to it.
 func ensure_reverb_bus_exists() -> bool:
 	var bus_name := get_reverb_bus_name()
 	var send_name := get_reverb_bus_send()
@@ -70,17 +69,13 @@ func ensure_reverb_bus_exists() -> bool:
 	return idx >= 0
 
 
-## Pushes effective buses and reverb split mode to [code]resonance_player[/code] nodes.
+## Pushes effective buses and reverb send buses to [code]resonance_player[/code] nodes.
 ## Pass [param players] when the caller already collected the group (e.g. [ResonanceRuntime] per-frame cache).
 func apply_bus_to_players(tree: SceneTree, players: Array = []) -> void:
 	if tree == null:
 		return
 	var global_bus := get_bus_effective()
 	var global_reverb_bus := get_reverb_bus_name()
-	var reflection_type := -1
-	var srv: Variant = ResonanceServerAccess.get_server_if_initialized()
-	if srv != null and srv.has_method("get_reflection_type"):
-		reflection_type = srv.get_reflection_type()
 	var player_nodes: Array = players
 	if player_nodes.is_empty():
 		player_nodes = tree.get_nodes_in_group("resonance_player")
@@ -98,8 +93,8 @@ func apply_bus_to_players(tree: SceneTree, players: Array = []) -> void:
 			effective_reverb_bus = cfg.get_reverb_bus_name_effective(global_reverb_bus)
 		else:
 			effective_reverb_bus = global_reverb_bus
-		var reverb_split := (
-			(reflection_type == 1 or reflection_type == 2) and effective_bus != effective_reverb_bus
+		var send_bus: StringName = (
+			effective_reverb_bus if effective_bus != effective_reverb_bus else &""
 		)
-		if p.has_method("set_reverb_split_output"):
-			p.set_reverb_split_output(reverb_split, effective_reverb_bus)
+		if p.has_method("set_reverb_send_bus"):
+			p.set_reverb_send_bus(send_bus)

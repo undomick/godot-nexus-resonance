@@ -16,8 +16,8 @@ TEST_CASE("playback inverse ignores stale sim cache", "[playback][attenuation][p
     REQUIRE(playback_inverse_distance_attenuation(4.0f, 1.0f, stale_sim) != Approx(stale_sim));
 }
 
-// Steam: path SH already carries DA (LOS Euclidean vs occluded probe-path length). Mix level is
-// pathingMixLevel ramp only - never Direct playback attenuation.
+// The path SH from Steam Audio already includes distance attenuation along the probe path, so the
+// wet only gets the pathing mix level, never Direct playback attenuation.
 TEST_CASE("pathing wet does not multiply playback distance attenuation", "[pathing][wet][steam]") {
     REQUIRE_FALSE(pathing_wet_uses_playback_distance_attenuation());
     REQUIRE(pathing_wet_playback_mix_level(0.75f) == Approx(0.75f));

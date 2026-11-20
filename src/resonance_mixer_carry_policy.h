@@ -14,8 +14,8 @@ inline void mixer_carry_compact_pending(size_t& read_index, size_t& len) {
     }
 }
 
-/// Samples to drop from the front after compact so one more `frame_size` block fits.
-/// Returns max size_t when `frame_size > cap`.
+/// Samples to drop from the front after compact so one more frame_size block fits.
+/// Returns max size_t when frame_size > cap.
 inline size_t mixer_carry_drop_count_for_append(size_t len, size_t frame_size, size_t cap) {
     if (frame_size > cap)
         return std::numeric_limits<size_t>::max();

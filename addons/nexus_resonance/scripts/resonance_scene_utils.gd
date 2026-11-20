@@ -26,7 +26,7 @@ static func scene_has_exportable_resonance_content(node: Node, export_type: Stri
 		"static":
 			if node.is_class("ResonanceRuntime"):
 				return true
-			if node.is_class("ResonanceStaticGeometry"):
+			if node.is_class("ResonanceGeometry") and not node.is_dynamic():
 				return true
 			if node.is_class("ResonanceStaticScene"):
 				if node.has_method("has_valid_asset") and node.has_valid_asset():
@@ -101,8 +101,8 @@ static func collect_resonance_static_scenes(node: Node, collected: Array[Node]) 
 		collect_resonance_static_scenes(c, collected)
 
 
-## Nested [ResonanceStaticScene] without asset: geometry is excluded from parent export (C++ prune); warn per node.
-## Skips the edited scene's owned ResonanceStaticScene (owner == root).
+## Warns for each nested [ResonanceStaticScene] without an asset: the export leaves out its geometry.
+## The static scene owned by [param root] itself is skipped.
 static func warn_static_scenes_without_asset_covering_geometry(root: Node) -> void:
 	if not root:
 		return
@@ -113,7 +113,7 @@ static func _warn_rss_no_asset_rec(node: Node, export_root: Node) -> void:
 	if not node:
 		return
 	if node != export_root and node.is_class("ResonanceStaticScene"):
-		# Owned parent pack is updated by this export; do not treat it as a nested section.
+		# This export updates the root's own static scene; it is not a nested one.
 		if node.owner == export_root:
 			return
 		var has_asset: bool = node.has_method("has_valid_asset") and node.has_valid_asset()
@@ -125,7 +125,7 @@ static func _warn_rss_no_asset_rec(node: Node, export_root: Node) -> void:
 				UIStrings.WARN_STATIC_SCENE_NO_ASSET_EXCLUDED
 			)
 			push_warning(msg % rel)
-		# Nested RSS always pruned; do not walk into its children for further merge warnings.
+		# The export prunes the whole nested subtree, so its children need no warnings.
 		return
 	for c in node.get_children():
 		_warn_rss_no_asset_rec(c, export_root)

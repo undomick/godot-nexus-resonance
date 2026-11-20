@@ -16,17 +16,15 @@ inline float inverse_distance_attenuation(float distance, float min_distance) {
     return sanitize_audio_float(md / d);
 }
 
-/// Direct inverse is recomputed on the audio thread (iplDistanceAttenuationCalculate),
-/// not read from throttled iplSourceGetOutputs(DIRECT).distanceAttenuation.
+/// Recomputed from the current distance on every call; the throttled
+/// iplSourceGetOutputs(DIRECT).distanceAttenuation would lag behind moving sources.
 inline float playback_inverse_distance_attenuation(float distance, float min_distance, float sim_cached_attenuation) {
     (void)sim_cached_attenuation;
     return inverse_distance_attenuation(distance, min_distance);
 }
 
-/// Path wet uses pathingMixLevel ramp only. Distance lives in path SH from RunPathing
-/// (PathSimulator distanceAttenuationModel): LOS = evaluate(|source-listener|); occluded = evaluate(baked
-/// probe-to-probe path length). Do not multiply Direct playback attenuation on the DSP thread - that would
-/// double-apply 1/d on line-of-sight.
+/// RunPathing already bakes distance attenuation into the path SH, so applying the direct
+/// attenuation to the path wet would double-apply 1/d on line of sight.
 inline bool pathing_wet_uses_playback_distance_attenuation() {
     return false;
 }

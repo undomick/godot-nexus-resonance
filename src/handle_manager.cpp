@@ -77,7 +77,7 @@ bool SourceManager::has_handle(int32_t handle) const {
     return items.find(handle) != items.end();
 }
 
-void SourceManager::get_all_handles(std::vector<int32_t>& out) {
+void SourceManager::get_all_handles(std::vector<int32_t>& out) const {
     std::lock_guard<std::mutex> lock(mutex);
     out.clear();
     for (const auto& pair : items) {

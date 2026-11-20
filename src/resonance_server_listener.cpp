@@ -15,8 +15,6 @@
 
 using namespace godot;
 
-// Listener pose for simulation (seqlock), reflection mixer swap/teardown, and auto frame-size reinit from the mix callback.
-
 IPLCoordinateSpace3 ResonanceServer::_read_listener_coords_seqlock() const {
     for (;;) {
         const uint32_t s1 = listener_seq_.load(std::memory_order_acquire);
@@ -100,7 +98,7 @@ void ResonanceServer::_try_release_deferred_reflection_mixers() const {
 }
 
 void ResonanceServer::_flush_deferred_reflection_mixers_on_shutdown() const {
-    // Audio is quiesced and ipl_teardown_active_; never busy-wait 5s on Alt+F4.
+    // Audio is already quiesced; never busy-wait here, or closing the window hangs.
     if (reflection_mixer_readers_.load(std::memory_order_acquire) > 0) {
         ResonanceLog::warn_cstr(
             "Reflection mixer flush on shutdown: active readers after audio drain; deferring release (no busy-wait).");
@@ -112,8 +110,8 @@ void ResonanceServer::_release_reflection_mixer_when_unused(IPLReflectionMixer m
     if (!mixer)
         return;
     _try_release_deferred_reflection_mixers();
-    // Reflection mixer swaps are rare (init/reinit/shutdown). Avoid blocking the audio thread; the writer waits.
-    // During IPL teardown, skip the 5s reader busy-wait (readers should already be 0 after AudioServer drain).
+    // Swaps are rare, so the writer waits for readers instead of blocking the audio thread. During teardown
+    // the audio side is drained already and the wait is skipped.
     const bool teardown = ipl_audio_teardown_active();
     if (!teardown) {
         const auto wait_start = std::chrono::steady_clock::now();
@@ -158,12 +156,10 @@ void ResonanceServer::fill_reflection_mixer_apply_params(IPLReflectionEffectPara
         p->tanSlot = 0;
     } else {
         p->type = IPL_REFLECTIONEFFECTTYPE_CONVOLUTION;
-        // Mixer-return style params: (type, numChannels, tanDevice) before iplReflectionMixerApply.
-        // Passing irSize here is unnecessary and can change behavior across Steam Audio versions.
+        // No irSize: the mixer does not need it, and setting it can change behavior across Steam Audio versions.
     }
 }
 
-// Map arbitrary mix buffer sizes to the nearest supported IPL frame size (auto frame_size only).
 static int snap_to_supported_frame_size(int value) {
     const int supported[] = {256, resonance::kGodotDefaultFrameSize, 1024, resonance::kMaxAudioFrameSize};
     int best = resonance::kGodotDefaultFrameSize;
@@ -181,12 +177,12 @@ void ResonanceServer::request_reinit_with_frame_size(int detected_frame_count) {
     if (detected_frame_count <= 0)
         return;
     if (!audio_frame_size_was_auto_.load(std::memory_order_acquire))
-        return; // Should stay true; host-derived Auto only.
+        return;
     int snapped = snap_to_supported_frame_size(detected_frame_count);
     if (snapped == frame_size)
-        return; // Already at nearest supported; avoid redundant reinit
+        return;
     int prev = pending_reinit_frame_size_.exchange(snapped, std::memory_order_release);
-    (void)prev; // Ignore overwrites; main thread consumes once
+    (void)prev; // The latest request wins; main consumes it once.
 }
 
 int ResonanceServer::consume_pending_reinit_frame_size() {
@@ -198,9 +194,8 @@ void ResonanceServer::set_listener_valid(bool valid) {
 }
 
 void ResonanceServer::notify_listener_changed() {
-    // Contract: no cached listener node on ResonanceServer. Manual VR/splitscreen drivers must call
-    // notify_listener_changed_to(active_listener_node) or update_listener(pos, forward, up) plus set_listener_valid(...)
-    // each frame. ResonanceRuntime / ResonanceListener normally publish pose and validity automatically.
+    // The server caches no listener node. A custom driver calls notify_listener_changed_to() or
+    // update_listener() plus set_listener_valid() every frame.
 }
 
 void ResonanceServer::notify_listener_changed_to(Node* listener_node) {
@@ -220,7 +215,7 @@ void ResonanceServer::update_listener(Vector3 pos, Vector3 dir, Vector3 up) {
     if (!_ctx())
         return;
 
-    // Orthonormalize basis for safety; use safe_unit_vector to avoid NaN from degenerate transforms
+    // safe_unit_vector keeps a degenerate transform from producing NaN.
     Vector3 dir_n = ResonanceUtils::safe_unit_vector(dir, Vector3(0, 0, -1));
     Vector3 up_raw = ResonanceUtils::safe_unit_vector(up, Vector3(0, 1, 0));
     Vector3 right_n = ResonanceUtils::safe_unit_vector(dir_n.cross(up_raw), Vector3(1, 0, 0));
@@ -232,21 +227,64 @@ void ResonanceServer::update_listener(Vector3 pos, Vector3 dir, Vector3 up) {
     listener.up = ResonanceUtils::to_ipl_vector3(up_n);
     listener.right = ResonanceUtils::to_ipl_vector3(right_n);
 
-    // Seqlock: odd = write in progress; readers spin until even and s1==s2.
+    // Seqlock: an odd count means a write is in progress.
     listener_seq_.fetch_add(1, std::memory_order_acq_rel);
     listener_coords_latest_ = listener;
     listener_seq_.fetch_add(1, std::memory_order_release);
 
-    // FMOD Bridge: keep reverb IPLSource in sync with listener. Use try_update_source so the main thread
-    // never blocks on simulation_mutex while the worker holds it during RunReflections/RunPathing.
-    if (fmod_reverb_source_handle_ >= 0) {
-        SourceUpdateParams params;
-        params.position = pos;
-        params.radius = 1.0f;
-        params.source_forward = dir_n;
-        params.source_up = up_n;
-        if (resonance::fmod_source_sync_should_enqueue_on_try_update_failure(
-                try_update_source(fmod_reverb_source_handle_, params)))
-            enqueue_source_update(fmod_reverb_source_handle_, params);
+    _push_listener_reverb_source_pose();
+}
+
+void ResonanceServer::set_listener_reverb(bool enabled, int reverb_type) {
+    const bool type_changed = reverb_type != listener_reverb_type_;
+    const bool turned_on = enabled && !is_listener_reverb_enabled();
+    listener_reverb_type_ = reverb_type;
+    listener_reverb_enabled_.store(enabled, std::memory_order_release);
+    _sync_listener_reverb_source();
+    if (type_changed)
+        _push_listener_reverb_source_pose();
+    // Parametric and Hybrid publish no reflection mixer, which is the other trigger for the bus effect setup.
+    if (turned_on)
+        ResonanceAudioEffectInstance::try_prewarm_all_live_instances();
+}
+
+void ResonanceServer::ensure_fmod_reverb_source() {
+    fmod_reverb_requested_ = true;
+    _sync_listener_reverb_source();
+}
+
+void ResonanceServer::_sync_listener_reverb_source() {
+    if (!_ctx())
+        return;
+    const bool needed = resonance::listener_reverb_source_needed(is_listener_reverb_enabled(), fmod_reverb_requested_);
+    const int32_t handle = get_listener_reverb_source_handle();
+    if (needed && handle < 0) {
+        const IPLCoordinateSpace3 listener = _read_listener_coords_seqlock();
+        const int32_t created = create_source_handle(ResonanceUtils::to_godot_vector3(listener.origin), 1.0f, String(), 0, true);
+        listener_reverb_source_handle_.store(created, std::memory_order_release);
+        _push_listener_reverb_source_pose();
+        return;
     }
+    if (!needed && handle >= 0) {
+        listener_reverb_source_handle_.store(-1, std::memory_order_release);
+        destroy_source_handle(handle);
+    }
+}
+
+// try_update_source keeps the main thread from blocking on simulation_mutex while the worker runs
+// RunReflections or RunPathing; a failed try is queued instead.
+void ResonanceServer::_push_listener_reverb_source_pose() {
+    const int32_t handle = get_listener_reverb_source_handle();
+    if (handle < 0 || !pending_listener_valid.load(std::memory_order_acquire))
+        return;
+    const IPLCoordinateSpace3 listener = _read_listener_coords_seqlock();
+    SourceUpdateParams params = _default_new_source_params();
+    params.position = ResonanceUtils::to_godot_vector3(listener.origin);
+    params.radius = 1.0f;
+    params.source_forward = ResonanceUtils::to_godot_vector3(listener.ahead);
+    params.source_up = ResonanceUtils::to_godot_vector3(listener.up);
+    params.reflections_enabled_override = 1;
+    params.baked_data_variation = resonance::listener_reverb_baked_data_variation(listener_reverb_type_);
+    if (resonance::fmod_source_sync_should_enqueue_on_try_update_failure(try_update_source(handle, params)))
+        enqueue_source_update(handle, params);
 }

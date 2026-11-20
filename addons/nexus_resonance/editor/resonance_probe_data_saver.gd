@@ -2,9 +2,9 @@
 extends ResourceFormatSaver
 class_name ResonanceProbeDataSaver
 
-## Text [.tres] saver for ResonanceProbeData (VC-friendly). [.res] defers to the default saver.
-## [.bak] saves are rejected (backups are file copies; saving here caused take_over_path -> .bak chains).
-## Writes via tmp + rename. Per-path Mutex serializes concurrent saves to the same file.
+## Text .tres saver for ResonanceProbeData so bakes diff in version control. .res uses the default saver.
+## Refuses .bak paths: backups are file copies, and a save there would move the resource's path onto the backup.
+## Writes to a temp file and renames it; saves to the same path are serialized.
 
 static var _path_mutexes: Dictionary = {}
 
@@ -26,7 +26,6 @@ func _get_recognized_extensions(_resource: Resource) -> PackedStringArray:
 func _save(resource: Resource, path: String, _flags: int) -> Error:
 	if resource.get_class() != "ResonanceProbeData":
 		return ERR_INVALID_PARAMETER
-	# Refuse .bak: backups are copies; take_over_path on .bak used to break subsequent saves.
 	if path.ends_with(".bak"):
 		push_warning(
 			"Nexus Resonance: Refusing to save ResonanceProbeData to a .bak path (%s)." % path

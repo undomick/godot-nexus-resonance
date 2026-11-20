@@ -64,18 +64,23 @@
 				Stops playback. With [member player_config], soft-stops dry input so reverb/pathing tails can drain; without a config (or in the editor), hard-stops like [AudioStreamPlayer3D].
 			</description>
 		</method>
-		<method name="set_reverb_split_output">
+		<method name="set_reverb_send_bus">
 			<return type="void" />
-			<param index="0" name="enable" type="bool" />
-			<param index="1" name="reverb_bus" type="StringName" default="" />
+			<param index="0" name="bus" type="StringName" />
 			<description>
-				When [param enable] is true, creates child [code]ResonanceReverbOutput[/code] ([AudioStreamPlayer]) for Parametric/Hybrid wet. Optional [param reverb_bus] sets that child's bus; it does not mirror parent mute or bus automatically.
+				Bus this player sends its output to for the listener reverb; empty when the player already outputs to that bus. Set by [url=#ResonanceRuntime]ResonanceRuntime[/url] bus routing.
 			</description>
 		</method>
-		<method name="get_reverb_split_output" qualifiers="const">
+		<method name="get_reverb_send_bus" qualifiers="const">
+			<return type="StringName" />
+			<description>
+				Returns the reverb send bus set by [method set_reverb_send_bus].
+			</description>
+		</method>
+		<method name="is_reverb_send_active" qualifiers="const">
 			<return type="bool" />
 			<description>
-				Returns whether the [code]ResonanceReverbOutput[/code] child path is enabled.
+				True while the child [code]ResonanceReverbOutput[/code] sends this player to the reverb bus: [member ResonanceListener.apply_reverb] is on, [member ResonancePlayerConfig.reverb_send] is on and a send bus is set.
 			</description>
 		</method>
 		<method name="reload_source_after_reinit">
@@ -94,6 +99,18 @@
 			<return type="void" />
 			<description>
 				Clears instrumentation counters on every active internal playback for this node.
+			</description>
+		</method>
+		<method name="get_spawn_timing" qualifiers="const">
+			<return type="Dictionary" />
+			<description>
+				Main-thread microseconds spent building this player since it was created: [code]voice_dsp_us[/code], [code]reflection_effect_us[/code], [code]source_us[/code] and [code]params_push_us[/code]. Read it right after [method play] to see what a spawn costs.
+			</description>
+		</method>
+		<method name="is_spatial_output_ready" qualifiers="const">
+			<return type="bool" />
+			<description>
+				True when this player's spatial output gate is open: the scene is ready and its source has a first direct simulation result. Until then the player holds its playback position and starts late but complete.
 			</description>
 		</method>
 		<method name="get_effective_volume_linear_cached" qualifiers="const">

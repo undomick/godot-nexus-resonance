@@ -1,0 +1,40 @@
+{
+	"about": "Target = goal, limit = hard ceiling. value <= target: PASS, <= limit: WARN, above: FAIL. Basis and sources in docs/PERFORMANCE.md.",
+	"metrics": {
+		"audio_nexus_load_pct": {"target": 50.0, "limit": 70.0, "unit": "% of block period", "basis": "Wwise guideline: audio thread below 50%"},
+		"audio_block_max_pct_deadline": {"target": 25.0, "limit": 50.0, "unit": "% of block period", "basis": "one voice's worst block; leaves room for the other voices"},
+		"output_underrun": {"target": 0, "limit": 0, "unit": "frames", "basis": "any underrun is audible"},
+		"input_dropped": {"target": 0, "limit": 0, "unit": "samples", "basis": "any drop is audible"},
+		"late_mix": {"target": 0, "limit": 5, "unit": "callbacks", "basis": "mix callback later than expected gap"},
+		"main_tick_us_p95": {"target": 500.0, "limit": 1000.0, "unit": "us", "basis": "0.5 ms = 3% of a 60 fps frame (estimate)"},
+		"main_peak_us_max": {"target": 4000.0, "limit": 8000.0, "unit": "us", "basis": "slowest _process: no hitch above a quarter / half frame at 60 fps"},
+		"main_us_per_player": {"target": 20.0, "limit": 50.0, "unit": "us/frame", "basis": "32 players within ~0.5 ms main-thread budget need ~15 us each"},
+		"spawn_us_max": {"target": 500.0, "limit": 2000.0, "unit": "us", "basis": "add_child + play of one player must not hitch a frame (estimate)"},
+		"stream_static_pack_us_max": {"target": 4000.0, "limit": 16600.0, "unit": "us", "basis": "streaming a static pack in or out must not stall a 60 fps frame"},
+		"stream_probe_batch_us_max": {"target": 4000.0, "limit": 16600.0, "unit": "us", "basis": "adding or removing a probe volume must not stall a 60 fps frame"},
+		"material_swap_us_max": {"target": 4000.0, "limit": 16600.0, "unit": "us", "basis": "assigning a material to live geometry must not stall a 60 fps frame"},
+		"worker_cpu_pct": {"target": 50.0, "limit": 100.0, "unit": "% of one core", "basis": "Steam Audio default: one simulation thread"},
+		"reflections_us_max": {"target": 70000.0, "limit": 100000.0, "unit": "us", "basis": "must fit the 0.1 s reflections interval"},
+		"scene_commit_us_max": {"target": 2000.0, "limit": 16000.0, "unit": "us", "basis": "runtime commits must not exceed a frame"}
+	},
+	"per_scenario": {
+		"direct_8": {"audio_us_per_voice_block": {"target": 30.0, "limit": 60.0, "unit": "us", "basis": "raw Steam Audio binaural+direct 5-9 us at 512 frames"}},
+		"direct_32": {"audio_us_per_voice_block": {"target": 30.0, "limit": 60.0, "unit": "us", "basis": "as direct_8"}},
+		"dynamic_geometry_10": {"audio_us_per_voice_block": {"target": 30.0, "limit": 60.0, "unit": "us", "basis": "as direct_8"}},
+		"parametric_8": {"audio_us_per_voice_block": {"target": 80.0, "limit": 150.0, "unit": "us", "basis": "raw parametric reverb ~48 us"}},
+		"convolution_8": {"nexus_overhead_us_per_voice_block": {"target": 40.0, "limit": 80.0, "unit": "us", "basis": "block minus Steam Audio effect apply; measured ~25 us (direct path ~16 us)"}},
+		"convolution_8_static": {"nexus_overhead_us_per_voice_block": {"target": 40.0, "limit": 80.0, "unit": "us", "basis": "as convolution_8"}},
+		"convolution_32": {"nexus_overhead_us_per_voice_block": {"target": 40.0, "limit": 80.0, "unit": "us", "basis": "as convolution_8"}},
+		"dense_room_8": {"nexus_overhead_us_per_voice_block": {"target": 40.0, "limit": 80.0, "unit": "us", "basis": "as convolution_8"}},
+		"listener_reverb_8": {"audio_us_per_voice_block": {"target": 30.0, "limit": 60.0, "unit": "us", "basis": "sources only send; cost as direct_8"}},
+		"listener_reverb_32": {"audio_us_per_voice_block": {"target": 30.0, "limit": 60.0, "unit": "us", "basis": "as listener_reverb_8"}},
+		"listener_reverb_baked_8": {"audio_us_per_voice_block": {"target": 30.0, "limit": 60.0, "unit": "us", "basis": "as listener_reverb_8"}}
+	},
+	"compare": {
+		"idle_worker_delta_pct": {"target": 1.0, "limit": 5.0, "unit": "% of one core", "basis": "nothing to simulate -> no work"},
+		"idle_main_delta_us": {"target": 100.0, "limit": 300.0, "unit": "us", "basis": "stopped players should be near free (main CPU per frame)"},
+		"voice_scaling_ratio": {"target": 1.3, "limit": 2.0, "unit": "x", "basis": "per-voice cost should stay flat with more voices"},
+		"inaudible_voice_cost_ratio": {"target": 0.5, "limit": 1.0, "unit": "x", "basis": "inaudible voices should cost less than audible ones"},
+		"static_scene_worker_ratio": {"target": 0.5, "limit": 1.0, "unit": "x", "basis": "unchanged input need not be simulated again"}
+	}
+}

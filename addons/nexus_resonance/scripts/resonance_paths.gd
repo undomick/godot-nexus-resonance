@@ -20,6 +20,8 @@ const SETTING_RESONANCE_ASSET_FORMAT_LEGACY := SETTINGS_PREFIX + "export/static_
 const SETTING_PROBE_DATA_FORMAT := SETTINGS_PREFIX + "export/probe_data_format"
 const SETTING_PHYSICS_MATERIAL_SEARCH_PATHS := SETTINGS_PREFIX + "physics/material_search_paths"
 const SETTING_LOGGER_PREFIX := SETTINGS_PREFIX + "logger/"
+const SETTING_POOL_MIN_READY := SETTINGS_PREFIX + "pool/min_ready"
+const SETTING_POOL_MAX_KEPT := SETTINGS_PREFIX + "pool/max_kept"
 const SETTING_EDITOR_AUTO_CONVERT_ANIMATION := (
 	SETTINGS_PREFIX + "editor/auto_convert_animation_audio_on_save"
 )
@@ -99,7 +101,7 @@ static func get_probe_data_asset_extension() -> String:
 	return "res" if _export_setting_use_res(SETTING_PROBE_DATA_FORMAT) else "tres"
 
 
-## [code]{{root}}batches/{{scene}}_{{node}}_batch.{{ext}}[/code] (same as bake pipeline / editor).
+## [code]{{root}}batches/{{scene}}_{{node}}_batch.{{ext}}[/code]
 static func probe_data_save_path(scene_basename: String, node_key: String) -> String:
 	return (
 		get_batches_dir()

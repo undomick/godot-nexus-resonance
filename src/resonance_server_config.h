@@ -10,129 +10,112 @@
 
 namespace godot {
 
-/// Runtime config loaded from ProjectSettings / `init_audio_engine`: defaults, clamps, and Dictionary parsing (`apply`).
 struct ResonanceServerConfig {
-    // Audio
     int sample_rate = 48000;
     int frame_size = resonance::kGodotDefaultFrameSize;
     int ambisonic_order = 1;
 
-    // Simulation
     int simulation_threads = 1;
     float simulation_cpu_cores_percent = resonance::kDefaultSimulationCpuCoresPercent;
     int max_rays = resonance::kDefaultRealtimeRays;
     int max_bounces = 4;
-    /// Fallback endpoint radius for STATICSOURCE/STATICLISTENER when per-bake radius is unset.
+    /// Endpoint radius for STATICSOURCE/STATICLISTENER lookups whose bake sets no radius.
     float reverb_influence_radius = resonance::kBakedEndpointRadius;
 
-    // Reflection
     int reflection_type = 0;
-    /// When player reflections_type is Use Global: 0=Baked, 1=Realtime
-    int default_reflections_mode = 0;
     float hybrid_reverb_transition_time = 1.0f;
     float hybrid_reverb_overlap_percent = 0.25f;
     int transmission_type = 1;
-    /// Default numTransmissionRays for new sources and player-config fallback (1–256).
+    /// Default numTransmissionRays for new sources and players on the global default (1-256).
     int max_transmission_surfaces = resonance::kDefaultPlayerConfigTransmissionRays;
     int occlusion_type = 1;
     /// IPLSimulationSettings::maxNumOcclusionSamples (cap for volumetric occlusion)
     int max_occlusion_samples = resonance::kMaxOcclusionSamples;
-    /// IPLSimulationSettings::maxNumSources (and TAN maxSources)
+    /// User source cap. maxNumSources and TAN maxSources add the listener reverb slots on top.
     int max_simulation_sources = resonance::kMaxSimulationSources;
 
-    // HRTF
     float hrtf_volume_db = 0.0f;
-    /// 0=None (IPL_HRTFNORMTYPE_NONE), 1=RMS - applies to embedded default HRTF only; SOFA uses asset norm_type.
+    /// 0 = none, 1 = RMS. Only for the built-in HRTF; a SOFA asset uses its own norm_type.
     int hrtf_normalization_type = 0;
     Ref<ResonanceSOFAAsset> hrtf_sofa_asset;
-    /// HRTF on direct dry path (vs panning) when ResonancePlayerConfig uses global default.
+    /// HRTF instead of panning on the direct path, for players on the global default.
     bool direct_binaural = true;
-    /// HRTF when decoding reflection/reverb Ambisonics (mixer return / ResonanceAudioEffect).
+    /// HRTF when decoding reflection and reverb Ambisonics.
     bool reverb_binaural = true;
-    /// HRTF in pathing effect output (indirect paths around obstacles).
     bool pathing_binaural = true;
     bool hrtf_interpolation_bilinear = false;
     bool use_virtual_surround = false;
-    /// Direct path non-HRTF panning: 1,2,4,6,8 (Mono/Stereo/Quad/5.1/7.1). Invalid values become stereo.
+    /// Speaker count for direct-path panning: 1, 2, 4, 6 or 8. Other values become 2.
     int direct_speaker_channels = 2;
 
-    // Pathing (visibility defaults: radius 1.0, threshold 0.1, range 1000)
     bool pathing_enabled = false;
     float pathing_vis_radius = 1.0f;
     float pathing_vis_threshold = 0.1f;
     float pathing_vis_range = 1000.0f;
     bool pathing_normalize_eq = true;
-    /// Pathing visibility samples for bake and runtime (1-16).
+    /// Visibility samples for pathing bake and runtime (1-16).
     int pathing_num_samples = resonance::kRuntimePathingDefaultNumVisSamples;
-    /// Default when ResonancePlayerConfig uses Use Global (-1) for path validation (dynamic occlusion of baked paths).
+    /// Default for players on Use Global (-1): re-check baked paths against dynamic occluders.
     bool path_validation_enabled = true;
-    /// Default when player uses Use Global (-1) for find-alternate-paths (requires validation on to take effect).
+    /// Default for players on Use Global (-1). Has no effect without path validation.
     bool find_alternate_paths = false;
 
-    // Ray tracer / OpenCL / Radeon Rays
     /// 0=Default (built-in Phonon), 1=Embree, 2=Radeon Rays, 3=Custom (Godot Physics)
     int scene_type = 0;
     /// Godot PhysicsRayQueryParameters3D collision_mask when scene_type==3; -1 = all layers.
     int physics_ray_collision_mask = -1;
-    /// IPLSimulationSettings::rayBatchSize when scene_type is Custom (Godot physics); clamped 1–256. Ignored for other scene types (native uses 1).
+    /// rayBatchSize for scene_type 3 only (1-256); other scene types use 1.
     int physics_ray_batch_size = resonance::kDefaultPhysicsRayBatchSize;
     int opencl_device_type = 0; // 0=GPU, 1=CPU, 2=Any
     int opencl_device_index = 0;
 
-    // Context
-    /// Enable IPL context validation (stricter API checks; useful when debugging bad sim inputs).
+    /// Steam Audio API validation; slow, for debugging bad simulation inputs.
     bool context_validation = false;
     int context_simd_level = -1;
 
-    // Realtime reflection quality
     float realtime_irradiance_min_distance = 0.1f;
     float realtime_simulation_duration = 2.0f;
     int realtime_num_diffuse_samples = 32;
 
-    // Output flags
     bool output_direct_enabled = true;
     bool output_reverb_enabled = true;
     bool debug_occlusion = false;
     bool debug_reflections = false;
     bool debug_pathing = false;
 
-    // Perspective correction
     bool perspective_correction_enabled = false;
     float perspective_correction_factor = 1.0f;
 
-    // Pacing / coalescing
-    /// Min wall time between applying queued dynamic instanced transforms + scene commit (0 = every drain).
+    /// Seconds between applying queued dynamic instance transforms and committing the scene. 0 = every drain.
     float dynamic_scene_commit_min_interval = 0.0f;
-    /// Min seconds between reflection-heavy sim ticks (`resolve_sim_interval_sec` reads legacy keys too).
+    /// Min seconds between reflection simulation ticks.
     float reflections_sim_interval = 0.1f;
-    /// Min seconds between pathing-heavy sim ticks.
     float pathing_sim_interval = 0.1f;
-    /// 0 = disabled. >0: realtime reflection simulation inputs omit IPL_SIMULATIONFLAGS_REFLECTIONS when source is farther than this (meters) from listener.
+    /// Sources farther than this from the listener skip realtime reflections. 0 = no limit.
     float realtime_reflection_max_distance_m = 0.0f;
-    /// 0 = off. If last RunReflections exceeded this many microseconds, increase reflection cadence spacing (see reflections_adaptive_*).
+    /// Microseconds. A slower RunReflections stretches the reflection interval and lowers rays. 0 = off.
     int reflections_adaptive_budget_us = 0;
-    /// Minimum sharedInputs.numRays used when adaptive realtime ray scaling is active (budget > 0).
+    /// Lowest numRays adaptive scaling may use.
     int reflections_adaptive_ray_min = 128;
-    /// Fraction of max realtime rays to add back per under-budget reflections tick when adaptive ray scaling is active.
+    /// Fraction of max_rays added back per under-budget reflection tick.
     float reflections_adaptive_ray_recover_frac = 0.125f;
-    /// Upper bound for per-tick ray recovery when adaptive ray scaling is active (prevents jumping straight back to max_rays).
+    /// Max rays added back per tick.
     int reflections_adaptive_ray_recover_cap = 512;
-    /// Seconds added to effective reflection interval per over-budget worker tick (capped by reflections_adaptive_max_extra_interval).
+    /// Seconds added to the reflection interval per over-budget tick.
     float reflections_adaptive_step_sec = 0.02f;
-    /// Upper bound for extra delay from adaptive scheduling (seconds).
     float reflections_adaptive_max_extra_interval = 0.2f;
-    /// Per-second reduction of adaptive extra interval when under budget (or worker did not run reflections).
+    /// Seconds of extra interval removed per second while under budget.
     float reflections_adaptive_decay_per_sec = 0.05f;
-    /// 0 = off. If scene graph commit took at least this many microseconds, skip RunReflections this wake and force next tick to retry.
+    /// Microseconds. A scene commit at least this slow skips RunReflections until the next wake. 0 = off.
     int reflections_defer_after_scene_commit_us = 0;
-    /// 0 = no cap. Convolution path: clamp applied IR size to this many samples (min with allocated effect IR).
+    /// Max applied convolution IR length in samples. 0 = full allocated IR.
     int convolution_ir_max_samples = 0;
-    /// 0 = run iplSimulatorRunDirect every worker wake (default). >0 = at most once per this many seconds on non-heavy ticks.
+    /// Seconds between direct simulation runs on non-heavy ticks. 0 = every worker wake.
     float direct_sim_interval = 0.0f;
-    /// When true, ResonanceRuntime flushes pending source updates once per frame; players enqueue instead of try_update_source.
+    /// Players queue source updates and ResonanceRuntime flushes them once per frame.
     bool batch_source_updates = true;
 
-    /// Reads ProjectSettings-style keys, clamps ranges, migrates legacy names. `get_bake_pathing_param` fills pathing_vis_* if omitted.
+    /// Clamps every value and accepts legacy keys. get_bake_pathing_param supplies pathing_vis_* the config omits.
     void apply(const Dictionary& config,
                std::function<float(const char*, float)> get_bake_pathing_param = nullptr);
 

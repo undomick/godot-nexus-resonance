@@ -36,14 +36,6 @@ TEST_CASE("ambisonic and path EQ constants match documented values", "[constants
     REQUIRE(kPathEQCoeffMax == Approx(1.0f));
 }
 
-TEST_CASE("spatial_audio_geometry_gate_allows_output warmup and commit", "[constants]") {
-    REQUIRE_FALSE(spatial_audio_geometry_gate_allows_output(1, 100, true));
-    REQUIRE_FALSE(spatial_audio_geometry_gate_allows_output(0, 100, false));
-    REQUIRE(spatial_audio_geometry_gate_allows_output(0, 0, false));
-    REQUIRE(spatial_audio_geometry_gate_allows_output(0, 100, true));
-    REQUIRE(kSpatialAudioWarmupWorkerPasses > 0);
-}
-
 TEST_CASE("spatial_audio_geometry_gate_should_hold_decode for spatial sources", "[constants][continuity]") {
     REQUIRE(spatial_audio_geometry_gate_should_hold_decode(1, false));
     REQUIRE_FALSE(spatial_audio_geometry_gate_should_hold_decode(1, true));
@@ -61,8 +53,9 @@ TEST_CASE("spatial_audio_geometry_notify_should_arm_gate only on empty-to-nonemp
 }
 
 TEST_CASE("process priority chain listener before player before runtime", "[constants]") {
-    REQUIRE(kResonanceListenerProcessPriority > kResonancePlayerProcessPriority);
-    REQUIRE(kResonancePlayerProcessPriority > kResonanceRuntimeProcessPriority);
+    REQUIRE(kResonanceListenerProcessPriority > 0);
+    REQUIRE(kResonanceListenerProcessPriority < kResonancePlayerProcessPriority);
+    REQUIRE(kResonancePlayerProcessPriority < kResonanceRuntimeProcessPriority);
 }
 
 TEST_CASE("probe grid influence radius follows spacing like Steam UniformFloor", "[constants][bake][pathing]") {
@@ -71,10 +64,4 @@ TEST_CASE("probe grid influence radius follows spacing like Steam UniformFloor",
     REQUIRE(probe_grid_influence_radius(2.0f) != Approx(kBakerStaticEndpointSphereRadius));
     REQUIRE(probe_grid_influence_radius(0.01f) == Approx(kProbeSpacingMin));
     REQUIRE(probe_grid_influence_radius(1000.0f) == Approx(kProbeSpacingMax));
-}
-
-TEST_CASE("late mix gap threshold uses 1.5x expected period", "[constants][audio]") {
-    REQUIRE(late_mix_gap_threshold_us(0) == kLateMixThresholdUs);
-    REQUIRE(late_mix_gap_threshold_us(10000) == 15000u);
-    REQUIRE(late_mix_gap_threshold_us(10667) == 16000u);
 }

@@ -19,6 +19,25 @@ inline bool direct_needs_hrtf_effect_recreate(bool has_binaural_effect, IPLHRTF 
     return has_binaural_effect && runtime_hrtf != nullptr && bound_hrtf != runtime_hrtf;
 }
 
+enum class HrtfEffectsUpdate {
+    KEEP,
+    CREATE,
+    REPLACE,
+};
+
+inline HrtfEffectsUpdate direct_hrtf_effects_update(bool has_binaural_effect, IPLHRTF bound_hrtf, IPLHRTF runtime_hrtf) {
+    if (direct_needs_hrtf_effect_create(has_binaural_effect, bound_hrtf, runtime_hrtf))
+        return HrtfEffectsUpdate::CREATE;
+    if (direct_needs_hrtf_effect_recreate(has_binaural_effect, bound_hrtf, runtime_hrtf))
+        return HrtfEffectsUpdate::REPLACE;
+    return HrtfEffectsUpdate::KEEP;
+}
+
+/// A failed build keeps the live effects: the audio thread may be using them, and the next main tick retries.
+inline bool direct_hrtf_effects_should_swap(HrtfEffectsUpdate update, bool built_ok) {
+    return update != HrtfEffectsUpdate::KEEP && built_ok;
+}
+
 /// Path effect is created with spatialize and that call's HRTF handle.
 inline bool path_needs_hrtf_effect_recreate(bool has_path_effect, IPLHRTF bound_hrtf, IPLHRTF runtime_hrtf) {
     if (!has_path_effect)

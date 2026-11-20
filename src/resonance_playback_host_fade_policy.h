@@ -3,8 +3,7 @@
 
 namespace resonance {
 
-/// Clear a stale host fade-out countdown (kPlaybackHostFadeOutEnabled default off).
-/// When stop_requested is set (soft-stop tail), preserve an armed fade-out through EOS partial dry.
+/// A soft stop keeps an armed fade-out alive through the end-of-stream partial block.
 inline bool playback_host_fade_out_should_clear_stale(bool stop_requested, bool decoder_playing, int samples_read,
                                                       bool fade_in_active) {
     if (stop_requested)

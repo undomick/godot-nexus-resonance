@@ -5,8 +5,7 @@
 
 namespace godot {
 
-/// Static geometry: included in baked scene export, uses ResonanceStaticScene asset at runtime.
-/// Use for walls, floors, and other non-moving objects. No dynamic parameter (always static).
+/// Non-moving geometry: exported into the baked static scene and loaded from its asset at runtime.
 class ResonanceStaticGeometry : public ResonanceGeometry {
     GDCLASS(ResonanceStaticGeometry, ResonanceGeometry)
 

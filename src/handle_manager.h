@@ -13,7 +13,6 @@
 
 namespace godot {
 
-/// Shared release helpers for Steam Audio handles (forward declarations; phonon.h required)
 inline void _handle_release_source(IPLSource* p) {
     if (p && *p)
         iplSourceRelease(p);
@@ -23,9 +22,8 @@ inline void _handle_release_batch(IPLProbeBatch* p) {
         iplProbeBatchRelease(p);
 }
 
-/// Generic handle-based resource manager. Reduces duplication between SourceManager and ProbeBatchManager.
-/// T: stored resource type (IPLSource, IPLProbeBatch).
-/// ReleaseFunc: void (*)(T*) - called with address of stored resource when releasing. Must handle null.
+/// Maps int32 handles to Steam Audio objects. Freed handles are reused lowest first.
+/// ReleaseFunc gets the address of the stored object and must accept null.
 template <typename T, void (*ReleaseFunc)(T*)>
 class HandleManagerBase {
   public:
@@ -36,8 +34,7 @@ class HandleManagerBase {
     HandleManagerBase& operator=(HandleManagerBase&&) = delete;
 
   public:
-    /// Lock-free snapshot of the number of currently held items. Maintained alongside [code]items[/code]
-    /// so debug/perf monitors can read without blocking the main/audio thread on [code]mutex[/code].
+    /// Lock-free, for monitors that must not block on the mutex.
     int32_t size_approx() const { return item_count_.load(std::memory_order_relaxed); }
 
   protected:
@@ -45,11 +42,10 @@ class HandleManagerBase {
     std::priority_queue<int32_t, std::vector<int32_t>, std::greater<int32_t>> free_handles;
     std::unordered_map<int32_t, T> items;
     mutable std::mutex mutex;
-    /// Mirror of [code]items.size()[/code], updated under [code]mutex[/code] so external readers can observe
-    /// it without locking. Kept separate from the map because unordered_map::size() is not atomic.
+    /// Mirror of items.size(), written under mutex and read without it.
     std::atomic<int32_t> item_count_{0};
 
-    /// Returns a new handle, or -1 on overflow (no free handles and next_handle would exceed INT32_MAX).
+    /// Returns -1 when no handle is free and next_handle reached INT32_MAX.
     int32_t alloc_handle() {
         if (!free_handles.empty()) {
             int32_t h = free_handles.top();
@@ -64,6 +60,7 @@ class HandleManagerBase {
 
     void recycle_handle(int32_t h) { free_handles.push(h); }
 
+    /// Caller holds mutex.
     void release_all() {
         for (auto& pair : items) {
             if (pair.second)
@@ -73,8 +70,7 @@ class HandleManagerBase {
         item_count_.store(0, std::memory_order_relaxed);
     }
 
-    /// Transfers all items to out and clears the manager. Caller must release each item.
-    /// Must be called with mutex held (by derived class).
+    /// Moves all items to out and resets handle allocation. Caller holds mutex and releases each item.
     void clear_and_reset(std::vector<T>& out) {
         out.clear();
         for (auto& pair : items) {
@@ -91,23 +87,21 @@ class SourceManager : public HandleManagerBase<IPLSource, _handle_release_source
   public:
     SourceManager();
     ~SourceManager();
-    /// Retains source (takes ownership of a ref). Caller may release their ref after. Returns handle or -1 for null.
+    /// Retains its own ref, so the caller keeps and still releases theirs. Returns -1 for null or overflow.
     int32_t add_source(IPLSource source);
-    /// Removes the source from the map and releases the manager retain.
-    /// When [param recycle] is false, the handle stays reserved until [method recycle_source_handle]
-    /// (needed so create cannot reuse a handle while worker lifecycle queues still reference it).
+    /// With recycle=false the handle stays reserved until recycle_source_handle(), so a new source
+    /// cannot get it while worker queues still reference it.
     void remove_source(int32_t handle, bool recycle = true);
-    /// Returns a deferred-recycle handle to the free list. No-op if not pending.
+    /// No-op unless the handle was removed with recycle=false.
     void recycle_source_handle(int32_t handle);
+    /// Returns a retained ref the caller must release, or null.
     IPLSource get_source(int32_t handle);
-    /// True if handle is currently assigned (thread-safe).
     bool has_handle(int32_t handle) const;
-    void get_all_handles(std::vector<int32_t>& out);
+    void get_all_handles(std::vector<int32_t>& out) const;
 
   private:
-    /// Alloc under mutex. Caps sequential ids so parallel server caches stay indexed safely.
+    /// Caps sequential ids so the server's per-handle caches stay in bounds.
     int32_t alloc_source_handle_locked();
-    /// Handles removed with recycle=false; must not be alloc'd again until recycle_source_handle.
     std::unordered_set<int32_t> deferred_recycle_;
 };
 
@@ -115,13 +109,15 @@ class ProbeBatchManager : public HandleManagerBase<IPLProbeBatch, _handle_releas
   public:
     ProbeBatchManager();
     ~ProbeBatchManager();
-    /// Takes ownership of batch; caller must not retain. Returns handle or -1 for null.
+    /// Takes the caller's ref, also on overflow (then released). Returns -1 for null or overflow.
     int32_t add_batch(IPLProbeBatch batch);
+    /// Removes the batch and hands its ref to the caller.
     IPLProbeBatch take_batch(int32_t handle);
-    /// Transfers all batches to out and clears the manager. Caller must release each batch.
+    /// Empties the manager; caller releases each batch.
     void get_all_batches(std::vector<IPLProbeBatch>& out);
-    /// Returns a retained probe batch from an arbitrary map entry (unordered_map iteration order is undefined).
+    /// Returns a retained ref to an arbitrary batch (map order), or null.
     IPLProbeBatch get_first_batch();
+    /// Returns a retained ref the caller must release, or null.
     IPLProbeBatch get_batch(int32_t handle) const;
 };
 

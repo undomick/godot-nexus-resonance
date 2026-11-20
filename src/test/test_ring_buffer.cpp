@@ -57,7 +57,7 @@ TEST_CASE("RingBuffer wrap-around when full", "[ring_buffer]") {
     REQUIRE(out[3] == 4);
     REQUIRE(rb.get_available_read() == 0);
 
-    // Write again to trigger wrap
+    // Wraps around the end of the buffer.
     int in3[2] = {5, 6};
     rb.write(in3, 2);
     rb.read(out, 2);
@@ -96,7 +96,7 @@ TEST_CASE("RingBuffer write clamps to available space", "[ring_buffer]") {
     RingBuffer<float> rb;
     rb.resize(4);
     float in[8] = {1, 2, 3, 4, 5, 6, 7, 8};
-    const size_t written = rb.write(in, 8); // Only 4 should be written
+    const size_t written = rb.write(in, 8);
     REQUIRE(written == 4);
     REQUIRE(rb.get_available_read() == 4);
     REQUIRE(rb.get_available_write() == 0);

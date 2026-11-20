@@ -6,7 +6,7 @@ extends Object
 const ResonanceBakeConfig = preload("res://addons/nexus_resonance/scripts/resonance_bake_config.gd")
 
 
-## Ensures [param vol] has probe_data and bake_config. Returns true if anything was assigned.
+## Assigns probe_data and bake_config to [param vol] where missing. Returns true if anything was assigned.
 static func ensure_resources(vol: Object) -> bool:
 	if vol == null or not vol.is_class("ResonanceProbeVolume"):
 		return false

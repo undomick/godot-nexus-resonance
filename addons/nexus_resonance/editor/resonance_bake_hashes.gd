@@ -1,6 +1,6 @@
 extends Object
 
-## Hashes for bake params and static source/listener positions (shared by bake context + UI).
+## Hashes that decide whether baked probe data is stale.
 
 const ResonanceSceneUtils = preload("res://addons/nexus_resonance/scripts/resonance_scene_utils.gd")
 const ResonanceBakeDiscovery = preload(
@@ -12,7 +12,7 @@ static func hash_dict(d: Dictionary) -> int:
 	return hash(var_to_str(d))
 
 
-## Pathing hash from RuntimeConfig overlays. Pass scene root so samples/ranges resolve.
+## Hash of the pathing bake settings, read from the ResonanceRuntime under [param root].
 static func compute_pathing_hash(root: Node, bc: Resource, vol: Node = null) -> int:
 	var params: Dictionary = ResonanceBakeDiscovery.bake_params_from_runtime(root, bc, vol)
 	return hash_dict(
@@ -30,13 +30,13 @@ static func compute_position_radius_hash(pos: Vector3, radius: float) -> int:
 	return hash_dict({"pos": pos, "radius": radius})
 
 
-## Combined hash for (position, radius) entries. Changes invalidate STATICSOURCE / STATICLISTENER bakes.
 static func _entry_pos_radius(e: Variant) -> Dictionary:
 	if e is Dictionary:
 		return {"pos": e.get("pos", Vector3.ZERO), "radius": e.get("radius", 0.0)}
 	return {"pos": Vector3.ZERO, "radius": 0.0}
 
 
+## A change invalidates the static source or static listener bake.
 static func compute_position_radius_list_hash(entries: Array) -> int:
 	if entries.is_empty():
 		return 0
@@ -46,8 +46,7 @@ static func compute_position_radius_list_hash(entries: Array) -> int:
 	return hash_dict({"entries": buckets})
 
 
-## Hash for every ResonanceStaticScene under [param root] (asset hash + global transform). Order matches
-## [method ResonanceSceneUtils.collect_resonance_static_scenes] so all packs affect invalidation.
+## Hash over the asset and global transform of every ResonanceStaticScene under [param root].
 static func compute_all_resonance_static_scenes_params_hash(root: Node) -> int:
 	if root == null or not ResonanceServerAccess.has_server():
 		return 0

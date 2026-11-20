@@ -62,7 +62,6 @@ const char* const kEngineReinitProperties[] = {
 const char* const kLivePatchDictKeys[] = {
     "perspective_correction_enabled",
     "perspective_correction_factor",
-    "default_reflections_mode",
     "reflections_sim_interval",
     "pathing_sim_interval",
     "direct_sim_interval",
@@ -94,7 +93,6 @@ const char* const kRoutingProperties[] = {
 const char* const kLiveProperties[] = {
     "perspective_correction_enabled",
     "perspective_correction_factor",
-    "default_reflections_mode",
     "direct_sim_interval",
     "reflections_sim_interval",
     "pathing_sim_interval",

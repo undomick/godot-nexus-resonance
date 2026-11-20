@@ -11,9 +11,6 @@
 
 namespace godot {
 
-// IPL reflection mixer → HOA decode → Godot stereo. If `frame_count` ≠ `frame_size`, samples carry across callbacks;
-// if the mixer is not fed this tick, optionally replay last decoded stereo once (see server mixer_feed_count).
-
 // Warn once per process for frame-size mismatches.
 static bool s_frame_count_small_warned = false;
 static bool s_frame_count_large_warned = false;
@@ -56,7 +53,7 @@ void ResonanceMixerProcessor::initialize(IPLContext p_context, int p_sample_rate
     bool use_vs = srv && srv->use_virtual_surround_output();
     IPLHRTF hrtf_handle = srv ? srv->get_hrtf_handle() : nullptr;
 
-    // Standard path: HOA → stereo (HRTF here only if reverb binaural is on; not used when Virtual Surround is active).
+    // HRTF only when reverb binaural is on and virtual surround is off.
     IPLAmbisonicsDecodeEffectSettings decSettings{};
     decSettings.speakerLayout.type = IPL_SPEAKERLAYOUTTYPE_STEREO;
     decSettings.speakerLayout.numSpeakers = 2;
@@ -70,7 +67,7 @@ void ResonanceMixerProcessor::initialize(IPLContext p_context, int p_sample_rate
     }
     init_flags = init_flags | MixerInitFlags::DECODEEFFECT;
 
-    // Virtual Surround: HOA → 7.1 (decode without HRTF), then IPL VirtualSurround + HRTF → stereo.
+    // Virtual surround decodes to 7.1 without HRTF; iplVirtualSurroundEffect applies the HRTF afterwards.
     if (use_vs && hrtf_handle) {
         IPLAmbisonicsDecodeEffectSettings dec7Settings{};
         dec7Settings.speakerLayout.type = IPL_SPEAKERLAYOUTTYPE_SURROUND_7_1;
@@ -143,11 +140,11 @@ void ResonanceMixerProcessor::cleanup() {
     hold_last_suppression_feed_ = std::numeric_limits<uint64_t>::max();
 }
 
-// Snapshot last decoded stereo block so we can reuse it when iplReflectionMixerApply is skipped this quantum.
+// Kept for replay when iplReflectionMixerApply is skipped for a block.
 void ResonanceMixerProcessor::_cache_last_stereo_block() {
     if (!sa_stereo_buffer.data || !sa_stereo_buffer.data[0] || !sa_stereo_buffer.data[1])
         return;
-    // Hot path: never grow vectors here. Size is fixed at initialize().
+    // Audio thread: sized in initialize(), never grown here.
     if (last_stereo_left.size() != static_cast<size_t>(frame_size) ||
         last_stereo_right.size() != static_cast<size_t>(frame_size)) {
         last_stereo_valid = false;
@@ -172,8 +169,7 @@ bool ResonanceMixerProcessor::_restore_last_stereo_block() {
     return true;
 }
 
-// Adds decoded stereo into out_frames. If frame_count != frame_size, buffers whole decode blocks in pending_* and
-// drains them sequentially so partial Godot buffers still get correct samples without dropping a tail.
+// Adds into out_frames. When frame_count != frame_size, whole decode blocks queue in pending_* and drain across callbacks.
 void ResonanceMixerProcessor::_write_stereo_to_audio_frames_with_carry(AudioFrame* out_frames, int frame_count) {
     if (!out_frames || frame_count <= 0 || !sa_stereo_buffer.data || !sa_stereo_buffer.data[0] || !sa_stereo_buffer.data[1])
         return;
@@ -195,7 +191,7 @@ void ResonanceMixerProcessor::_write_stereo_to_audio_frames_with_carry(AudioFram
         return;
     }
 
-    // Compact unread samples to the front when append would pass capacity.
+    // Compact unread samples to the front before appending.
     if (pending_read_index > 0 && pending_read_index <= pending_len_) {
         const size_t remain = pending_len_ - pending_read_index;
         for (size_t i = 0; i < remain; i++) {
@@ -289,9 +285,8 @@ bool ResonanceMixerProcessor::process_mixer_return(IPLReflectionMixer mixer_hand
     if (!_can_decode() || !mixer_handle)
         return false;
 
-    // mixer_feed_count bumps whenever any source actually feeds the reflection mixer this tick. If it is unchanged
-    // across consecutive calls, the engine may not have invoked Apply - replay last stereo once per plateau to
-    // avoid silence, then force a real Apply on the next identical count (suppression prevents repeating forever).
+    // An unchanged feed count means no source fed the mixer since the last call: replay the last block once,
+    // then force a real Apply on the next identical count so the hold cannot repeat forever.
     ResonanceServer* srv_count = ResonanceServer::get_singleton();
     const uint64_t feed_count_now = srv_count ? srv_count->get_mixer_feed_count() : 0;
     if (feed_count_now != last_seen_mixer_feed_count_) {
@@ -324,7 +319,6 @@ bool ResonanceMixerProcessor::process_mixer_return(IPLReflectionMixer mixer_hand
     ResonanceServer* srv_bus = ResonanceServer::get_singleton();
     _decode_ambisonic_to_stereo_buffer(&sa_ambisonic_buffer, listener_coords, srv_bus && srv_bus->use_reverb_binaural());
 
-    // Sub-sized callbacks: carry queues the remainder for the next mix() until a full block is consumed.
     if (frame_count < frame_size && !s_frame_count_small_warned) {
         s_frame_count_small_warned = true;
         ResonanceLog::warn_cstr(
@@ -337,7 +331,6 @@ bool ResonanceMixerProcessor::process_mixer_return(IPLReflectionMixer mixer_hand
     return true;
 }
 
-// Same decode path as process_mixer_return but input is already-filled HOA (e.g. convolution tap), no mixer pull.
 bool ResonanceMixerProcessor::decode_ambisonic_to_stereo(IPLAudioBuffer* ambi_buf,
                                                          const IPLCoordinateSpace3& listener_coords, AudioFrame* out_frames, int frame_count,
                                                          bool apply_binaural) {

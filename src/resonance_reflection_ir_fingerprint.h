@@ -7,10 +7,9 @@
 
 namespace godot {
 
-/// Sum of energy-field bins (Steam Audio baked layer readback). [field] is IPLEnergyField.
+/// [field] is an IPLEnergyField.
 float reflection_energy_field_total(const void* field);
 
-/// q16 fingerprint from total energy (log-scaled for wide dynamic range).
 inline uint16_t reflection_baked_energy_to_q16(float total_energy) {
     if (!(total_energy > 0.0f) || !std::isfinite(total_energy))
         return 0;
@@ -18,7 +17,7 @@ inline uint16_t reflection_baked_energy_to_q16(float total_energy) {
     return static_cast<uint16_t>(std::lround(scaled * 65535.0f));
 }
 
-/// Attempt IPLImpulseResponse tap-sum. Not for IPLReflectionEffectIR (runtime overlap-save handles); returns 0.
+/// Always returns 0: the runtime IR is an opaque IPLReflectionEffectIR (overlap-save), not a readable IPLImpulseResponse.
 uint16_t reflection_conv_ir_fir_energy_q16(const void* ir, int32_t ir_size, int32_t num_channels);
 
 } // namespace godot

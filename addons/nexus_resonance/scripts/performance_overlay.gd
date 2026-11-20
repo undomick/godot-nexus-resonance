@@ -18,7 +18,7 @@ func _ready() -> void:
 
 
 func _build_ui() -> void:
-	layer = 101  # Above debug overlay (100)
+	layer = 101  # Above the debug overlay (100).
 	_panel = PanelContainer.new()
 	var style = StyleBoxFlat.new()
 	style.bg_color = Color(0, 0, 0, 0.2)
@@ -40,7 +40,7 @@ func _build_ui() -> void:
 	_panel.add_child(_label)
 	add_child(_panel)
 
-	# Top-left anchors only: no vertical stretch to viewport (common default under CanvasLayer).
+	# Top-left anchors keep the panel from stretching to the viewport height; _update_position moves it right.
 	_panel.set_anchors_preset(Control.PRESET_TOP_LEFT)
 	_panel.custom_minimum_size = Vector2(160, 0)
 	_panel.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN

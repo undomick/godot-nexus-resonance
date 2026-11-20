@@ -23,7 +23,6 @@ TEST_CASE("no driver validity follows camera fallback or invalid without camera"
 }
 
 TEST_CASE("listener sync tick call site primary_runtime_syncs_viewport_listeners matrix", "[listener][sync]") {
-    // resonance_listener.cpp: listener_node_should_push_pose(ResonanceRuntime::primary_runtime_syncs_viewport_listeners())
     const auto call_site_should_push = [](bool primary_runtime_syncs_viewport) {
         return listener_node_should_push_pose(primary_runtime_syncs_viewport);
     };

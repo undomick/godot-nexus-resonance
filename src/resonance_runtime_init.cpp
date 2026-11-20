@@ -72,8 +72,8 @@ Dictionary ResonanceRuntime::get_config_dict() const {
     return cfg;
 }
 
-// Bake params from the first probe volume with a bake_config, else defaults. Set before init so pathing visibility
-// params are available. bake_reflection_type always follows this runtime's reflection_type (TAN -> Convolution).
+// Bake params of the first probe volume with a bake_config, else the defaults. bake_reflection_type always
+// follows this runtime's reflection_type, so TAN maps to Convolution.
 Dictionary ResonanceRuntime::get_bake_params_for_runtime() {
     Dictionary params;
     if (is_inside_tree()) {
@@ -119,7 +119,6 @@ void ResonanceRuntime::reload_static_scenes_from_tree(Node* tree_root) {
     }
     TypedArray<Node> static_scenes;
     collect_static_scenes(tree_root, static_scenes);
-    // Full replace: clear then re-add each pack keyed by Node ObjectID.
     srv->clear_static_scenes();
     for (int i = 0; i < static_scenes.size(); i++) {
         Node* ss_node = Object::cast_to<Node>(static_scenes[i]);
@@ -154,21 +153,21 @@ void ResonanceRuntime::apply_primary_handoff_without_reinit() {
     }
     if (is_inside_tree()) {
         if (SceneTree* tree = get_tree()) {
-            // Static packs only. Do not deferred refresh_geometry: Geometry/_ready retry already
-            // registers once; a second rebuild breaks Embree dynamic occlusion (same as F3 path).
+            // Static packs only: geometry nodes register through their _ready retry, and a second
+            // rebuild would break Embree dynamic occlusion.
             reload_static_scenes_from_tree(tree->get_root());
         }
     }
     apply_debug_flags();
     apply_runtime_live_config();
-    call_deferred("deferred_reset_spatial_audio_warmup_passes");
-    // Same as fresh init: probe volumes may still be loading; warn after settle.
+    call_deferred("deferred_arm_spatial_audio_output_gate");
+    // Probe volumes may still be loading; warn after the tree settles.
     call_deferred("warn_probe_volume_runtime_mismatches");
     sync_physics_process_for_custom_tracer();
 }
 
 void ResonanceRuntime::initialize_server() {
-    // In editor, the probe toolbar inits when needed for baking. Avoid Steam Audio init on scene load.
+    // In the editor the probe toolbar inits the server when a bake needs it, not on scene load.
     if (editor_hint()) {
         return;
     }
@@ -183,11 +182,11 @@ void ResonanceRuntime::initialize_server() {
         return;
     }
     if (srv->is_initialized()) {
-        // Scene handoff: keep the live engine; only primary owns tick after claim in _ready.
+        // Scene handoff: keep the live engine; this runtime became primary in _ready.
         apply_primary_handoff_without_reinit();
         return;
     }
-    // Set bake params before init so pathing visibility params (from bake_config) are available.
+    // Before init, so the pathing visibility params from bake_config are available.
     srv->set_bake_params(get_bake_params_for_runtime());
     srv->init_audio_engine(cfg);
     reset_viewport_sync_cache();
@@ -198,14 +197,13 @@ void ResonanceRuntime::initialize_server() {
         init_coda_bridge();
     }
     if (is_inside_tree()) {
-        // Static packs only. Geometry nodes register via _ready retry after server init;
-        // deferred refresh_geometry would double-register and break Embree occlusion.
+        // Static packs only: geometry nodes register through their _ready retry after init, and a
+        // deferred refresh_geometry would register them twice and break Embree occlusion.
         reload_static_scenes_from_tree(get_tree()->get_root());
     }
     apply_debug_flags();
     apply_runtime_live_config();
-    // Mute spatialized output until several worker RunDirect ticks after scene/geometry settle.
-    call_deferred("deferred_reset_spatial_audio_warmup_passes");
+    call_deferred("deferred_arm_spatial_audio_output_gate");
     // Probe volumes load batches in their own _ready; warn after the tree settles.
     call_deferred("warn_probe_volume_runtime_mismatches");
     sync_physics_process_for_custom_tracer();
@@ -248,7 +246,7 @@ void ResonanceRuntime::reload_after_reinit() {
         return;
     }
     reload_static_scenes_from_tree(tree->get_root());
-    // Same frame: re-register probe batches after reinit so baked/parametric/hybrid/pathing outputs are valid.
+    // Re-register probe batches in the same frame so baked reflection and pathing outputs stay valid.
     TypedArray<Node> volumes = tree->get_nodes_in_group("resonance_probe_volume");
     for (int i = 0; i < volumes.size(); i++) {
         Object* n = Object::cast_to<Object>(volumes[i]);
@@ -294,13 +292,13 @@ void ResonanceRuntime::reload_after_reinit() {
         }
     }
     tree->call_group_flags(SceneTree::GROUP_CALL_DEFERRED, "resonance_geometry", "refresh_geometry");
-    call_deferred("deferred_reset_spatial_audio_warmup_passes");
+    call_deferred("deferred_arm_spatial_audio_output_gate");
     call_deferred("warn_probe_volume_runtime_mismatches");
     ResonanceAudioEffectInstance::try_prewarm_all_live_instances();
     sync_physics_process_for_custom_tracer();
 }
 
-void ResonanceRuntime::deferred_reset_spatial_audio_warmup_passes() {
+void ResonanceRuntime::deferred_arm_spatial_audio_output_gate() {
     ResonanceServer* srv = ResonanceServer::get_singleton();
     if (srv && srv->is_initialized()) {
         // Geometry 0->N already armed the gate; re-arm would clear ready and re-dirty after mesh _ready.
@@ -371,8 +369,7 @@ void ResonanceRuntime::apply_runtime_live_config() {
         return;
     }
     if (srv->patch_live_runtime_config(cfg)) {
-        // Pathing on requires iplSimulatorCreate with PATHING when the live simulator lacks it.
-        // Current init always includes PATHING, so this reinit path is unused.
+        // Only a simulator created without PATHING needs this; init always creates it with PATHING.
         reinit_for_config_change();
     }
 }
@@ -527,7 +524,7 @@ void ResonanceRuntime::warn_probe_volume_runtime_mismatches() {
                                   String::num_int64(baked_amb) + String(")"));
         }
         const bool has_pathing = pd->get_pathing_params_hash() > 0;
-        // Runtime pathing off with leftover baked layer is intentional (CPU save); only warn when enabled without bake.
+        // A baked pathing layer with runtime pathing off is a valid way to save CPU, so only warn the other way.
         if (pathing && !has_pathing) {
             path_names.push_back(name);
         }

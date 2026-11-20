@@ -1,6 +1,6 @@
 #pragma once
-// Thread-safe C++-only debug logger. Safe to call from Steam Audio worker thread.
-// Set path from main thread before starting simulation.
+// Thread-safe; callable from the Steam Audio worker thread. Set the path on the main thread before the
+// simulation starts.
 
 #include <chrono>
 #include <fstream>
@@ -8,11 +8,9 @@
 #include <string>
 
 namespace resonance {
-/// Default debug log filename. Override via set_debug_log_path() before starting simulation.
 inline std::string g_debug_log_path = "nexus_resonance_debug.log";
 inline std::mutex g_debug_log_mutex;
 
-/// Escapes JSON string special chars (", \, newline, etc.) for safe output.
 inline std::string _debug_log_escape_json(const char* s) {
     if (!s)
         return "";

@@ -8,19 +8,16 @@
 
 namespace godot {
 
-/// Holds serialized Steam Audio mesh data (from iplStaticMeshSave).
-/// Use with ResonanceGeometry when dynamic=true for export/load workflow:
-/// better stability (Phonon native format) and faster runtime load.
-/// For static: merged geometry from multiple ResonanceStaticGeometry nodes (one asset per scene).
-/// For dynamic: single mesh per object (one asset per ResonanceDynamicGeometry).
+/// Mesh data serialized by iplStaticMeshSave. A static asset merges all ResonanceStaticGeometry of a scene;
+/// a dynamic asset holds the mesh of one ResonanceDynamicGeometry.
 class ResonanceGeometryAsset : public Resource {
     GDCLASS(ResonanceGeometryAsset, Resource)
 
   private:
     PackedByteArray mesh_data;
-    int triangle_count = 0;            // Set during export; used for notify_geometry_changed when loading
-    PackedVector3Array debug_vertices; // For reflection ray debug viz (set during export)
-    PackedInt32Array debug_triangles;  // Flat: 3 indices per triangle (set during export)
+    int triangle_count = 0;
+    PackedVector3Array debug_vertices; // For the reflection ray debug view
+    PackedInt32Array debug_triangles;  // Flat, 3 indices per triangle
 
   protected:
     static void _bind_methods();
@@ -30,7 +27,7 @@ class ResonanceGeometryAsset : public Resource {
     ~ResonanceGeometryAsset();
 
     void set_mesh_data(const PackedByteArray& p_data);
-    /// Copy of serialized mesh bytes (can be large). For Phonon load prefer get_data_ptr / get_size to avoid copying.
+    /// Copies the bytes; loading should use get_data_ptr / get_size instead.
     PackedByteArray get_mesh_data() const;
 
     void set_triangle_count(int p_count);
@@ -42,7 +39,7 @@ class ResonanceGeometryAsset : public Resource {
     PackedInt32Array get_debug_triangles() const { return debug_triangles; }
     bool has_debug_geometry() const { return debug_vertices.size() >= 3 && debug_triangles.size() >= 3; }
 
-    /// Returns raw pointer for efficient access. Valid until mesh_data is modified.
+    /// Valid until mesh_data is modified.
     const uint8_t* get_data_ptr() const;
     int64_t get_size() const;
 

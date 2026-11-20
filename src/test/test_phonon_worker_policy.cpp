@@ -26,6 +26,18 @@ TEST_CASE("phonon worker tick runs for pending lifecycle or updates", "[phonon_w
     in.scene_dirty = false;
     in.pending_dynamic_transforms = true;
     REQUIRE(phonon_worker_tick_has_work(in));
+
+    in.pending_dynamic_transforms = false;
+    in.pending_static_packs = true;
+    REQUIRE(phonon_worker_tick_has_work(in));
+
+    in.pending_static_packs = false;
+    in.pending_probe_batches = true;
+    REQUIRE(phonon_worker_tick_has_work(in));
+
+    in.pending_probe_batches = false;
+    in.pending_scene_meshes = true;
+    REQUIRE(phonon_worker_tick_has_work(in));
 }
 
 TEST_CASE("phonon worker tick runs direct only when scheduled and sources need direct", "[phonon_worker][policy]") {

@@ -4,6 +4,7 @@
 #include "resonance_player.h"
 #include "resonance_probe_exclusion.h"
 #include "resonance_probe_exclusion_filter.h"
+#include "resonance_probe_generation_policy.h"
 #include "resonance_reflection_type_policy.h"
 #include "resonance_server.h"
 #include "resonance_source_handle_policy.h"
@@ -43,7 +44,7 @@ Ref<Resource> create_default_bake_config() {
                                        kBakeConfigScriptPath);
         return Ref<Resource>();
     }
-    // Prefer create_default(); fall back to Script.new() (static call can fail on some Script loads).
+    // The static create_default() call can fail on some script loads; Script.new() is the fallback.
     Variant created = bake_script->call("create_default");
     if (created.get_type() != Variant::OBJECT || created.operator Object*() == nullptr) {
         created = bake_script->call("new");
@@ -87,7 +88,7 @@ NodePath bake_target_path_from_variant(Node* self, const Variant& p_value) {
 ResonanceProbeVolume::ResonanceProbeVolume() {}
 
 ResonanceProbeVolume::~ResonanceProbeVolume() {
-    // Safety: ensure probe batch is removed when volume is destroyed (e.g. deleted, never added to tree, undo edge cases).
+    // Covers volumes freed without a normal exit, e.g. never added to the tree or removed by undo.
     _release_probe_batch_if_live();
 }
 
@@ -115,7 +116,7 @@ void ResonanceProbeVolume::_store_probe_batch_handle(int32_t handle) {
 }
 
 void ResonanceProbeVolume::_ensure_viz_instance() {
-    // Lazy: never allocate RenderingServer mesh RIDs in the constructor (ClassDB/doc temps free them off the render thread).
+    // Never from the constructor: ClassDB and doc temporaries would free the mesh RIDs off the render thread.
     if (!viz_multimesh.is_valid())
         _create_visuals_resources();
     if (viz_instance)
@@ -150,10 +151,12 @@ void ResonanceProbeVolume::_create_visuals_resources() {
 
 void ResonanceProbeVolume::_notification(int p_what) {
     if (p_what == Node::NOTIFICATION_ENTER_TREE) {
-        // Editor: _ready often does not run when the node is first created/inspected.
-        // ENTER_TREE + ensure_default_resources covers create / open / reparent.
+        // In the editor _ready often does not run when a node is first created or inspected.
         if (Engine::get_singleton() && Engine::get_singleton()->is_editor_hint()) {
             _ensure_editor_default_resources();
+        } else {
+            // _ready runs once per instance; a volume removed and added back must reload here.
+            _load_probe_batch_on_enter_tree();
         }
     } else if (p_what == NOTIFICATION_TRANSFORM_CHANGED) {
         _queue_update();
@@ -162,24 +165,23 @@ void ResonanceProbeVolume::_notification(int p_what) {
     }
 }
 
-static void clear_player_ref_to_volume(ResonanceProbeVolume* self, ResonancePlayer* player) {
+static void detach_player_from_volume(ResonanceProbeVolume* self, ResonancePlayer* player) {
     if (!player)
         return;
     NodePath pv = player->get_pathing_probe_volume();
     if (pv.is_empty())
         return;
-    Node* target = player->get_node_or_null(pv);
-    if (target == self) {
+    if (player->get_node_or_null(pv) != self)
+        return;
+    // The editor logs a NodePath error when a referenced node is deleted; at runtime the path
+    // stays so the player finds the volume again when it is added back.
+    if (Engine::get_singleton() && Engine::get_singleton()->is_editor_hint())
         player->clear_pathing_probe_immediate();
-    }
+    else
+        player->detach_pathing_probe_immediate();
 }
 
-// Godot engine bug: Deleting a referenced ResonanceProbeVolume triggers
-// "ERROR: core/string/node_path.cpp:272 - Condition "!p_np.is_absolute()" is true. Returning: NodePath()"
-// when ResonancePlayer.pathing_probe_volume points to it. We clear those refs on EXIT_TREE to avoid this.
-// Also try tree root as fallback when edited scene root is null (e.g. during editor teardown).
-// IMPORTANT: We must call clear_pathing_probe_immediate() to sync update_source(pathing_batch=-1) before
-// _exit_tree removes the probe batch; otherwise the worker may use freed batch data (use-after-free).
+// Runs before _exit_tree removes the batch, so no player hands the worker a freed batch.
 void ResonanceProbeVolume::_clear_player_refs_to_this() {
     SceneTree* st = get_tree();
     if (!st)
@@ -188,7 +190,7 @@ void ResonanceProbeVolume::_clear_player_refs_to_this() {
     for (int i = 0; i < players.size(); i++) {
         Node* n = Object::cast_to<Node>(players[i]);
         ResonancePlayer* rp = Object::cast_to<ResonancePlayer>(n);
-        clear_player_ref_to_volume(this, rp);
+        detach_player_from_volume(this, rp);
     }
 }
 
@@ -250,13 +252,11 @@ void ResonanceProbeVolume::_ready() {
     set_notify_transform(true);
     add_to_group("resonance_probe_volume");
     if (Engine::get_singleton() && Engine::get_singleton()->is_editor_hint()) {
-        // Defaults also on ENTER_TREE; keep here for nodes that skip ENTER_TREE edge cases.
         _ensure_editor_default_resources();
         if (probe_data.is_valid() && !probe_data->get_path().is_empty()) {
             call_deferred("_check_probe_data_loaded");
         }
 
-        // Setup Visualization (only create when show_probes is On)
         if (viz_visible) {
             _ensure_viz_instance();
             call_deferred("_update_visuals");
@@ -264,18 +264,9 @@ void ResonanceProbeVolume::_ready() {
 
         set_process(true);
     } else {
-        // RUNTIME
         set_process(false);
         if (viz_instance)
             viz_instance->set_visible(false);
-
-        ResonanceServer* srv = ResonanceServer::get_singleton();
-        if (srv && srv->is_initialized() && probe_data.is_valid()) {
-            _store_probe_batch_handle(srv->load_probe_batch(probe_data));
-        } else if (probe_data.is_valid()) {
-            // Server may not be ready yet (autoload order); retry deferred
-            call_deferred("_runtime_load_probe_batch");
-        }
     }
 }
 
@@ -285,7 +276,27 @@ void ResonanceProbeVolume::_check_probe_data_loaded() {
     }
 }
 
+bool ResonanceProbeVolume::_awaits_headless_bake() const {
+    return headless_baking_mode && (probe_data.is_null() || probe_data->get_size() <= 0);
+}
+
+void ResonanceProbeVolume::_load_probe_batch_on_enter_tree() {
+    if (probe_batch_handle >= 0 || probe_data.is_null() || _awaits_headless_bake())
+        return;
+    ResonanceServer* srv = ResonanceServer::get_singleton();
+    if (srv && srv->is_initialized()) {
+        _store_probe_batch_handle(srv->load_probe_batch(probe_data));
+        return;
+    }
+    // Server may not be ready yet (autoload order).
+    _runtime_load_retry_count = 0;
+    call_deferred("_runtime_load_probe_batch");
+}
+
 void ResonanceProbeVolume::_runtime_load_probe_batch() {
+    // The volume may have left the tree or loaded on a later enter since this call was queued.
+    if (probe_batch_handle >= 0 || !is_inside_tree() || _awaits_headless_bake())
+        return;
     if (!_has_valid_resonance_config()) {
         if (_runtime_load_retry_count < resonance::kProbeVolumeMaxRuntimeLoadRetries) {
             _runtime_load_retry_count++;
@@ -353,9 +364,9 @@ void ResonanceProbeVolume::release_probe_batch() {
 }
 
 void ResonanceProbeVolume::_exit_tree() {
-    // Quit teardown is Runtime/Window only; live probe unload must keep the worker alive.
+    // Unloads only this batch; the worker keeps running. Quit teardown belongs to the runtime.
     _release_probe_batch_if_live();
-    // viz_instance is a child node; Godot frees children when parent is removed.
+    // Godot frees the child together with this node.
     viz_instance = nullptr;
 }
 
@@ -363,7 +374,7 @@ void ResonanceProbeVolume::_process(double delta) {
     if (!Engine::get_singleton() || !Engine::get_singleton()->is_editor_hint())
         return;
 
-    // Sync viz_instance visibility with viz_visible (handles editor property load order / setter not firing)
+    // The setter does not fire for every editor property load, so visibility is synced here.
     if (viz_instance && viz_instance->is_visible() != viz_visible) {
         viz_instance->set_visible(viz_visible);
     }
@@ -417,8 +428,8 @@ uint32_t ResonanceProbeVolume::_get_bake_params_hash() const {
     h = hash_murmur3_one_float(t.basis.rows[2].y, h);
     h = hash_murmur3_one_float(t.basis.rows[2].z, h);
 
-    // Include bake_config quality params so changing quality triggers re-bake.
-    // reflection_type / ambisonics_order / pathing_enabled are gated by ResonanceRuntime.
+    // Quality params are hashed so changing them asks for a re-bake. Reflection type and pathing are
+    // checked against ResonanceRuntime instead.
     int num_rays = resonance::kBakeDefaultNumRays;
     int num_bounces = resonance::kBakeDefaultNumBounces;
     if (bake_config.is_valid()) {
@@ -431,7 +442,7 @@ uint32_t ResonanceProbeVolume::_get_bake_params_hash() const {
     }
     h = hash_murmur3_one_32(static_cast<uint32_t>(num_rays), h);
     h = hash_murmur3_one_32(static_cast<uint32_t>(num_bounces), h);
-    // BakeConfig Bake Ambisonic Order (0 = Use Global).
+    // 0 means the global order.
     int bake_amb_order = 0;
     if (bake_config.is_valid()) {
         Variant v_amb = bake_config->get("bake_ambisonics_order");
@@ -479,8 +490,7 @@ bool ResonanceProbeVolume::_compute_is_probe_dirty() const {
     if (!probe_data.is_valid() || probe_data->get_size() <= 0)
         return true;
     uint32_t stored = static_cast<uint32_t>(probe_data->get_bake_params_hash() & 0xFFFFFFFF);
-    // Probe data without a recorded params hash predates incremental detection. We are pre-release
-    // (no shipped users), so treat that as dirty and force a re-bake instead of silently trusting it.
+    // Without a recorded hash the data cannot be checked, so force a re-bake.
     if (stored == 0)
         return true;
     return stored != _get_bake_params_hash();
@@ -561,7 +571,7 @@ void ResonanceProbeVolume::_update_visuals() {
 
     if (Engine::get_singleton() && Engine::get_singleton()->is_editor_hint()) {
         _ensure_viz_instance();
-        // Update viz_color_state from probe dirty check when not overridden by runtime config mismatch (red).
+        // Red (2) is a runtime config mismatch and wins over the dirty check.
         if (viz_color_state != 2) {
             viz_color_state = _compute_is_probe_dirty() ? 0 : 1;
         }
@@ -617,7 +627,7 @@ void ResonanceProbeVolume::_update_visuals() {
         viz_instance->set_custom_aabb(aabb);
     }
 
-    viz_retry_timer = 0.0; // Reset so next 0-instance cycle starts fresh
+    viz_retry_timer = 0.0;
 }
 
 PackedVector3Array ResonanceProbeVolume::generate_probes_on_floor_raycast() const {
@@ -652,8 +662,7 @@ PackedVector3Array ResonanceProbeVolume::generate_probes_on_floor_raycast() cons
             Vector3 to = from + Vector3(0, -ray_down, 0);
             Ref<PhysicsRayQueryParameters3D> query = PhysicsRayQueryParameters3D::create(from, to);
             Dictionary result = space->intersect_ray(query);
-            // Misses return {}. Dictionary.get("position", Vector3()) would still be VECTOR3
-            // (default origin) and plant every miss at world (0, height, 0).
+            // A miss returns {}; a Vector3() default for "position" would plant it at the world origin.
             if (result.is_empty())
                 continue;
             Variant pos_var = result.get("position", Variant());
@@ -675,9 +684,7 @@ void ResonanceProbeVolume::set_probe_data(const Ref<ResonanceProbeData>& p_data)
         return;
     probe_data = p_data;
     _queue_update();
-    // Play-mode hot-swap: assigning a different ResonanceProbeData while the volume is live must
-    // re-register the IPL probe batch. Otherwise the stale `probe_batch_handle` from the registry
-    // keeps serving the previously baked probes (parametric/pathing/hybrid all stay on old data).
+    // A live volume must re-register its batch, or the old handle keeps serving the previous probes.
     Engine* eng = Engine::get_singleton();
     if (eng && eng->is_editor_hint())
         return;
@@ -785,6 +792,7 @@ void ResonanceProbeVolume::set_region_size(Vector3 p_size) {
     region_size.y = MAX(p_size.y, resonance::kProbeRegionSizeMin);
     region_size.z = MAX(p_size.z, resonance::kProbeRegionSizeMin);
     _queue_update();
+    update_configuration_warnings();
 }
 Vector3 ResonanceProbeVolume::get_region_size() const { return region_size; }
 
@@ -798,14 +806,25 @@ void ResonanceProbeVolume::set_generation_type(ProbeGenerationType p_type) {
     generation_type = p_type;
     notify_property_list_changed();
     _queue_update();
+    update_configuration_warnings();
 }
 ResonanceProbeVolume::ProbeGenerationType ResonanceProbeVolume::get_generation_type() const { return generation_type; }
 
 void ResonanceProbeVolume::set_height_above_floor(float p_height) {
     height_above_floor = p_height;
     _queue_update();
+    update_configuration_warnings();
 }
 float ResonanceProbeVolume::get_height_above_floor() const { return height_above_floor; }
+
+PackedStringArray ResonanceProbeVolume::_get_configuration_warnings() const {
+    PackedStringArray warnings;
+    if (generation_type == GEN_UNIFORM_FLOOR && !resonance::uniform_floor_fits_volume(region_size.y, height_above_floor)) {
+        warnings.push_back("Uniform Floor places no probes: height_above_floor must be lower than region_size.y. "
+                           "Raise region_size.y, lower height_above_floor, or use the Volume generation type.");
+    }
+    return warnings;
+}
 
 void ResonanceProbeVolume::set_viz_probe_scale(float p_scale) {
     viz_probe_scale = CLAMP(p_scale, resonance::kProbeVizScaleMin, resonance::kProbeVizScaleMax);
@@ -828,9 +847,8 @@ void ResonanceProbeVolume::notify_runtime_config_changed(int p_runtime_refl, boo
 
     bool want_ss = false;
     bool want_sl = false;
-    // Pathing bake/use is gated by ResonanceRuntime.pathing_enabled (not BakeConfig).
+    // Pathing follows ResonanceRuntime.pathing_enabled and static passes follow the target lists, not BakeConfig.
     bool wants_path = p_runtime_pathing;
-    // Static passes are gated by bake_sources / bake_listeners arrays (not BakeConfig flags).
     want_ss = bake_sources.size() > 0;
     want_sl = bake_listeners.size() > 0;
 
@@ -846,7 +864,7 @@ void ResonanceProbeVolume::notify_runtime_config_changed(int p_runtime_refl, boo
     const int desired_amb = resolved_bake_ambisonic_order(p_runtime_bake_amb);
     bool amb_ok = !has_data || !resonance::ambisonics_order_mismatches_bake_setting(baked_amb, desired_amb);
     bool reflection_ok = !has_data || (pd_hash == vol_hash && config_compatible && amb_ok);
-    // Runtime pathing on without baked layer -> outdated (gray). Runtime off with leftover layer is OK (pathing skipped).
+    // A leftover pathing layer is fine while runtime pathing is off.
     bool pathing_ok = !p_runtime_pathing || has_pathing;
     bool static_ok = (!want_ss || has_ss) && (!want_sl || has_sl);
 

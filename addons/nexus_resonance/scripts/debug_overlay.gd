@@ -1,7 +1,7 @@
 extends CanvasLayer
 
-## Runtime debug HUD (server, audio instrumentation, reverb). Alt+1–3 folds, Alt+R reset, Alt+A audio details, Alt+B reverb details.
-## Does not run in the editor.
+## Runtime debug HUD: simulation, players, reverb bus and pathing health.
+## Alt+1-4 fold sections, Alt+R reset counters, Alt+A list all playing players. Does not run in the editor.
 
 const Constants = preload("resonance_config_constants.gd")
 const ResonanceRuntimePerfMonitors = preload(
@@ -15,40 +15,49 @@ const _SCENE_TYPE_LABELS: Array[String] = [
 	"Radeon Rays",
 	"Custom (Godot Physics)",
 ]
+const _AMBISONIC_ORDER_LABELS: Array[String] = ["1st order", "2nd order", "3rd order"]
+const REFLECTION_CONVOLUTION := 0
+const REFLECTION_PARAMETRIC := 1
+const REFLECTION_HYBRID := 2
 
 const UPDATE_INTERVAL: float = 0.2
-const AUDIO_PROBLEM_DETAIL_CAP: int = 5
+const PLAYER_LIST_CAP: int = 8
+const WIDTH_PX := 420.0
+const SCROLL_HEIGHT_MIN_PX := 200.0
+const SCROLL_HEIGHT_VIEWPORT_SUBTRACT_PX := 36.0
+
 const COLOR_OK := "#44ff44"
 const COLOR_WARNING := "#ffcc44"
 const COLOR_ERROR := "#ff6666"
-const COLOR_NEUTRAL := "#dddddd"
-const COLOR_HINT := "#88aacc"
-## Instrumentation: "issue" only on buffer loss, huge blocks, or high late-mix % (not every jitter).
-const AUDIO_INST_MAX_BLOCK_US_ISSUE := 50000
-const AUDIO_INST_LATE_RATE_ISSUE_PCT := 12.0
-const AUDIO_INST_MIN_MIX_CALLS_FOR_RATE := 200
-const AUDIO_INST_LATE_RATE_WARN_PCT := 2.5
-const AUDIO_INST_MAX_BLOCK_US_WARN := 15000
-## Scroll height: viewport minus fixed chrome (not a % of window).
-const OVERLAY_SCROLL_HEIGHT_MIN_PX := 200.0
-const OVERLAY_SCROLL_HEIGHT_VIEWPORT_SUBTRACT_PX := 36.0
+const COLOR_VALUE := "#dddddd"
+const COLOR_LABEL := "#88aacc"
+const COLOR_DIM := "#888888"
 
-var _panel: PanelContainer
-## Sized to viewport height so ScrollContainer can show all sections.
+enum Health { OK, WARN, ISSUE }
+
+## A playing player is an issue on buffer loss, a huge block, or a high late-mix rate; jitter alone is not.
+const MAX_BLOCK_US_ISSUE := 50000
+const MAX_BLOCK_US_WARN := 15000
+const LATE_RATE_ISSUE_PCT := 12.0
+const LATE_RATE_WARN_PCT := 2.5
+const MIN_MIX_CALLS_FOR_RATE := 200
+## Reflections older than this many sim intervals mean the worker cannot keep up.
+const REFLECTIONS_AGE_WARN_INTERVALS := 2.0
+
 var _scroll_host: Control
-var _outer_scroll: ScrollContainer
-var _vbox: VBoxContainer
-var _hint_label: RichTextLabel
 var _folds: Array[FoldableContainer] = []
-var _fold_server: FoldableContainer
-var _status_label: RichTextLabel
-var _audio_instrumentation_label: RichTextLabel
-var _reverb_compact_label: RichTextLabel
+var _sim_fold: FoldableContainer
+var _sim_label: RichTextLabel
+var _players_fold: FoldableContainer
+var _players_label: RichTextLabel
+var _reverb_fold: FoldableContainer
+var _reverb_label: RichTextLabel
+var _pathing_fold: FoldableContainer
+var _pathing_label: RichTextLabel
 var _update_timer: float = 0.0
-var _audio_show_details: bool = false
-var _reverb_show_details: bool = false
-var _worker_spike_hold_until_ms: int = 0
-var _worker_spike_hold_line: String = ""
+var _show_all_players: bool = false
+var _worker_peak_us: int = 0
+var _worker_peak_stage: String = ""
 
 
 func _ready() -> void:
@@ -65,936 +74,581 @@ func _on_viewport_size_changed() -> void:
 	var vp := get_viewport()
 	if not vp or not is_instance_valid(_scroll_host):
 		return
-	var vs: Vector2 = vp.get_visible_rect().size
 	var h: float = maxf(
-		OVERLAY_SCROLL_HEIGHT_MIN_PX, vs.y - OVERLAY_SCROLL_HEIGHT_VIEWPORT_SUBTRACT_PX
+		SCROLL_HEIGHT_MIN_PX, vp.get_visible_rect().size.y - SCROLL_HEIGHT_VIEWPORT_SUBTRACT_PX
 	)
-	var w: float = 420.0
-	_scroll_host.custom_minimum_size = Vector2(w, h)
-	_scroll_host.size = Vector2(w, h)
+	_scroll_host.custom_minimum_size = Vector2(WIDTH_PX, h)
+	_scroll_host.size = Vector2(WIDTH_PX, h)
 
 
 func _build_ui() -> void:
 	layer = 100
-	_panel = PanelContainer.new()
-	var style = StyleBoxFlat.new()
+	var panel := PanelContainer.new()
+	var style := StyleBoxFlat.new()
 	style.bg_color = Color(0, 0, 0, 0.2)
-	style.border_color = Color(0.4, 0.6, 0.9)
-	style.set_border_width_all(0)
 	style.set_corner_radius_all(2)
 	style.set_content_margin_all(8)
-	_panel.add_theme_stylebox_override("panel", style)
+	panel.add_theme_stylebox_override("panel", style)
 
 	_scroll_host = Control.new()
 	_scroll_host.clip_contents = true
-	_panel.add_child(_scroll_host)
+	panel.add_child(_scroll_host)
 
-	_outer_scroll = ScrollContainer.new()
-	_outer_scroll.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_outer_scroll.offset_left = 0
-	_outer_scroll.offset_top = 0
-	_outer_scroll.offset_right = 0
-	_outer_scroll.offset_bottom = 0
-	_outer_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	_outer_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
-	_scroll_host.add_child(_outer_scroll)
+	var scroll := ScrollContainer.new()
+	scroll.set_anchors_preset(Control.PRESET_FULL_RECT)
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	_scroll_host.add_child(scroll)
 
-	_vbox = VBoxContainer.new()
-	_vbox.add_theme_constant_override("separation", 8)
-	_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_outer_scroll.add_child(_vbox)
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 8)
+	vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(vbox)
 
-	_hint_label = RichTextLabel.new()
-	_hint_label.bbcode_enabled = true
-	_hint_label.fit_content = true
-	_hint_label.add_theme_font_size_override("normal_font_size", 10)
-	# Avoid % string operator: en-dash or other chars can confuse the formatter.
-	var ch := COLOR_HINT
-	_hint_label.text = (
-		"[color="
-		+ ch
-		+ "]Alt+1-3[/color] sections  [color="
-		+ ch
-		+ "]Alt+R[/color] reset  "
-		+ "[color="
-		+ ch
-		+ "]Alt+A[/color] audio  "
-		+ "[color="
-		+ ch
-		+ "]Alt+B[/color] reverb details\n"
+	var hint := _make_label(10)
+	hint.text = (
+		"%s sections  %s reset counters  %s all players"
+		% [_col(COLOR_LABEL, "Alt+1-4"), _col(COLOR_LABEL, "Alt+R"), _col(COLOR_LABEL, "Alt+A")]
 	)
-	_vbox.add_child(_hint_label)
+	vbox.add_child(hint)
 
-	var fold_server := FoldableContainer.new()
-	_fold_server = fold_server
-	fold_server.title = "Server Status"
-	fold_server.folded = false
-	_folds.append(fold_server)
-	_status_label = RichTextLabel.new()
-	_status_label.bbcode_enabled = true
-	_status_label.fit_content = true
-	_status_label.add_theme_font_size_override("normal_font_size", 12)
-	_status_label.text = "Nexus Resonance Debug"
-	fold_server.add_child(_status_label)
-	_vbox.add_child(fold_server)
+	_sim_fold = _add_fold(vbox, "Simulation", false)
+	_sim_label = _sim_fold.get_child(0)
+	_players_fold = _add_fold(vbox, "Players", false)
+	_players_label = _players_fold.get_child(0)
+	_reverb_fold = _add_fold(vbox, "Reverb", true)
+	_reverb_label = _reverb_fold.get_child(0)
+	_pathing_fold = _add_fold(vbox, "Pathing", true)
+	_pathing_label = _pathing_fold.get_child(0)
 
-	var fold_audio := FoldableContainer.new()
-	fold_audio.title = "Audio Instrumentation"
-	fold_audio.folded = true
-	_folds.append(fold_audio)
-	_audio_instrumentation_label = RichTextLabel.new()
-	_audio_instrumentation_label.bbcode_enabled = true
-	_audio_instrumentation_label.fit_content = true
-	_audio_instrumentation_label.add_theme_font_size_override("normal_font_size", 11)
-	_audio_instrumentation_label.text = "(No data)"
-	fold_audio.add_child(_audio_instrumentation_label)
-	_vbox.add_child(fold_audio)
+	add_child(panel)
+	panel.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	panel.position = Vector2(10, 10)
+	panel.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 
-	var fold_reverb := FoldableContainer.new()
-	fold_reverb.title = "Reverb Bus"
-	fold_reverb.folded = true
-	_folds.append(fold_reverb)
-	var reverb_vbox := VBoxContainer.new()
-	reverb_vbox.add_theme_constant_override("separation", 4)
-	_reverb_compact_label = RichTextLabel.new()
-	_reverb_compact_label.bbcode_enabled = true
-	_reverb_compact_label.fit_content = true
-	_reverb_compact_label.add_theme_font_size_override("normal_font_size", 11)
-	_reverb_compact_label.text = "(No data)"
-	reverb_vbox.add_child(_reverb_compact_label)
-	fold_reverb.add_child(reverb_vbox)
-	_vbox.add_child(fold_reverb)
 
-	add_child(_panel)
-	_panel.set_anchors_preset(Control.PRESET_TOP_LEFT)
-	_panel.position = Vector2(10, 10)
-	_panel.custom_minimum_size = Vector2(400, 0)
-	_panel.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+func _make_label(font_size: int) -> RichTextLabel:
+	var label := RichTextLabel.new()
+	label.bbcode_enabled = true
+	label.fit_content = true
+	label.add_theme_font_size_override("normal_font_size", font_size)
+	return label
+
+
+func _add_fold(parent: Control, title: String, folded: bool) -> FoldableContainer:
+	var fold := FoldableContainer.new()
+	fold.title = title
+	fold.folded = folded
+	fold.add_child(_make_label(11))
+	parent.add_child(fold)
+	_folds.append(fold)
+	return fold
 
 
 func _unhandled_input(event: InputEvent) -> void:
 	if Engine.is_editor_hint() or not visible:
 		return
-	if not event is InputEventKey:
-		return
 	var ke := event as InputEventKey
-	if not ke.pressed or ke.echo:
-		return
-	if not ke.alt_pressed:
+	if not ke or not ke.pressed or ke.echo or not ke.alt_pressed:
 		return
 
-	var handled := true
 	match ke.keycode:
 		KEY_1, KEY_KP_1:
-			_toggle_fold_index(0)
+			_toggle_fold(0)
 		KEY_2, KEY_KP_2:
-			_toggle_fold_index(1)
+			_toggle_fold(1)
 		KEY_3, KEY_KP_3:
-			_toggle_fold_index(2)
+			_toggle_fold(2)
+		KEY_4, KEY_KP_4:
+			_toggle_fold(3)
 		KEY_R:
-			_reset_meters()
+			_reset_counters()
 		KEY_A:
-			_audio_show_details = not _audio_show_details
-			_update_timer = UPDATE_INTERVAL
-		KEY_B:
-			_reverb_show_details = not _reverb_show_details
-			_update_timer = UPDATE_INTERVAL
+			_show_all_players = not _show_all_players
 		_:
-			handled = false
-
-	if handled:
-		get_viewport().set_input_as_handled()
-
-
-func _toggle_fold_index(i: int) -> void:
-	if i < 0 or i >= _folds.size():
-		return
-	_folds[i].folded = not _folds[i].folded
+			return
+	_update_timer = UPDATE_INTERVAL
+	get_viewport().set_input_as_handled()
 
 
-func _reset_meters() -> void:
-	var srv_reset: Variant = ResonanceServerAccess.get_server()
-	if srv_reset != null and srv_reset.has_method("reset_reverb_bus_instrumentation"):
-		srv_reset.reset_reverb_bus_instrumentation()
-	var tree = get_tree()
-	if tree:
-		for p in tree.get_nodes_in_group("resonance_player"):
-			if p.has_method("reset_audio_instrumentation"):
-				p.reset_audio_instrumentation()
+func _toggle_fold(i: int) -> void:
+	if i < _folds.size():
+		_folds[i].folded = not _folds[i].folded
+
+
+func _reset_counters() -> void:
+	_worker_peak_us = 0
+	_worker_peak_stage = ""
+	var srv: Variant = ResonanceServerAccess.get_server()
+	if srv != null:
+		srv.reset_reverb_bus_instrumentation()
+	for p in get_tree().get_nodes_in_group("resonance_player"):
+		p.reset_audio_instrumentation()
 
 
 func _process(delta: float) -> void:
-	if Engine.is_editor_hint():
+	if Engine.is_editor_hint() or not visible or not _sim_label:
 		return
-	if not visible:
-		return
-	if not _panel or not _status_label:
-		return
-
 	_update_timer += delta
-	if _update_timer >= UPDATE_INTERVAL:
-		_update_timer = 0.0
-		_refresh_status()
-		_refresh_audio_instrumentation()
-		_refresh_reverb_bus()
-
-
-func _refresh_status() -> void:
-	if not _fold_server:
+	if _update_timer < UPDATE_INTERVAL:
 		return
+	_update_timer = 0.0
+
 	if not ResonanceServerAccess.has_server():
-		_status_label.text = "[color=%s]ResonanceServer not loaded[/color]" % COLOR_ERROR
-		_fold_server.title = "Server Status - not loaded"
-		_fold_server.add_theme_color_override(
-			"title_font_color", Color.from_string(COLOR_ERROR, Color.RED)
-		)
+		_set_fold_title(_sim_fold, "Simulation - server not loaded", Health.ISSUE)
+		_sim_label.text = ""
+		_players_fold.visible = false
+		_reverb_fold.visible = false
+		_pathing_fold.visible = false
 		return
+	var srv: Object = ResonanceServerAccess.get_server()
+	_refresh_simulation(srv)
+	_players_fold.visible = true
+	_refresh_players()
+	_reverb_fold.visible = srv.is_initialized()
+	if _reverb_fold.visible:
+		_refresh_reverb(srv)
+	_pathing_fold.visible = srv.is_initialized() and srv.is_pathing_enabled()
+	if _pathing_fold.visible:
+		_refresh_pathing(srv)
 
-	var srv = ResonanceServerAccess.get_server()
-	var init_ok: bool = srv.is_initialized()
-	var sim_ok: bool = srv.is_simulating() if init_ok else false
+
+func _col(color: String, text: String) -> String:
+	return "[color=%s]%s[/color]" % [color, text]
+
+
+func _row(label: String, value: String) -> String:
+	return "%s %s" % [_col(COLOR_LABEL, label), value]
+
+
+func _health_color(health: Health) -> String:
+	match health:
+		Health.ISSUE:
+			return COLOR_ERROR
+		Health.WARN:
+			return COLOR_WARNING
+	return COLOR_OK
+
+
+func _set_fold_title(fold: FoldableContainer, title: String, health: Health) -> void:
 	# FoldableContainer.title has no BBCode; color the whole title via theme.
-	if not init_ok:
-		_fold_server.title = "Server Status - not initialized"
-		_fold_server.add_theme_color_override(
-			"title_font_color", Color.from_string(COLOR_WARNING, Color.ORANGE)
-		)
-	elif not sim_ok:
-		_fold_server.title = "Server Status - waiting for geometry"
-		_fold_server.add_theme_color_override(
-			"title_font_color", Color.from_string(COLOR_WARNING, Color.ORANGE)
-		)
+	fold.title = title
+	fold.add_theme_color_override(
+		"title_font_color", Color.from_string(_health_color(health), Color.WHITE)
+	)
+
+
+func _worse(a: Health, b: Health) -> Health:
+	return a if a > b else b
+
+
+func _ms(us: int) -> String:
+	return "%.1f ms" % (us / 1000.0)
+
+
+func _on_off(b: bool) -> String:
+	return _col(COLOR_OK, "ON") if b else _col(COLOR_DIM, "OFF")
+
+
+func _label_at(labels: Array[String], i: int) -> String:
+	return labels[i] if i >= 0 and i < labels.size() else "?"
+
+
+func _runtime() -> Node:
+	return get_tree().get_first_node_in_group("resonance_runtime")
+
+
+func _debug_players() -> Array[Node]:
+	var out: Array[Node] = []
+	for p in get_tree().get_nodes_in_group("resonance_player"):
+		if not p.exclude_from_debug:
+			out.append(p)
+	return out
+
+
+func _refresh_simulation(srv: Object) -> void:
+	if not srv.is_initialized():
+		_set_fold_title(_sim_fold, "Simulation - not initialized", Health.WARN)
+		_sim_label.text = _main_thread_row()
+		return
+
+	var timing: Dictionary = srv.get_simulation_worker_timing()
+	var interval_us := int(timing.get("reflections_sim_interval_us", 0))
+	var worker_us := ResonanceRuntimePerfMonitors.simulation_worker_timing_sum(timing)
+	var worker_health := Health.WARN if interval_us > 0 and worker_us > interval_us else Health.OK
+	if not srv.is_simulating():
+		_set_fold_title(_sim_fold, "Simulation - waiting for geometry", Health.WARN)
+	elif worker_health == Health.WARN:
+		_set_fold_title(_sim_fold, "Simulation - worker over budget", Health.WARN)
 	else:
-		_fold_server.title = "Server Status - initialized"
-		_fold_server.add_theme_color_override(
-			"title_font_color", Color.from_string(COLOR_OK, Color.LIME_GREEN)
-		)
+		_set_fold_title(_sim_fold, "Simulation - running", Health.OK)
 
-	var parts: PackedStringArray = []
-	var path_on: bool = srv.is_pathing_enabled() if srv.has_method("is_pathing_enabled") else false
-	parts.append(
-		(
-			"[color=%s]Output:[/color] Direct - %s | Reverb - %s | Pathing - %s"
-			% [
-				COLOR_NEUTRAL,
-				_str_bool(srv.is_output_direct_enabled()),
-				_str_bool(srv.is_output_reverb_enabled()),
-				_str_bool(path_on)
-			]
-		)
-	)
-
-	var ao: int = 1
-	if srv.has_method("get_ambisonic_order"):
-		ao = int(srv.get_ambisonic_order())
-	parts.append(
-		"[color=%s]Ambisonic Order:[/color] %s" % [COLOR_NEUTRAL, _ambisonic_order_label(ao)]
-	)
-
-	var scene_idx: int = 0
-	if srv.has_method("get_simulation_tracer_profile"):
-		var prof: Dictionary = srv.get_simulation_tracer_profile()
-		scene_idx = int(prof.get("scene_type", 0))
-	var scene_lbl: String = (
-		_SCENE_TYPE_LABELS[scene_idx]
-		if scene_idx >= 0 and scene_idx < _SCENE_TYPE_LABELS.size()
-		else "?"
-	)
-	parts.append("[color=%s]Scene Type:[/color] %s" % [COLOR_NEUTRAL, scene_lbl])
-
-	var refl_type: int = srv.get_reflection_type() if srv.has_method("get_reflection_type") else 0
-	var names = Constants.REFLECTION_DISPLAY_NAMES
-	var refl_name: String = names[refl_type] if refl_type >= 0 and refl_type < names.size() else "?"
-	parts.append("[color=%s]Reflection Type:[/color] %s" % [COLOR_NEUTRAL, refl_name])
-
-	var drm: int = 0
-	if srv.has_method("get_default_reflections_mode"):
-		drm = int(srv.get_default_reflections_mode())
-	var rays: int = int(srv.get_realtime_rays()) if srv.has_method("get_realtime_rays") else 0
-	var mode_base: String = "Baked" if drm == 0 else "Realtime"
-	var refl_mode_line: String
-	if rays > 0:
-		refl_mode_line = "%s | %d realtime rays" % [mode_base, rays]
-	else:
-		refl_mode_line = "%s | realtime rays off" % mode_base
-	parts.append("[color=%s]Reflection Mode:[/color] %s" % [COLOR_NEUTRAL, refl_mode_line])
-
-	if refl_type == 1 or refl_type == 2:
-		parts.append("[color=%s]Parametric/Hybrid: reverb in player output[/color]" % COLOR_WARNING)
-
-	var tree := get_tree()
-	var rt: Node = tree.get_first_node_in_group("resonance_runtime") if tree else null
-	var mtu := 0
-	var ptu := 0
-	if rt:
-		var _mt: Variant = rt.get("main_thread_last_tick_usec")
-		mtu = int(_mt) if _mt != null else 0
-		var _pt: Variant = rt.get("runtime_physics_tick_usec")
-		ptu = int(_pt) if _pt != null else 0
-	var w_sum := 0
-	var w_heavy_tag := ""
-	var wtim: Dictionary = {}
-	if init_ok and srv.has_method("get_simulation_worker_timing"):
-		wtim = srv.get_simulation_worker_timing()
-		w_sum = ResonanceRuntimePerfMonitors.simulation_worker_timing_sum(wtim)
-		var wh: Variant = wtim.get("worker_last_wake_heavy", false)
-		var w_heavy: bool = wh if wh is bool else bool(wh)
-		w_heavy_tag = "H" if w_heavy else "L"
-	if init_ok:
-		(
-			parts
-			. append(
+	var lines: PackedStringArray = []
+	(
+		lines
+		. append(
+			_row(
+				"Output",
 				(
-					"[color=%s]Performance:[/color] [color=%s]%d µs[/color] | worker Σ [color=%s]%d µs[/color] [color=%s](%s)[/color]"
+					"direct %s | reverb %s | pathing %s"
 					% [
-						COLOR_NEUTRAL,
-						COLOR_NEUTRAL,
-						mtu,
-						COLOR_NEUTRAL,
-						w_sum,
-						COLOR_HINT,
-						w_heavy_tag
+						_on_off(srv.is_output_direct_enabled()),
+						_on_off(srv.is_output_reverb_enabled()),
+						_on_off(srv.is_pathing_enabled()),
 					]
 				)
 			)
 		)
-		# Worker wall-clock around iplSimulatorRunReflections / RunPathing (Phonon, not Nexus glue).
-		var now_ms: int = Time.get_ticks_msec()
-		var spike_line: String = ""
-		if w_sum >= 10000 and not wtim.is_empty():
-			var keys := [
-				"us_run_reflections",
-				"us_run_pathing",
-				"us_scene_graph_commit",
-				"us_simulator_commit",
-				"us_sync_fetch",
-				"us_dynamic_instanced_apply",
-				"us_run_direct",
-			]
-			var best_key := ""
-			var best_val := -1
-			for k in keys:
-				var v := int(wtim.get(k, 0))
-				if v > best_val:
-					best_val = v
-					best_key = k
-			if best_key != "":
-				var top_label := best_key
-				if best_key == "us_run_reflections":
-					top_label = "iplSimulatorRunReflections"
-				elif best_key == "us_run_pathing":
-					top_label = "iplSimulatorRunPathing"
-				var refl_us := int(wtim.get("us_run_reflections", 0))
-				var interval_us := int(wtim.get("reflections_sim_interval_us", 0))
-				var lag_note := ""
-				if refl_us > 0 and interval_us > 0 and refl_us > interval_us:
-					lag_note = " | sim lag (refl %d µs > interval %d µs)" % [refl_us, interval_us]
-				spike_line = (
-					"[color=%s]Worker spike:[/color] top=%s %d µs | sceneCommit=%d µs | refl=%d µs | path=%d µs | sync=%d µs%s"
-					% [
-						COLOR_HINT,
-						top_label,
-						best_val,
-						int(wtim.get("us_scene_graph_commit", 0)),
-						refl_us,
-						int(wtim.get("us_run_pathing", 0)),
-						int(wtim.get("us_sync_fetch", 0)),
-						lag_note,
-					]
-				)
-				_worker_spike_hold_line = spike_line
-				_worker_spike_hold_until_ms = now_ms + 2000
-		# Hold the last spike line for easier screenshots.
-		if spike_line != "":
-			parts.append(spike_line)
-		elif _worker_spike_hold_line != "" and now_ms < _worker_spike_hold_until_ms:
-			parts.append(_worker_spike_hold_line)
-		# IPL reflection handles vs ResonancePlayer node count (different quantities).
-		if not wtim.is_empty():
-			var nr := int(wtim.get("shared_num_rays", -1))
-			var art := int(wtim.get("shared_adaptive_num_rays_target", -1))
-			var ar := int(wtim.get("active_reflection_sources", -1))
-			var rr := int(wtim.get("active_realtime_reflection_sources", -1))
-			var ipl_src := int(wtim.get("active_source_count", -1))
-			if nr >= 0 or ar >= 0 or rr >= 0:
-				var extra := ""
-				if art >= 0:
-					extra = " | adaptive_target=%d" % maxi(art, 0)
-				var player_n := 0
-				if tree:
-					for pnode in tree.get_nodes_in_group("resonance_player"):
-						if pnode.get("exclude_from_debug") == true:
-							continue
-						player_n += 1
-				(
-					parts
-					. append(
-						(
-							"[color=%s]Reflections:[/color] IPL handles=%d realtime=%d | players=%d | shared numRays=%d%s"
-							% [COLOR_HINT, maxi(ar, 0), maxi(rr, 0), player_n, maxi(nr, 0), extra]
-						)
-					)
-				)
-				if ipl_src >= 0:
-					(
-						parts
-						. append(
-							(
-								"[color=%s]IPL sources:[/color] %d (handles with reflections flag may exceed playing players)"
-								% [COLOR_HINT, ipl_src]
-							)
-						)
-					)
-	else:
-		(
-			parts
-			. append(
-				(
-					"[color=%s]Performance:[/color] [color=%s]%d µs[/color] | worker [color=%s]-[/color]"
-					% [COLOR_NEUTRAL, COLOR_NEUTRAL, mtu, COLOR_HINT]
-				)
-			)
-		)
-	if ptu > 0:
-		parts.append(
-			(
-				"[color=%s]Custom scene[/color] [i]_physics_process[/i] [color=%s]%d µs[/color]"
-				% [COLOR_NEUTRAL, COLOR_NEUTRAL, ptu]
-			)
-		)
-
-	_status_label.text = "\n".join(parts)
-
-
-func _ambisonic_order_label(order: int) -> String:
-	var o := clampi(order, 1, 3)
-	match o:
-		1:
-			return "1st Order"
-		2:
-			return "2nd Order"
-		3:
-			return "3rd Order"
-		_:
-			return "%d (order)" % order
-
-
-func _audio_inst_col_buf(n: int) -> String:
-	return COLOR_OK if n == 0 else COLOR_ERROR
-
-
-func _audio_inst_col_max_block_us(us: int, is_issue: bool) -> String:
-	if us <= 0:
-		return COLOR_OK
-	if is_issue or us >= AUDIO_INST_MAX_BLOCK_US_ISSUE:
-		return COLOR_ERROR
-	if us >= AUDIO_INST_MAX_BLOCK_US_WARN:
-		return COLOR_WARNING
-	return COLOR_OK
-
-
-func _audio_inst_col_late_mix(
-	late_mix: int, mix_calls: int, is_issue: bool, is_warn: bool
-) -> String:
-	if late_mix <= 0:
-		return COLOR_OK
-	if is_issue:
-		return COLOR_ERROR
-	if is_warn:
-		return COLOR_WARNING
-	if mix_calls < AUDIO_INST_MIN_MIX_CALLS_FOR_RATE:
-		return COLOR_NEUTRAL
-	return COLOR_OK
-
-
-func _classify_player_instrumentation(
-	p: Node, inst: Dictionary, currently_playing: bool
-) -> Dictionary:
-	# bucket: idle | running_no_data | running_ok | running_issue. ui_severity: 0 / 1 / 2
-	var detail_lines: PackedStringArray = []
-	if not currently_playing:
-		return {
-			"bucket": &"idle",
-			"status_ok": true,
-			"detail": detail_lines,
-			"name": p.name,
-			"ui_severity": 0,
-		}
-	if inst.is_empty():
-		detail_lines.append(
-			(
-				"[color=%s]%s[/color]  [color=%s](no instrumentation snapshot)[/color]"
-				% [COLOR_NEUTRAL, p.name, COLOR_WARNING]
-			)
-		)
-		return {
-			"bucket": &"running_no_data",
-			"status_ok": false,
-			"detail": detail_lines,
-			"name": p.name,
-			"ui_severity": 2,
-		}
-
-	var input_dropped := int(inst.get("input_dropped", 0))
-	var output_underrun := int(inst.get("output_underrun", 0))
-	var output_blocked := int(inst.get("output_blocked", 0))
-	var max_block_us := int(inst.get("max_block_time_us", 0))
-	var late_mix := int(inst.get("late_mix_count", 0))
-	var mix_calls := int(inst.get("mix_calls", 0))
-	var expected_gap_us := int(inst.get("expected_mix_gap_us", 0))
-	var buf_ok := input_dropped == 0 and output_underrun == 0 and output_blocked == 0
-	var late_rate_pct := 100.0 * float(late_mix) / float(max(1, mix_calls))
-
-	var buf_issue := not buf_ok
-	var max_block_issue := max_block_us >= AUDIO_INST_MAX_BLOCK_US_ISSUE
-	var late_rate_issue := (
-		mix_calls >= AUDIO_INST_MIN_MIX_CALLS_FOR_RATE
-		and late_rate_pct >= AUDIO_INST_LATE_RATE_ISSUE_PCT
 	)
-	var is_issue := buf_issue or max_block_issue or late_rate_issue
+	lines.append(_row("Setup", _setup_text(srv)))
+	lines.append(_row("Scene", _scene_text(srv)))
+	lines.append(_row("Sources", _sources_text(timing)))
+	lines.append(_row("Rays", _rays_text(srv, timing)))
+	lines.append(_row("Worker", _worker_text(timing, worker_us, worker_health)))
+	lines.append(_row("Worker peak", "%s (%s)" % [_ms(_worker_peak_us), _worker_peak_stage]))
+	var age_line := _reflections_age_text(timing, interval_us)
+	if age_line != "":
+		lines.append(_row("Refl. age", age_line))
+	lines.append(_main_thread_row())
+	_sim_label.text = "\n".join(lines)
 
-	var late_rate_warn := (
-		buf_ok
-		and not is_issue
-		and mix_calls >= AUDIO_INST_MIN_MIX_CALLS_FOR_RATE
-		and late_rate_pct >= AUDIO_INST_LATE_RATE_WARN_PCT
-	)
-	var ui_severity := 2 if is_issue else (1 if late_rate_warn else 0)
 
-	var c_drop := _audio_inst_col_buf(input_dropped)
-	var c_un := _audio_inst_col_buf(output_underrun)
-	var c_blk := _audio_inst_col_buf(output_blocked)
-	var c_late := _audio_inst_col_late_mix(late_mix, mix_calls, is_issue, late_rate_warn)
-	var c_max := _audio_inst_col_max_block_us(max_block_us, max_block_issue)
-	var max_ms := "%.1f" % (max_block_us / 1000.0)
-	var expected_ms := "?"
-	if expected_gap_us > 0:
-		expected_ms = "%.1f" % (expected_gap_us / 1000.0)
-
-	var passthrough := int(inst.get("passthrough_blocks", 0))
-	var reverb_miss := int(inst.get("reverb_miss_blocks", 0))
-	var param_syncs := int(inst.get("param_sync_count", 0))
-	var zero_input := int(inst.get("zero_input_count", 0))
-	var silent := int(inst.get("silent_output_blocks", 0))
-	var last_rms := float(inst.get("last_output_rms", 0.0))
-	var path_sh_rms := float(inst.get("pathing_sh_rms", 0.0))
-	var path_sh_energy := float(inst.get("pathing_sh_energy", 0.0))
-	var path_out_rms := float(inst.get("pathing_out_rms", 0.0))
-	var path_sh_order := int(inst.get("pathing_sh_order", -1))
-
-	var badge := "[color=%s]OK[/color]" % COLOR_OK
-	if is_issue:
-		badge = "[color=%s]ISSUE[/color]" % COLOR_ERROR
-	elif ui_severity == 1:
-		badge = "[color=%s]WARN[/color]" % COLOR_WARNING
-
-	(
-		detail_lines
-		. append(
-			(
-				"[color=%s]%s[/color]  buf drop=[color=%s]%d[/color] underrun=[color=%s]%d[/color] blocked=[color=%s]%d[/color] | late=[color=%s]%d[/color] (%.2f%% of mix, thresh≈1.5×%sms) max=[color=%s]%s[/color]ms"
-				% [
-					COLOR_NEUTRAL,
-					p.name,
-					c_drop,
-					input_dropped,
-					c_un,
-					output_underrun,
-					c_blk,
-					output_blocked,
-					c_late,
-					late_mix,
-					late_rate_pct,
-					expected_ms,
-					c_max,
-					max_ms,
-				]
-			)
-		)
-	)
-	(
-		detail_lines
-		. append(
-			(
-				"  [color=%s]proc[/color] passthru=%d rmiss=%d silent=%d zero_in=%d rms=%.4f psync=%d  %s"
-				% [
-					COLOR_NEUTRAL,
-					passthrough,
-					reverb_miss,
-					silent,
-					zero_input,
-					last_rms,
-					param_syncs,
-					badge
-				]
-			)
-		)
-	)
-	# No printf %e in GDScript; use String.num_scientific for energy.
-	var path_energy_str: String = String.num_scientific(path_sh_energy)
-	(
-		detail_lines
-		. append(
-			(
-				"  [color=%s]pathing[/color] sh_rms=%s sh_energy=%s out_rms=%s order=%d"
-				% [
-					COLOR_NEUTRAL,
-					String.num(path_sh_rms, 4),
-					path_energy_str,
-					String.num(path_out_rms, 4),
-					path_sh_order,
-				]
-			)
-		)
+func _setup_text(srv: Object) -> String:
+	var refl_name := _label_at(Constants.REFLECTION_DISPLAY_NAMES, srv.get_reflection_type())
+	var order_name := _label_at(_AMBISONIC_ORDER_LABELS, srv.get_ambisonic_order() - 1)
+	var profile: Dictionary = srv.get_simulation_tracer_profile()
+	var scene_name := _label_at(_SCENE_TYPE_LABELS, int(profile.get("scene_type", 0)))
+	return (
+		"%s | %s | %s | %d Hz, %d frames"
+		% [refl_name, order_name, scene_name, srv.get_sample_rate(), srv.get_audio_frame_size()]
 	)
 
-	if is_issue:
-		return {
-			"bucket": &"running_issue",
-			"status_ok": false,
-			"detail": detail_lines,
-			"name": p.name,
-			"ui_severity": 2,
-		}
-	return {
-		"bucket": &"running_ok",
-		"status_ok": true,
-		"detail": detail_lines,
-		"name": p.name,
-		"ui_severity": ui_severity,
-	}
+
+func _scene_text(srv: Object) -> String:
+	var triangles: int = srv.get_global_triangle_count()
+	var tri_col := COLOR_WARNING if triangles == 0 else COLOR_VALUE
+	return (
+		"%s triangles | %d probe batches"
+		% [_col(tri_col, str(triangles)), srv.get_active_probe_batch_count()]
+	)
 
 
-func _refresh_audio_instrumentation() -> void:
-	if not _audio_instrumentation_label:
-		return
-	var tree = get_tree()
-	if not tree:
-		return
-	var players = tree.get_nodes_in_group("resonance_player")
-	if players.is_empty():
-		_audio_instrumentation_label.text = (
-			"[color=%s]No ResonancePlayer nodes[/color]" % COLOR_WARNING
-		)
-		return
-
-	var block_size := -1
-	var srv_audio: Variant = ResonanceServerAccess.get_server()
-	if srv_audio != null and srv_audio.has_method("get_audio_frame_size"):
-		block_size = srv_audio.get_audio_frame_size()
-
-	var idle_n := 0
-	var run_no_data := 0
-	var run_issue := 0
-	var run_ok := 0
-	var run_watch := 0
-	var problem_details: Array[Dictionary] = []
-	var watch_details: Array[Dictionary] = []
-	var max_polyphony_voices := 0
-
+func _sources_text(timing: Dictionary) -> String:
+	var players := _debug_players()
+	var playing := 0
 	for p in players:
-		if p.get("exclude_from_debug") == true:
-			continue
-		if not p.has_method("get_audio_instrumentation"):
-			continue
-		var inst = p.get_audio_instrumentation()
-		var playing: bool = p.has_method("is_playing") and p.is_playing()
-		if playing and inst.has("polyphony_voice_count"):
-			max_polyphony_voices = maxi(
-				max_polyphony_voices, int(inst.get("polyphony_voice_count", 0))
-			)
-		var info := _classify_player_instrumentation(p, inst, playing)
-		var bkey: String = str(info.bucket)
-		if bkey == "idle":
-			idle_n += 1
-		elif bkey == "running_no_data":
-			run_no_data += 1
-			problem_details.append(info)
-		elif bkey == "running_issue":
-			run_issue += 1
-			problem_details.append(info)
-		elif bkey == "running_ok":
-			run_ok += 1
-			if int(info.get("ui_severity", 0)) == 1:
-				run_watch += 1
-				watch_details.append(info)
-
-	var total_n := idle_n + run_no_data + run_issue + run_ok
-	var parts: PackedStringArray = []
-	var bs_txt := (
-		"[color=%s]%s[/color]"
+		if p.is_playing():
+			playing += 1
+	return (
+		"%d players (%d playing) | %d Steam Audio sources | reflections %d (%d realtime)"
 		% [
-			COLOR_NEUTRAL,
-			"block=%d" % block_size if block_size > 0 else "block=?",
+			players.size(),
+			playing,
+			int(timing.get("active_source_count", 0)),
+			int(timing.get("active_reflection_sources", 0)),
+			int(timing.get("active_realtime_reflection_sources", 0)),
 		]
 	)
-	var c_nd := COLOR_WARNING if run_no_data > 0 else COLOR_NEUTRAL
-	var c_iss := COLOR_ERROR if run_issue > 0 else COLOR_NEUTRAL
-	var poly_txt := ""
-	if max_polyphony_voices > 1:
-		poly_txt = " | poly voices max=%d" % max_polyphony_voices
-	(
-		parts
-		. append(
-			(
-				"[color=%s]Sources:[/color] %d total | idle %d | [color=%s]playing OK %d[/color] | [color=%s]playing no data %d[/color] | [color=%s]playing issues %d[/color] | %s%s"
-				% [
-					COLOR_NEUTRAL,
-					total_n,
-					idle_n,
-					COLOR_OK,
-					run_ok,
-					c_nd,
-					run_no_data,
-					c_iss,
-					run_issue,
-					bs_txt,
-					poly_txt
-				]
-			)
-		)
+
+
+func _rays_text(srv: Object, timing: Dictionary) -> String:
+	var rays: int = srv.get_realtime_rays()
+	var text := "realtime off" if rays <= 0 else "%d realtime" % rays
+	var used := int(timing.get("shared_num_rays", 0))
+	if rays > 0 and used > 0 and used != rays:
+		text += _col(COLOR_WARNING, " (adaptive: %d)" % used)
+	return text + " | listener reverb %s" % _on_off(srv.is_listener_reverb_enabled())
+
+
+func _worker_text(timing: Dictionary, worker_us: int, health: Health) -> String:
+	var stages := {
+		"refl": int(timing.get("us_run_reflections", 0)),
+		"path": int(timing.get("us_run_pathing", 0)),
+		"direct": int(timing.get("us_run_direct", 0)),
+		"commit":
+		int(timing.get("us_scene_graph_commit", 0)) + int(timing.get("us_simulator_commit", 0)),
+		"fetch": int(timing.get("us_sync_fetch", 0)),
+	}
+	var top_stage := ""
+	var top_us := -1
+	for stage in stages:
+		if stages[stage] > top_us:
+			top_us = stages[stage]
+			top_stage = stage
+	if worker_us > _worker_peak_us:
+		_worker_peak_us = worker_us
+		_worker_peak_stage = top_stage
+
+	var parts: PackedStringArray = []
+	for stage in stages:
+		parts.append("%s %s" % [stage, _ms(stages[stage])])
+	return "%s | %s" % [_col(_health_color(health), _ms(worker_us)), " ".join(parts)]
+
+
+func _reflections_age_text(timing: Dictionary, interval_us: int) -> String:
+	if int(timing.get("reflections_age_samples", 0)) == 0:
+		return ""
+	var last_us := int(timing.get("reflections_age_us_last", 0))
+	var max_us := int(timing.get("reflections_age_us_max", 0))
+	var stale := interval_us > 0 and last_us > interval_us * REFLECTIONS_AGE_WARN_INTERVALS
+	return (
+		"%s (max %s, target %s)"
+		% [
+			_col(COLOR_WARNING if stale else COLOR_VALUE, _ms(last_us)),
+			_ms(max_us),
+			_ms(interval_us)
+		]
 	)
-	if run_issue > 0:
-		(
-			parts
-			. append(
-				(
-					"[color=%s](issues = lifetime counters on this voice; Alt+R resets; transmitter-style loops latch until reset)[/color]"
-					% COLOR_HINT
-				)
-			)
-		)
-
-	if _audio_show_details:
-		if not problem_details.is_empty():
-			parts.append(
-				(
-					"[color=%s]- issues / no data (max %d) -[/color]"
-					% [COLOR_HINT, AUDIO_PROBLEM_DETAIL_CAP]
-				)
-			)
-			var n := mini(AUDIO_PROBLEM_DETAIL_CAP, problem_details.size())
-			for j in range(n):
-				var d: Dictionary = problem_details[j]
-				for line in d.detail:
-					parts.append(line)
-		if not watch_details.is_empty():
-			(
-				parts
-				. append(
-					(
-						"[color=%s]- watch: elevated late-mix rate (Godot audio scheduling, not Phonon) -[/color]"
-						% COLOR_HINT
-					)
-				)
-			)
-			var nw := mini(AUDIO_PROBLEM_DETAIL_CAP, watch_details.size())
-			for j in range(nw):
-				var w: Dictionary = watch_details[j]
-				for line in w.detail:
-					parts.append(line)
-	elif run_no_data > 0 or run_issue > 0 or run_watch > 0:
-		parts.append("[color=%s]Alt+A[/color] per-source details (issues, then watch)" % COLOR_HINT)
-
-	_audio_instrumentation_label.text = "\n".join(parts)
 
 
-func _refresh_reverb_bus() -> void:
-	if not _reverb_compact_label:
-		return
-	var srv: Variant = ResonanceServerAccess.get_server()
-	if not srv or not srv.has_method("get_reverb_bus_instrumentation"):
-		_reverb_compact_label.text = "[color=%s]ResonanceServer not available[/color]" % COLOR_ERROR
+func _main_thread_row() -> String:
+	var rt := _runtime()
+	if not rt:
+		return _row("Main thread", _col(COLOR_WARNING, "no ResonanceRuntime"))
+	var t: Dictionary = rt.get_frame_timings()
+	var text := "tick %s" % _ms(int(t.get("main_thread_last_tick_usec", 0)))
+	var physics_us := int(t.get("runtime_physics_tick_usec", 0))
+	if physics_us > 0:
+		text += " | custom scene physics %s" % _ms(physics_us)
+	return _row("Main thread", text)
+
+
+func _refresh_players() -> void:
+	var players := _debug_players()
+	if players.is_empty():
+		_set_fold_title(_players_fold, "Players - none", Health.WARN)
+		_players_label.text = ""
 		return
 
+	var counts := {Health.OK: 0, Health.WARN: 0, Health.ISSUE: 0}
+	var entries: Array[Dictionary] = []
+	for p in players:
+		if not p.is_playing():
+			continue
+		var inst: Dictionary = p.get_audio_instrumentation()
+		var health := _player_health(inst)
+		counts[health] += 1
+		if health != Health.OK or _show_all_players:
+			entries.append({"player": p, "inst": inst, "health": health})
+	entries.sort_custom(func(a, b): return a.health > b.health)
+
+	var listed: PackedStringArray = []
+	for e in entries.slice(0, PLAYER_LIST_CAP):
+		listed.append(_player_line(e.player, e.inst, e.health))
+
+	var playing: int = counts[Health.OK] + counts[Health.WARN] + counts[Health.ISSUE]
+	var title := "Players - %d playing" % playing
+	var title_health := Health.OK
+	if counts[Health.ISSUE] > 0:
+		title += ", %d with issues" % counts[Health.ISSUE]
+		title_health = Health.ISSUE
+	elif counts[Health.WARN] > 0:
+		title += ", %d to watch" % counts[Health.WARN]
+		title_health = Health.WARN
+	_set_fold_title(_players_fold, title, title_health)
+
+	var lines: PackedStringArray = []
+	if listed.is_empty():
+		var msg := "no player is playing" if playing == 0 else "all playing players OK"
+		lines.append(_col(COLOR_DIM if playing == 0 else COLOR_OK, msg))
+	else:
+		lines.append_array(listed)
+	lines.append(_col(COLOR_DIM, "Counters run since start or Alt+R."))
+	_players_label.text = "\n".join(lines)
+
+
+func _late_rate_pct(inst: Dictionary) -> float:
+	var mix_calls := int(inst.get("mix_calls", 0))
+	if mix_calls < MIN_MIX_CALLS_FOR_RATE:
+		return 0.0
+	return 100.0 * int(inst.get("late_mix_count", 0)) / mix_calls
+
+
+func _buffer_losses(inst: Dictionary) -> int:
+	return (
+		int(inst.get("input_dropped", 0))
+		+ int(inst.get("output_underrun", 0))
+		+ int(inst.get("output_blocked", 0))
+	)
+
+
+func _player_health(inst: Dictionary) -> Health:
+	if inst.is_empty():
+		return Health.WARN
+	var late_pct := _late_rate_pct(inst)
+	var max_block_us := int(inst.get("max_block_time_us", 0))
+	if (
+		_buffer_losses(inst) > 0
+		or max_block_us >= MAX_BLOCK_US_ISSUE
+		or late_pct >= LATE_RATE_ISSUE_PCT
+	):
+		return Health.ISSUE
+	if late_pct >= LATE_RATE_WARN_PCT or max_block_us >= MAX_BLOCK_US_WARN:
+		return Health.WARN
+	return Health.OK
+
+
+func _player_line(p: Node, inst: Dictionary, health: Health) -> String:
+	var badge := _col(_health_color(health), ["OK", "WARN", "ISSUE"][health])
+	if inst.is_empty():
+		return "%s %s  no instrumentation data" % [badge, p.name]
+
+	var parts: PackedStringArray = []
+	for key in ["input_dropped", "output_underrun", "output_blocked"]:
+		var n := int(inst.get(key, 0))
+		if n > 0:
+			parts.append(_col(COLOR_ERROR, "%s %d" % [key.replace("_", " "), n]))
+	parts.append("late %.1f%%" % _late_rate_pct(inst))
+	parts.append("max block %s" % _ms(int(inst.get("max_block_time_us", 0))))
+	parts.append("rms %.3f" % float(inst.get("last_output_rms", 0.0)))
+	var voices := int(inst.get("polyphony_voice_count", 0))
+	if voices > 1:
+		parts.append("%d voices" % voices)
+	return "%s %s  %s" % [badge, p.name, " | ".join(parts)]
+
+
+func _refresh_reverb(srv: Object) -> void:
 	var ri: Dictionary = srv.get_reverb_bus_instrumentation()
-	var refl_type: int = ri.get("reflection_type", -1)
+	var refl_type := int(ri.get("reflection_type", -1))
+	var type_name := _label_at(Constants.REFLECTION_DISPLAY_NAMES, refl_type)
+	var lines: PackedStringArray = []
+
+	if refl_type == REFLECTION_PARAMETRIC or refl_type == REFLECTION_HYBRID:
+		_set_fold_title(_reverb_fold, "Reverb - %s" % type_name, Health.OK)
+		lines.append(
+			_col(COLOR_DIM, "Wet signal is mixed in each player; the reverb bus is unused.")
+		)
+		lines.append(_output_bus_row())
+		_reverb_label.text = "\n".join(lines)
+		return
+
+	var health := Health.OK
 	var mixer_ok: bool = ri.get("mixer_exists", false)
-	var feeds: int = ri.get("mixer_feed_count", 0)
-
-	var eff_proc: int = ri.get("effect_process_calls", 0)
-	var eff_ok: int = ri.get("effect_success", 0)
-	var eff_null: int = ri.get("effect_mixer_null", 0)
-	# Convolution/TAN use ReflectionMixer on the bus. Parametric/Hybrid have no mixer - wet signal is mixed inside ResonancePlayer.
-	var parametric_or_hybrid := refl_type == 1 or refl_type == 2
-	var eff_col := COLOR_OK if eff_ok > 0 and eff_null == 0 else COLOR_WARNING
-	if parametric_or_hybrid and eff_null > 0 and eff_ok == 0:
-		eff_col = COLOR_NEUTRAL
-
-	var fetch_hit := int(ri.get("fetch_cache_hit", 0))
-	var fetch_miss := int(ri.get("fetch_cache_miss", 0))
-	var fetch_skip := int(ri.get("fetch_cache_skip", 0))
-	# Nexus double-buffer epoch stats. Denominator includes skip.
-	var fetch_denom := fetch_hit + fetch_miss + fetch_skip
-	var miss_pct := (100.0 * fetch_miss / fetch_denom) if fetch_denom > 0 else 0.0
-	var enabled_denom := fetch_hit + fetch_miss
-	var enabled_miss_pct := (100.0 * fetch_miss / enabled_denom) if enabled_denom > 0 else 0.0
-	# Never paint as Steam/error: cache epoch churn is expected around heavy ticks.
-	var miss_col := COLOR_HINT if fetch_miss > 0 else COLOR_OK
-
-	var compact: PackedStringArray = []
-	var mixer_lbl := "ok" if mixer_ok else "missing"
-	var mixer_col := COLOR_OK if mixer_ok else COLOR_WARNING
-	if parametric_or_hybrid and not mixer_ok:
-		mixer_lbl = "n/a (player output)"
-		mixer_col = COLOR_NEUTRAL
-	compact.append(
-		(
-			"[color=%s]Mixer:[/color] [color=%s]%s[/color]  [color=%s]feeds=%d[/color]"
-			% [COLOR_NEUTRAL, mixer_col, mixer_lbl, COLOR_NEUTRAL, feeds]
+	var calls := int(ri.get("effect_process_calls", 0))
+	var success := int(ri.get("effect_success", 0))
+	var effect_health := Health.OK if mixer_ok and calls > 0 and success == calls else Health.WARN
+	health = _worse(health, effect_health)
+	(
+		lines
+		. append(
+			_row(
+				"Bus effect",
+				(
+					"%s | %d mixer feeds | wet rms %.3f peak %.3f"
+					% [
+						_col(_health_color(effect_health), "%d / %d ok" % [success, calls]),
+						int(ri.get("mixer_feed_count", 0)),
+						float(ri.get("effect_output_rms_pre_gain", 0.0)),
+						float(ri.get("effect_output_peak", 0.0)),
+					]
+				)
+			)
 		)
 	)
-	compact.append(
-		(
-			"[color=%s]Effect:[/color] [color=%s]success %d / %d[/color] (mixer_null=%d) peak=%.4f"
+
+	var hit := int(ri.get("fetch_cache_hit", 0))
+	var miss := int(ri.get("fetch_cache_miss", 0))
+	var miss_pct := 100.0 * miss / (hit + miss) if hit + miss > 0 else 0.0
+	var fetch_text := "%.1f%% miss" % miss_pct
+	if refl_type == REFLECTION_CONVOLUTION:
+		var ir_null := int(ri.get("convolution_feed_ir_null", 0))
+		if ir_null > 0:
+			health = _worse(health, Health.WARN)
+		fetch_text += (
+			" | IR feeds %d ok, %s"
 			% [
-				COLOR_NEUTRAL,
-				eff_col,
-				eff_ok,
-				eff_proc,
-				eff_null,
-				ri.get("effect_output_peak", 0.0)
+				int(ri.get("convolution_valid_fetches", 0)),
+				_col(COLOR_WARNING if ir_null > 0 else COLOR_VALUE, "%d without IR" % ir_null),
 			]
 		)
-	)
-	if parametric_or_hybrid:
-		(
-			compact
-			. append(
-				(
-					"[color=%s]Bus effect:[/color] silent by design - use [color=%s]ResonancePlayer[/color] RMS / signal levels for wet audio."
-					% [COLOR_HINT, COLOR_NEUTRAL]
-				)
-			)
-		)
-	(
-		compact
-		. append(
-			(
-				"[color=%s]Fetch reverb (Nexus cache epoch):[/color] [color=%s]miss %.1f%%[/color] enabled_miss %.1f%% (hit=%d miss=%d skip=%d)"
-				% [
-					COLOR_NEUTRAL,
-					miss_col,
-					miss_pct,
-					enabled_miss_pct,
-					fetch_hit,
-					fetch_miss,
-					fetch_skip
-				]
-			)
-		)
-	)
+	lines.append(_row("Fetch", fetch_text))
+
+	var anomalies := _reverb_anomalies(ri)
+	if anomalies != "":
+		health = _worse(health, Health.WARN)
+		lines.append(_row("Anomalies", _col(COLOR_WARNING, anomalies)))
+
+	lines.append(_output_bus_row())
+	_set_fold_title(_reverb_fold, "Reverb - %s" % type_name, health)
+	_reverb_label.text = "\n".join(lines)
+
+
+func _reverb_anomalies(ri: Dictionary) -> String:
+	var parts: PackedStringArray = []
 	var hold_last := int(ri.get("mixer_return_hold_last_count", 0))
-	var rms_pre := float(ri.get("effect_output_rms_pre_gain", 0.0))
-	compact.append(
-		(
-			"[color=%s]Wet meter:[/color] RMS_pre=%.4f  hold_last=%d"
-			% [COLOR_NEUTRAL, rms_pre, hold_last]
+	if hold_last > 0:
+		parts.append("mixer held last block %dx" % hold_last)
+	var click_guard := int(ri.get("effect_click_guard_triggers", 0))
+	if click_guard > 0:
+		parts.append("click guard %dx" % click_guard)
+	var deferred := int(ri.get("mixer_deferred_pending", 0))
+	if deferred > 0:
+		parts.append("%d mixer releases pending" % deferred)
+	return " | ".join(parts)
+
+
+func _output_bus_row() -> String:
+	var rt := _runtime()
+	if not rt:
+		return _row("Output bus", _col(COLOR_WARNING, "no ResonanceRuntime"))
+	var text := str(rt.get_bus_effective())
+	var ai: Dictionary = rt.activator_instrumentation
+	if not ai.is_empty():
+		if ai.get("active", false):
+			text += " | activator %s" % _col(COLOR_OK, "active")
+		else:
+			text += " | activator %s" % _col(COLOR_WARNING, str(ai.get("reason", "inactive")))
+	return _row("Output bus", text)
+
+
+func _refresh_pathing(srv: Object) -> void:
+	var pi: Dictionary = srv.get_pathing_instrumentation()
+	var attempts := int(pi.get("sim_attempt", 0))
+	var ran := int(pi.get("sim_ran", 0))
+	var crashed := int(pi.get("sim_seh_fail", 0))
+	var sh_ok := int(pi.get("fetch_sh_ok", 0))
+	var sh_null := int(pi.get("fetch_sh_null", 0))
+	var applied := int(pi.get("player_applied", 0))
+	var missed := int(pi.get("player_fetch_miss", 0))
+
+	var health := Health.OK
+	if (attempts > 0 and ran == 0) or (missed > 0 and sh_null > 0 and applied == 0):
+		health = Health.ISSUE
+	elif crashed > 0 or (missed > 0 and applied == 0):
+		health = Health.WARN
+	_set_fold_title(_pathing_fold, "Pathing", health)
+
+	var sim_text := (
+		"%d / %d ran | skipped: no listener %d, cooldown %d"
+		% [ran, attempts, int(pi.get("sim_skip_listener", 0)), int(pi.get("sim_skip_cooldown", 0))]
+	)
+	if crashed > 0:
+		sim_text += " | %s" % _col(COLOR_ERROR, "%d crashed" % crashed)
+	var lines: PackedStringArray = []
+	lines.append(_row("Simulation", sim_text))
+	lines.append(
+		_row(
+			"Fetch",
+			(
+				"%d ok | %s"
+				% [sh_ok, _col(COLOR_WARNING if sh_null > 0 else COLOR_VALUE, "%d empty" % sh_null)]
+			)
 		)
 	)
-	if refl_type == 0:
-		var conv_ok := int(ri.get("convolution_valid_fetches", 0))
-		var conv_null := int(ri.get("convolution_feed_ir_null", 0))
-		var g_min := float(ri.get("convolution_gain_min", 0.0))
-		var g_max := float(ri.get("convolution_gain_max", 0.0))
-		compact.append(
-			(
-				"[color=%s]Conv feed:[/color] ok=%d ir_null=%d gain=[%.3f, %.3f]"
-				% [COLOR_NEUTRAL, conv_ok, conv_null, g_min, g_max]
-			)
-		)
-	if _reverb_show_details:
-		(
-			compact
-			. append(
+	(
+		lines
+		. append(
+			_row(
+				"Players",
 				(
-					"[color=%s]- reverb bus detail -[/color] RMS_post=%.4f peak_pre=%.4f click_guard=%d deferred_pending=%d"
+					"%d applied / %d gated | %s"
 					% [
-						COLOR_HINT,
-						float(ri.get("effect_output_rms", 0.0)),
-						float(ri.get("effect_output_peak_pre_gain", 0.0)),
-						int(ri.get("effect_click_guard_triggers", 0)),
-						int(ri.get("mixer_deferred_pending", 0)),
+						applied,
+						int(pi.get("player_gate", 0)),
+						_col(COLOR_WARNING if missed > 0 else COLOR_VALUE, "%d missed" % missed),
 					]
 				)
 			)
 		)
-	elif refl_type == 0 or hold_last > 0:
-		compact.append("[color=%s]Alt+B[/color] more reverb bus fields" % COLOR_HINT)
-	if srv.has_method("get_pathing_instrumentation"):
-		var pi: Dictionary = srv.get_pathing_instrumentation()
-		var sim_attempt: int = int(pi.get("sim_attempt", 0))
-		var sim_ran: int = int(pi.get("sim_ran", 0))
-		var sim_seh: int = int(pi.get("sim_seh_fail", 0))
-		var skip_l: int = int(pi.get("sim_skip_listener", 0))
-		var skip_cd: int = int(pi.get("sim_skip_cooldown", 0))
-		var sh_ok: int = int(pi.get("fetch_sh_ok", 0))
-		var sh_null: int = int(pi.get("fetch_sh_null", 0))
-		var p_miss: int = int(pi.get("player_fetch_miss", 0))
-		var p_ap: int = int(pi.get("player_applied", 0))
-		var p_gate: int = int(pi.get("player_gate", 0))
-		# Hard miss only (stale reuse no longer increments). Wet applied => pipeline OK.
-		var path_col := COLOR_NEUTRAL
-		if sim_ran > 0 or sh_ok > 0:
-			path_col = COLOR_OK if (p_miss == 0 or p_ap > 0) else COLOR_HINT
-		if sim_attempt > 0 and sim_ran == 0:
-			path_col = COLOR_ERROR
-		if sim_seh > 0 and sim_ran == 0:
-			path_col = COLOR_ERROR
-		if p_miss > 0 and sh_null > 0 and p_ap == 0:
-			path_col = COLOR_ERROR
-		(
-			compact
-			. append(
-				(
-					"[color=%s]Pathing:[/color] [color=%s]attempt=%d ran=%d seh_fail=%d[/color] skip_L=%d skip_cd=%d | sh_ok=%d sh_null=%d | player gate=%d applied=%d miss=%d"
-					% [
-						COLOR_NEUTRAL,
-						path_col,
-						sim_attempt,
-						sim_ran,
-						sim_seh,
-						skip_l,
-						skip_cd,
-						sh_ok,
-						sh_null,
-						p_gate,
-						p_ap,
-						p_miss
-					]
-				)
-			)
-		)
-
-	var runtimes := get_tree().get_nodes_in_group("resonance_runtime")
-	if not runtimes.is_empty():
-		var rt: Node = runtimes[0]
-		if rt.has_method("get_bus_effective"):
-			compact.append(
-				"[color=%s]Output bus:[/color] %s" % [COLOR_NEUTRAL, rt.get_bus_effective()]
-			)
-		var ai = rt.get("activator_instrumentation")
-		if ai != null and not ai.is_empty():
-			var act: bool = ai.get("active", false)
-			var acol := COLOR_OK if act else COLOR_WARNING
-			(
-				compact
-				. append(
-					(
-						"[color=%s]Activator:[/color] [color=%s]%s[/color] frames=%d skips=%s"
-						% [
-							COLOR_NEUTRAL,
-							acol,
-							"active" if act else str(ai.get("reason", "?")),
-							ai.get("frames_pushed_total", 0),
-							str(ai.get("skips", "?")),
-						]
-					)
-				)
-			)
-
-	_reverb_compact_label.text = "\n".join(compact)
-
-
-func _str_bool(b: bool) -> String:
-	return "ON" if b else "OFF"
+	)
+	_pathing_label.text = "\n".join(lines)

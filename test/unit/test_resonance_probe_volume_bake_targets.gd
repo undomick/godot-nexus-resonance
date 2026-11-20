@@ -5,6 +5,14 @@ extends GutTest
 const ProbeVolumeDefaults = preload(
 	"res://addons/nexus_resonance/scripts/resonance_probe_volume_defaults.gd"
 )
+const BakeVolumeContext = preload(
+	"res://addons/nexus_resonance/editor/resonance_bake_volume_context.gd"
+)
+const BakeDiscovery = preload(
+	"res://addons/nexus_resonance/editor/resonance_bake_discovery.gd"
+)
+const Constants = preload("res://addons/nexus_resonance/scripts/resonance_config_constants.gd")
+const ResonancePaths = preload("res://addons/nexus_resonance/scripts/resonance_paths.gd")
 
 var _root: Node3D
 var _vol: Node
@@ -28,7 +36,7 @@ func before_each() -> void:
 	_root.add_child(_sources_root)
 
 	var cfg := ResonancePlayerConfig.new()
-	cfg.reflections_enabled = 0
+	cfg.reflections_enabled = false
 	cfg.pathing_enabled_override = 0
 
 	_player_a = ClassDB.instantiate("ResonancePlayer")
@@ -77,10 +85,135 @@ func test_ensure_default_resources_native_method() -> void:
 	_vol.set_bake_config(null)
 	_vol.ensure_default_resources()
 	assert_not_null(_vol.get_probe_data())
-	# C++ may fail to load GDScript bake config in some environments; GDScript fallback covers that.
+	# The C++ side cannot always load the GDScript bake config; fall back to creating it here.
 	if _vol.get_bake_config() == null:
 		_vol.set_bake_config(ResonanceBakeConfig.create_default())
 	assert_not_null(_vol.get_bake_config())
+
+
+func test_bake_needs_static_source_from_array_ignores_legacy_flag() -> void:
+	ProbeVolumeDefaults.ensure_resources(_vol)
+	var bc: ResonanceBakeConfig = _vol.get_bake_config()
+	bc.static_source_enabled = false
+	bc.static_listener_enabled = false
+	_vol.set_bake_sources([_vol.get_path_to(_player_a)])
+	_vol.set_bake_listeners([])
+
+	var needs: Dictionary = BakeVolumeContext.compute_bake_needs_for_volume(
+		_vol, _root, bc, _vol.get_probe_data(), 1000.0
+	)
+	assert_true(
+		needs.get("need_static_source", false),
+		"non-empty bake_sources should need STATICSOURCE even when legacy flag is off"
+	)
+	assert_false(
+		needs.get("need_static_listener", false),
+		"empty bake_listeners should not need STATICLISTENER"
+	)
+
+
+func test_bake_needs_empty_arrays_skip_static_even_if_legacy_flag_on() -> void:
+	ProbeVolumeDefaults.ensure_resources(_vol)
+	var bc: ResonanceBakeConfig = _vol.get_bake_config()
+	bc.static_source_enabled = true
+	bc.static_listener_enabled = true
+	_vol.set_bake_sources([])
+	_vol.set_bake_listeners([])
+
+	var needs: Dictionary = BakeVolumeContext.compute_bake_needs_for_volume(
+		_vol, _root, bc, _vol.get_probe_data(), 1000.0
+	)
+	assert_false(
+		needs.get("need_static_source", true),
+		"empty bake_sources should skip STATICSOURCE even when legacy flag is on"
+	)
+	assert_false(
+		needs.get("need_static_listener", true),
+		"empty bake_listeners should skip STATICLISTENER even when legacy flag is on"
+	)
+
+
+func test_resolve_bake_reflection_type_from_runtime_ignores_bake_config() -> void:
+	var rt: Node = ClassDB.instantiate("ResonanceRuntime")
+	rt.name = "ResonanceRuntime"
+	_root.add_child(rt)
+	await wait_process_frames(1)
+	var cfg = rt.get("runtime")
+	assert_not_null(cfg, "ResonanceRuntime should have a runtime config")
+	cfg.reflection_type = Constants.REFLECTION_TYPE_CONVOLUTION
+	cfg.pathing_enabled = true
+	cfg.ambisonic_order = 1
+	cfg.bake_ambisonic_order = 3
+	var bc := ResonanceBakeConfig.create_default()
+	bc.reflection_type = Constants.REFLECTION_TYPE_HYBRID
+	bc.pathing_enabled = false
+	bc.bake_ambisonics_order = 0
+	assert_eq(
+		BakeDiscovery.resolve_bake_reflection_type(_root, bc),
+		Constants.REFLECTION_TYPE_CONVOLUTION,
+		"bake reflection type should follow ResonanceRuntime, not BakeConfig"
+	)
+	assert_true(
+		BakeDiscovery.resolve_bake_pathing_enabled(_root, bc),
+		"pathing bake should follow ResonanceRuntime.pathing_enabled"
+	)
+	assert_eq(
+		BakeDiscovery.resolve_bake_ambisonics_order(_root, bc),
+		3,
+		"ambisonics bake order Use Global should follow ResonanceRuntime.bake_ambisonic_order"
+	)
+	var params: Dictionary = BakeDiscovery.bake_params_from_runtime(_root, bc)
+	assert_eq(int(params.get("bake_reflection_type", -1)), Constants.REFLECTION_TYPE_CONVOLUTION)
+	assert_eq(int(params.get("bake_ambisonics_order", -1)), 3)
+
+
+func test_resolve_bake_ambisonics_order_volume_override() -> void:
+	var rt: Node = ClassDB.instantiate("ResonanceRuntime")
+	rt.name = "ResonanceRuntime"
+	_root.add_child(rt)
+	await wait_process_frames(1)
+	var cfg = rt.get("runtime")
+	assert_not_null(cfg, "ResonanceRuntime should have a runtime config")
+	cfg.bake_ambisonic_order = 2
+	var bc := ResonanceBakeConfig.create_default()
+	bc.bake_ambisonics_order = 3
+	assert_eq(
+		BakeDiscovery.resolve_bake_ambisonics_order(_root, bc),
+		3,
+		"BakeConfig override should win over global bake_ambisonic_order"
+	)
+	bc.bake_ambisonics_order = 0
+	assert_eq(
+		BakeDiscovery.resolve_bake_ambisonics_order(_root, bc),
+		2,
+		"Use Global should follow ResonanceRuntime.bake_ambisonic_order"
+	)
+
+
+func test_bake_reflection_type_tan_maps_to_convolution() -> void:
+	assert_eq(
+		Constants.bake_reflection_type_from_runtime(Constants.REFLECTION_TYPE_TAN),
+		Constants.REFLECTION_TYPE_CONVOLUTION
+	)
+
+
+func test_export_format_defaults_to_res_when_unset() -> void:
+	var probe_key := ResonancePaths.SETTING_PROBE_DATA_FORMAT
+	var asset_key := ResonancePaths.SETTING_RESONANCE_ASSET_FORMAT
+	var probe_had := ProjectSettings.has_setting(probe_key)
+	var asset_had := ProjectSettings.has_setting(asset_key)
+	var probe_prev: Variant = ProjectSettings.get_setting(probe_key) if probe_had else null
+	var asset_prev: Variant = ProjectSettings.get_setting(asset_key) if asset_had else null
+	if probe_had:
+		ProjectSettings.clear(probe_key)
+	if asset_had:
+		ProjectSettings.clear(asset_key)
+	assert_eq(ResonancePaths.get_probe_data_asset_extension(), "res")
+	assert_eq(ResonancePaths.get_resonance_asset_extension(), "res")
+	if probe_had:
+		ProjectSettings.set_setting(probe_key, probe_prev)
+	if asset_had:
+		ProjectSettings.set_setting(asset_key, asset_prev)
 
 
 func test_add_remove_bake_source_by_node_and_path() -> void:
@@ -119,7 +252,7 @@ func test_update_targets_from_scan_replaces_arrays() -> void:
 	_vol.set_bake_listeners([NodePath("stale_listener")])
 	_vol.set_scan_targets([_vol.get_path_to(_sources_root)])
 
-	var result: Dictionary = ResonanceBakeDiscovery.update_volume_bake_targets_from_scan(_vol)
+	var result: Dictionary = BakeDiscovery.update_volume_bake_targets_from_scan(_vol)
 	assert_eq(int(result.get("scan_roots_used", 0)), 1)
 	assert_eq(int(result.get("sources", 0)), 2, "should find both ResonancePlayers")
 	assert_eq(int(result.get("listeners", 0)), 1, "should find ResonanceListener")
@@ -139,7 +272,7 @@ func test_update_targets_empty_scan_clears() -> void:
 	_vol.set_bake_listeners([_vol.get_path_to(_listener)])
 	_vol.set_scan_targets([])
 
-	var result: Dictionary = ResonanceBakeDiscovery.update_volume_bake_targets_from_scan(_vol)
+	var result: Dictionary = BakeDiscovery.update_volume_bake_targets_from_scan(_vol)
 	assert_eq(int(result.get("sources", 0)), 0)
 	assert_eq(int(result.get("listeners", 0)), 0)
 	assert_eq(_vol.get_bake_sources().size(), 0)
@@ -148,7 +281,7 @@ func test_update_targets_empty_scan_clears() -> void:
 
 func test_update_targets_strips_empty_scan_entries_without_failing() -> void:
 	_vol.set_scan_targets([NodePath(), _vol.get_path_to(_sources_root), NodePath("")])
-	var result: Dictionary = ResonanceBakeDiscovery.update_volume_bake_targets_from_scan(_vol)
+	var result: Dictionary = BakeDiscovery.update_volume_bake_targets_from_scan(_vol)
 	assert_eq(_vol.get_scan_targets().size(), 1, "empty scan_targets slots should be removed")
 	assert_eq(NodePath(str(_vol.get_scan_targets()[0])), _vol.get_path_to(_sources_root))
 	assert_eq(int(result.get("sources", 0)), 2)

@@ -26,6 +26,24 @@ TEST_CASE("processor HRTF: direct needs recreate on bound/runtime mismatch", "[p
     REQUIRE_FALSE(direct_needs_hrtf_effect_recreate(true, old_h, old_h));
 }
 
+TEST_CASE("processor HRTF: direct update picks create, replace or keep", "[processor][hrtf]") {
+    IPLHRTF old_h = reinterpret_cast<IPLHRTF>(1);
+    IPLHRTF new_h = reinterpret_cast<IPLHRTF>(2);
+    REQUIRE(direct_hrtf_effects_update(false, nullptr, new_h) == HrtfEffectsUpdate::CREATE);
+    REQUIRE(direct_hrtf_effects_update(true, old_h, new_h) == HrtfEffectsUpdate::REPLACE);
+    REQUIRE(direct_hrtf_effects_update(true, old_h, old_h) == HrtfEffectsUpdate::KEEP);
+    REQUIRE(direct_hrtf_effects_update(true, old_h, nullptr) == HrtfEffectsUpdate::KEEP);
+    REQUIRE(direct_hrtf_effects_update(false, nullptr, nullptr) == HrtfEffectsUpdate::KEEP);
+}
+
+TEST_CASE("processor HRTF: failed rebuild keeps the live effects", "[processor][hrtf]") {
+    REQUIRE(direct_hrtf_effects_should_swap(HrtfEffectsUpdate::REPLACE, true));
+    REQUIRE(direct_hrtf_effects_should_swap(HrtfEffectsUpdate::CREATE, true));
+    REQUIRE_FALSE(direct_hrtf_effects_should_swap(HrtfEffectsUpdate::REPLACE, false));
+    REQUIRE_FALSE(direct_hrtf_effects_should_swap(HrtfEffectsUpdate::CREATE, false));
+    REQUIRE_FALSE(direct_hrtf_effects_should_swap(HrtfEffectsUpdate::KEEP, true));
+}
+
 TEST_CASE("processor HRTF: path needs recreate when bound HRTF drifted", "[processor][hrtf]") {
     IPLHRTF old_h = reinterpret_cast<IPLHRTF>(1);
     IPLHRTF new_h = reinterpret_cast<IPLHRTF>(2);

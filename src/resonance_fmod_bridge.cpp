@@ -50,7 +50,6 @@ bool ResonanceFMODBridge::load_plugin() {
 #if defined(_WIN32) || defined(_WIN64)
     plugin_handle_ = LoadLibraryA(plugin_name);
     if (!plugin_handle_) {
-        // Try loading from next to executable (e.g. project root or addons/nexus_resonance/bin)
         char path[resonance::kFmodPluginMaxModulePathLen];
         if (GetModuleFileNameA(NULL, path, sizeof(path))) {
             std::string dir(path);
@@ -60,7 +59,6 @@ bool ResonanceFMODBridge::load_plugin() {
             plugin_handle_ = LoadLibraryA((dir + plugin_name).c_str());
         }
         if (!plugin_handle_) {
-            // Try fmod_plugin deploy path: addons/nexus_resonance/bin/fmod_plugin/windows-x64/
             plugin_handle_ = LoadLibraryA((std::string(resonance::kFmodPluginPathWindows) + plugin_name).c_str());
         }
     }
@@ -148,7 +146,7 @@ bool ResonanceFMODBridge::init_bridge() {
     const IPLSimulationSettings* sim_settings = server->get_simulation_settings_for_fmod();
     server->ensure_fmod_reverb_source();
     IPLSource reverb_src = nullptr;
-    int32_t reverb_handle = server->get_fmod_reverb_source_handle();
+    int32_t reverb_handle = server->get_listener_reverb_source_handle();
     if (reverb_handle >= 0) {
         reverb_src = server->get_source_from_handle(reverb_handle);
     }
@@ -183,8 +181,7 @@ void ResonanceFMODBridge::shutdown_bridge() {
 }
 
 bool ResonanceFMODBridge::rebind_after_reinit() {
-    // Engine reinit destroys the IPLContext that iplFMODInitialize retained. Terminate and
-    // re-init against the new context; keep the shared library loaded to avoid dlopen churn.
+    // A reinit destroys the IPLContext that iplFMODInitialize retained. The library stays loaded.
     if (initialized_ && fn_iplFMODTerminate_) {
         fn_iplFMODTerminate_();
         initialized_ = false;

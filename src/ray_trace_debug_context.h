@@ -33,8 +33,7 @@ class RayTraceDebugContext {
                       const IPLMaterial* material);
     void unregister_mesh(int mesh_id);
 
-    /// Cast rays from origin in uniform directions, trace against geometry, return segments for viz.
-    /// Main-thread only. Used when Embree scene + debug_reflections (no CUSTOM callbacks).
+    /// Main thread only. Used for debug_reflections when the scene has no CUSTOM ray callbacks.
     void trace_reflection_rays_for_viz(const IPLVector3& origin, int num_rays,
                                        float max_distance, Array& out_segments);
 

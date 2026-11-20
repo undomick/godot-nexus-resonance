@@ -5,8 +5,6 @@
 
 namespace resonance {
 
-/// Maps a channel count to Steam Audio's standard layouts (same mapping as Steam Audio spatialize helpers).
-/// Unsupported counts fall back to stereo. Use for IPLPanningEffectSettings / IPLAmbisonicsPanningEffectSettings.
 inline IPLSpeakerLayout speaker_layout_for_channel_count(int num_channels) {
     IPLSpeakerLayout layout{};
     layout.numSpeakers = num_channels;
@@ -29,7 +27,6 @@ inline IPLSpeakerLayout speaker_layout_for_channel_count(int num_channels) {
     return layout;
 }
 
-/// Clamps user config to counts Steam Audio panning supports as standard layouts (1,2,4,6,8); otherwise stereo.
 inline int clamp_direct_speaker_channels(int n) {
     if (n == 1 || n == 2 || n == 4 || n == 6 || n == 8)
         return n;

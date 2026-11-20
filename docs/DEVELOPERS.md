@@ -11,7 +11,7 @@ nexus-resonance/
 │   ├── resonance_log.*     # C++ logging (ResonanceLog, forwards to ResonanceLogger)
 │   ├── test/               # C++ unit tests (Catch2)
 │   ├── lib/
-│   │   ├── godot-cpp/      # Godot C++ bindings (submodule)
+│   │   ├── godot-cpp/      # Godot C++ bindings (vendored 10.0.0-stable)
 │   │   ├── catch2/         # Catch2 test framework (submodule, v2.x)
 │   │   ├── pffft/          # FFT library for iOS (submodule)
 │   │   ├── libmysofa/      # HRTF/SOFA reader for iOS (submodule)
@@ -234,7 +234,7 @@ Requires `ResonanceRuntime.enable_debug` at runtime (ignored in the editor). Hot
 
 | Key | Overlay                         | What it shows                                                                                                                                    |
 | --- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| F1  | Canvas HUD (`debug_overlay.gd`) | Server status, audio instrumentation per `ResonancePlayer`, reverb bus metrics. Alt+1-3 fold sections; Alt+R reset meters; Alt+A/B extra detail. |
+| F1  | Canvas HUD (`debug_overlay.gd`) | Simulation (setup, scene, worker cost, reflections age), players with issues, reverb bus, pathing. Alt+1-4 fold sections; Alt+R reset counters; Alt+A list all playing players. |
 | F2  | Performance overlay             | FPS / frame time (independent canvas).                                                                                                           |
 | F3  | Player overlay                  | Single toggle: sets `ResonanceServer.debug_occlusion` and `debug_reflections`. Per-source 3D HUD label (occlusion, transmission, signal meters). |
 
@@ -279,6 +279,7 @@ await ResonanceRuntimeExporter.export_static_async(level_root, { "bake_probes": 
 
 - `ResonanceServer.export_static_scene_to_geometry_asset(scene_root)` - in-memory `ResonanceGeometryAsset` (preferred for runtime).
 - `ResonanceServer.export_static_scene_to_asset(scene_root, path)` - same merge, written to disk (`user://` is fine).
+- `ResonanceServer.build_static_scene_export(scene_root, skip_if_hash)` - hash and asset from one scene pass (`{"hash", "asset"}`; no asset when unchanged). Save with `save_geometry_asset(asset, path)`.
 - `ResonanceServer.replace_static_scenes_from_assets(assets, transforms)` - clear all static packs, then load listed assets (no-op with warning when `scene_type` is Custom / Godot Physics).
 
 **Residuals / limits:**
@@ -304,7 +305,7 @@ await ResonanceRuntimeExporter.export_static_async(level_root, { "bake_probes": 
 - **ResonancePlayer sounds dry (no reverb/occlusion)** - Often was: child `ResonancePlayer` `_ready` ran before parent `ResonanceServer` init, so `create_source_handle` never ran again. Fixed by retrying handle creation from `play()` / `_process` when the server becomes ready. If you still hear dry audio, check `ResonanceServer.is_simulating()`, probe batches / geometry, and mix levels-not only `_ready` ordering.
 - **Editor shutdown**: Do not call `ResourceSaver.remove_resource_format_saver` / `ResourceLoader.remove_resource_format_loader` in plugin `_exit_tree`; Godot may tear these down before the plugin, causing SIGSEGV.
 - **GDExtension unload / plugin disable**: Do **not** call `clear_probe_batches` in `_disable_plugin`. Wiping the native registry while `ResonanceProbeVolume` nodes still hold `probe_batch_handle` values leaves stale handles after re-enable. Clear batches only via Project → Tools → Nexus Resonance → Clear Probe Batches when intentional.
-- **Probe volume deletion**: Probe Volume clears refs on EXIT_TREE; ResonancePlayer auto-clears `pathing_probe_volume` when the target node is gone. If the error still occurs, use Tools > Unlink Probe Volume References before deleting.
+- **Probe volume deletion**: In the editor, Probe Volume clears refs on EXIT_TREE and ResonancePlayer auto-clears `pathing_probe_volume` when the target node is gone. At runtime both keep the path, so a volume added back is found again. If the error still occurs, use Tools > Unlink Probe Volume References before deleting.
 
 
 

@@ -31,6 +31,13 @@ inline bool voice_reflection_ir_generation_live(uint32_t published_generation, u
     return published_generation != 0u && published_generation == live_generation;
 }
 
+/// The emitter's last applied params may stand in for a fetch miss only while they still belong to that source.
+inline bool emitter_tail_applyable(bool tail_have, int32_t tail_source_handle, int32_t owned_handle,
+                                   uint32_t tail_ir_generation, uint32_t live_ir_generation) {
+    return tail_have && voice_tail_ir_matches_source(tail_source_handle, owned_handle) &&
+           voice_reflection_ir_generation_live(tail_ir_generation, live_ir_generation);
+}
+
 } // namespace resonance
 
 #endif // RESONANCE_POLYPHONIC_VOICE_POLICY_H

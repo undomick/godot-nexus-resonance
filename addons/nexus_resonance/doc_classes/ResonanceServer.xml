@@ -77,28 +77,41 @@
 				True when the Steam Audio engine is initialized.
 			</description>
 		</method>
+		<method name="is_listener_reverb_enabled" qualifiers="const">
+			<return type="bool" />
+			<description>
+				True while the active [ResonanceListener] has [member ResonanceListener.apply_reverb] on.
+			</description>
+		</method>
 		<method name="is_simulating" qualifiers="const">
 			<return type="bool" />
 			<description>
 				True when acoustic simulation can run (static triangles &gt; 0, or Custom scene with a valid [World3D]).
 			</description>
 		</method>
+		<method name="get_global_triangle_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Triangles currently in the Steam Audio scene: live geometry meshes plus registered static packs.
+			</description>
+		</method>
 		<method name="is_spatial_audio_output_ready" qualifiers="const">
 			<return type="bool" />
 			<description>
-				True when the spatial output gate is open (warmup done and scene committed). Until then players may mute spatial DSP.
+				True when the scene is ready: the Steam Audio scene holds the current geometry and is committed, or the Godot physics world is bound for physics tracing. Players also wait for [method is_source_spatial_output_ready].
+			</description>
+		</method>
+		<method name="is_source_spatial_output_ready" qualifiers="const">
+			<return type="bool" />
+			<param index="0" name="handle" type="int" />
+			<description>
+				True when the source with this handle may produce spatial output: the scene is ready and the source has its first direct simulation result. While false, the player holds its playback position and starts late but complete.
 			</description>
 		</method>
 		<method name="arm_spatial_audio_output_gate">
 			<return type="void" />
 			<description>
-				Arms the spatial mute gate (cold start / full reload). Incremental geometry adds into a non-empty scene do not re-arm.
-			</description>
-		</method>
-		<method name="reset_spatial_audio_warmup_passes">
-			<return type="void" />
-			<description>
-				Resets remaining warmup passes before spatial output opens.
+				Closes the spatial output gate of every source until the scene is committed again and each source has a new direct result (cold start / full reload). Incremental geometry adds into a non-empty scene do not re-arm.
 			</description>
 		</method>
 		<method name="get_sample_rate" qualifiers="const">
@@ -137,10 +150,10 @@
 				Active ambisonics order (1-3) for simulation and reverb decode.
 			</description>
 		</method>
-		<method name="get_default_reflections_mode" qualifiers="const">
+		<method name="get_listener_reverb_source_handle" qualifiers="const">
 			<return type="int" />
 			<description>
-				Default reflections mode for players using Use Global: [code]0[/code] Baked, [code]1[/code] Realtime.
+				Simulation source at the listener pose that feeds the listener reverb and the FMOD bridge. [code]-1[/code] while none exists.
 			</description>
 		</method>
 		<method name="get_reflection_type" qualifiers="const">
@@ -354,6 +367,14 @@
 				Clears all static packs then loads each asset. No-op with warning when [code]scene_type[/code] is Custom. Prefer [url=#ResonanceRuntimeExporter]ResonanceRuntimeExporter[/url].
 			</description>
 		</method>
+		<method name="build_static_scene_export">
+			<return type="Dictionary" />
+			<param index="0" name="scene_root" type="Node" />
+			<param index="1" name="skip_if_hash" type="int" default="0" />
+			<description>
+				Hashes and merges static geometry under [param scene_root] in one pass. Returns [code]{"hash": int, "asset": ResonanceGeometryAsset}[/code]; [code]asset[/code] is null when [code]hash[/code] is 0 (nothing to export) or equals [param skip_if_hash] (unchanged).
+			</description>
+		</method>
 		<method name="export_static_scene_to_geometry_asset">
 			<return type="ResonanceGeometryAsset" />
 			<param index="0" name="scene_root" type="Node" />
@@ -375,6 +396,14 @@
 			<param index="1" name="file_base_name" type="String" />
 			<description>
 				Exports static geometry under [param scene_root] as OBJ+MTL. Returns [enum Error].
+			</description>
+		</method>
+		<method name="save_geometry_asset">
+			<return type="int" />
+			<param index="0" name="asset" type="ResonanceGeometryAsset" />
+			<param index="1" name="path" type="String" />
+			<description>
+				Writes [param asset] to [param path] through a temp file and rename (appends [code].tres[/code] when no resource extension is given). Returns [enum Error].
 			</description>
 		</method>
 		<method name="get_static_scene_hash">
@@ -682,7 +711,13 @@
 		<method name="get_simulation_worker_timing" qualifiers="const">
 			<return type="Dictionary" />
 			<description>
-				Last sim step timings (us): [code]us_run_direct[/code], [code]us_run_reflections[/code], [code]us_run_pathing[/code], [code]us_sync_fetch[/code], commit keys. Cleared by [method reset_pathing_instrumentation].
+				Simulation worker timings (us): [code]us_run_direct[/code], [code]us_sync_fetch[/code] and commit keys of the last direct pass; [code]us_run_reflections[/code] and [code]us_run_pathing[/code] of the last reflections pass, counted by [code]reflection_passes[/code]. [code]reflections_age_us_last[/code] / [code]reflections_age_us_max[/code] are the time between two completed reflections passes while realtime reflections run, [code]reflections_age_samples[/code] counts them. Cleared by [method reset_pathing_instrumentation].
+			</description>
+		</method>
+		<method name="get_resource_pool_stats" qualifiers="const">
+			<return type="Dictionary" />
+			<description>
+				Player resource pool: [code]ready_sources[/code] and [code]ready_reflection_effects[/code] built ahead, plus [code]source_misses[/code] and [code]reflection_effect_misses[/code], the player starts that found the pool empty and built on the main thread. Pool size comes from the Project Settings [code]nexus/resonance/pool/min_ready[/code] (default 2) and [code]nexus/resonance/pool/max_kept[/code] (default 8), read at audio init.
 			</description>
 		</method>
 		<method name="get_convolution_audio_timing" qualifiers="const">
@@ -700,7 +735,7 @@
 		<method name="get_reverb_bus_instrumentation">
 			<return type="Dictionary" />
 			<description>
-				Reverb bus debug counters (click guard, underrun, etc.).
+				Reverb bus debug counters (click guard, underrun, etc.). [code]convolution_valid_fetches[/code] counts reflection fetches that returned a non-null IR since the last [method reset_reverb_bus_instrumentation].
 			</description>
 		</method>
 		<method name="reset_reverb_bus_instrumentation">
@@ -760,7 +795,7 @@
 			Short ramp on the convolution bus when wet peak collapses in one callback. Disable for A/B wet-tail tests.
 		</member>
 		<member name="reverb_bus_wet_ring_underrun_zero_fill" type="bool" setter="set_reverb_bus_wet_ring_underrun_zero_fill" getter="is_reverb_bus_wet_ring_underrun_zero_fill" default="false">
-			On split-reverb ring underrun, fill with silence instead of hold x cosine taper.
+			On reverb send ring underrun, fill with silence instead of hold x cosine taper.
 		</member>
 		<member name="perspective_correction_enabled" type="bool" setter="set_perspective_correction_enabled" getter="is_perspective_correction_enabled" default="false">
 			Third-person perspective correction for spatialized sources. Live from runtime config.

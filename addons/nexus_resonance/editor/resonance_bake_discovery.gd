@@ -50,7 +50,7 @@ static func find_resonance_runtime(node: Node) -> Node:
 	return null
 
 
-## Bake reflection type from scene ResonanceRuntime, else BakeConfig / Hybrid fallback.
+## Reflection type from the scene's ResonanceRuntime, else from [param bc], else Hybrid.
 static func resolve_bake_reflection_type(root: Node, bc: Resource) -> int:
 	var rt_node := find_resonance_runtime(root)
 	if rt_node:
@@ -62,7 +62,7 @@ static func resolve_bake_reflection_type(root: Node, bc: Resource) -> int:
 	return Constants.REFLECTION_TYPE_HYBRID
 
 
-## Pathing bake on/off from ResonanceRuntime, else BakeConfig fallback.
+## Pathing on/off from the scene's ResonanceRuntime, else from [param bc].
 static func resolve_bake_pathing_enabled(root: Node, bc: Resource) -> bool:
 	var rt_node := find_resonance_runtime(root)
 	if rt_node:
@@ -74,7 +74,7 @@ static func resolve_bake_pathing_enabled(root: Node, bc: Resource) -> bool:
 	return false
 
 
-## Ambisonics bake order: BakeConfig override (Use Global / 1-3), else Runtime bake_ambisonic_order (clamped 1-3).
+## Bake ambisonic order from the scene's ResonanceRuntime, clamped to 1-3. Defaults to 1.
 static func resolve_global_bake_ambisonic_order(root: Node) -> int:
 	var rt_node := find_resonance_runtime(root)
 	if rt_node:
@@ -82,11 +82,12 @@ static func resolve_global_bake_ambisonic_order(root: Node) -> int:
 		if rt != null and "bake_ambisonic_order" in rt:
 			return clampi(int(rt.bake_ambisonic_order), 1, 3)
 		if rt != null and "ambisonic_order" in rt:
-			# Legacy scenes before bake_ambisonic_order existed.
+			# Scenes saved before bake_ambisonic_order existed.
 			return clampi(int(rt.ambisonic_order), 1, 3)
 	return 1
 
 
+## The order set on [param bc] if any, else the runtime's bake ambisonic order.
 static func resolve_bake_ambisonics_order(root: Node, bc: Resource, _vol: Node = null) -> int:
 	var global_order := resolve_global_bake_ambisonic_order(root)
 	var setting := 0
@@ -97,8 +98,7 @@ static func resolve_bake_ambisonics_order(root: Node, bc: Resource, _vol: Node =
 	return clampi(setting, 1, 3)
 
 
-## Overlay Runtime SSOT fields on BakeConfig params (reflection, pathing, ambisonics, pathing visibility).
-## Pass [param vol] so per-volume Bake Ambisonic Order overrides apply.
+## Bake params from [param bc] with reflection type, ambisonic order and pathing settings taken from the runtime.
 static func bake_params_from_runtime(root: Node, bc: Resource, vol: Node = null) -> Dictionary:
 	var params: Dictionary = {}
 	if bc != null and bc.has_method("get_bake_params"):
@@ -107,7 +107,6 @@ static func bake_params_from_runtime(root: Node, bc: Resource, vol: Node = null)
 		params = ResonanceBakeConfig.create_default().get_bake_params()
 	params["bake_reflection_type"] = resolve_bake_reflection_type(root, bc)
 	params["bake_ambisonics_order"] = resolve_bake_ambisonics_order(root, bc, vol)
-	# Pathing samples/ranges/radius/threshold live on RuntimeConfig (Steam Audio Settings).
 	var num_samples := 4
 	var vis_range := 1000.0
 	var path_range := 1000.0
@@ -167,10 +166,8 @@ static func resolve_bake_node_for_volume(
 	return null
 
 
-## Resolve all NodePaths in [param vol].[param property] to live Node3D instances of [param target_class].
-## Used by the bake pipeline to issue one STATICSOURCE/STATICLISTENER pass per outdoor emitter so that
-## multiple fixed sources (rain, thunder, HVAC, ...) produce position-dependent baked IRs instead of a
-## single listener-only REVERB IR.
+## Resolves every NodePath in [param vol].[param property] to a node of [param target_class].
+## Paths that do not resolve are skipped.
 static func resolve_bake_nodes_for_volume(
 	vol: Node, root: Node, property: String, target_class: String
 ) -> Array:
@@ -206,9 +203,9 @@ static func _append_unique_path(out: Array, path: NodePath) -> void:
 	out.append(path)
 
 
-## Scans [member ResonanceProbeVolume.scan_targets] roots (DFS, including each root) and
-## [b]replaces[/b] [member ResonanceProbeVolume.bake_sources] / [member ResonanceProbeVolume.bake_listeners]
-## with paths relative to [param vol]. Returns `{ sources, listeners, scan_roots_used }`.
+## Scans each [member ResonanceProbeVolume.scan_targets] root and its descendants and [b]replaces[/b]
+## [member ResonanceProbeVolume.bake_sources] and [member ResonanceProbeVolume.bake_listeners] with what it finds.
+## Returns the counts as [code]{ sources, listeners, scan_roots_used }[/code].
 static func update_volume_bake_targets_from_scan(vol: Node) -> Dictionary:
 	var result := {"sources": 0, "listeners": 0, "scan_roots_used": 0}
 	if vol == null or not vol.is_class("ResonanceProbeVolume"):
@@ -221,7 +218,7 @@ static func update_volume_bake_targets_from_scan(vol: Node) -> Dictionary:
 	if not (scan_arr is Array):
 		scan_arr = []
 
-	# Drop empty NodePaths silently (common when the array editor has a blank slot).
+	# A blank slot in the array editor is an empty NodePath; drop it without a warning.
 	var cleaned: Array = []
 	for path_val in scan_arr:
 		var path := NodePath(str(path_val)) if path_val else NodePath()

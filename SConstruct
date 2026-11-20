@@ -3,7 +3,7 @@ import os
 import shutil
 import sys
 
-env = SConscript("src/lib/godot-cpp/SConstruct")
+env = SConscript("src/lib/godot-cpp/SConstruct", {"api_version": "4.4"})
 
 # Project setup
 project_name = "nexus_resonance"
@@ -175,10 +175,14 @@ if build_tests:
         build_dir + "test/test_main.cpp",
         build_dir + "test/test_ring_buffer.cpp",
         build_dir + "test/test_volume_ramp.cpp",
+        build_dir + "test/test_voice_virtualization_policy.cpp",
+        build_dir + "test/test_reflection_skip_policy.cpp",
+        build_dir + "test/test_pathing_skip_policy.cpp",
         build_dir + "test/test_resonance_math_more.cpp",
         build_dir + "test/test_resonance_hash.cpp",
         build_dir + "test/test_bake_ambisonics_order.cpp",
         build_dir + "test/test_baker_ipl_policy.cpp",
+        build_dir + "test/test_probe_generation_policy.cpp",
         build_dir + "test/test_param_cache_invalidate_policy.cpp",
         build_dir + "test/test_probe_batch_pathing_policy.cpp",
         build_dir + "test/test_pathing_batch_lookup_policy.cpp",
@@ -190,8 +194,6 @@ if build_tests:
         build_dir + "resonance_runtime_config_policy.cpp",
         build_dir + "test/test_ray_trace_debug_intersect.cpp",
         build_dir + "test/test_physics_ray_batch.cpp",
-        build_dir + "test/test_air_absorption_wet_gating.cpp",
-        build_dir + "test/test_baked_reverb_listener_probe.cpp",
         build_dir + "test/test_reflection_last_good_ir.cpp",
         build_dir + "test/test_reflection_fetch_policy.cpp",
         build_dir + "test/test_reflection_cache_publish_policy.cpp",
@@ -202,10 +204,17 @@ if build_tests:
         test_obj_dir + "resonance_ambisonics_decode_orientation.cpp",
         build_dir + "test/test_probe_exclusion_math.cpp",
         build_dir + "test/test_probe_batch_lock_order.cpp",
+        build_dir + "test/test_reflections_pass_gate.cpp",
+        build_dir + "test/test_reflections_age_policy.cpp",
+        build_dir + "test/test_mix_lateness_policy.cpp",
         build_dir + "test/test_pathing_inputs_policy.cpp",
         build_dir + "test/test_pathing_fetch_policy.cpp",
         build_dir + "test/test_source_handle_policy.cpp",
         build_dir + "test/test_polyphonic_voice_policy.cpp",
+        build_dir + "test/test_owner_link.cpp",
+        build_dir + "test/test_reverb_send_policy.cpp",
+        build_dir + "test/test_player_reflections_policy.cpp",
+        build_dir + "test/test_exit_pin_registry.cpp",
         build_dir + "test/test_source_allocation_policy.cpp",
         build_dir + "test/test_static_export_policy.cpp",
         build_dir + "test/test_export_transform_policy.cpp",
@@ -229,6 +238,7 @@ if build_tests:
         build_dir + "test/test_phonon_worker_policy.cpp",
         build_dir + "test/test_processor_hrtf_policy.cpp",
         build_dir + "test/test_ambisonic_tail_policy.cpp",
+        build_dir + "test/test_ambisonic_input_chunk_policy.cpp",
         build_dir + "test/test_simulator_commit_policy.cpp",
         build_dir + "test/test_playback_lod_policy.cpp",
         build_dir + "test/test_player_debug_hud_policy.cpp",
@@ -236,6 +246,9 @@ if build_tests:
         build_dir + "test/test_playback_attenuation_policy.cpp",
         build_dir + "test/test_sim_distance_attenuation_policy.cpp",
         build_dir + "test/test_source_update_policy.cpp",
+        build_dir + "test/test_spawn_timing.cpp",
+        build_dir + "test/test_resource_pool.cpp",
+        build_dir + "test/test_reflection_effect_recipe.cpp",
         build_dir + "test/test_convolution_bus_policy.cpp",
         build_dir + "test/test_attenuation_callback_policy.cpp",
         build_dir + "test/test_probe_interpolation_policy.cpp",
@@ -243,21 +256,44 @@ if build_tests:
         build_dir + "test/test_reverb_data_point_query_policy.cpp",
         build_dir + "test/test_pathing_deviation_policy.cpp",
         build_dir + "test/test_geometry_transform_coalesce_policy.cpp",
-        build_dir + "test/test_spatial_warmup_policy.cpp",
+        build_dir + "test/test_spatial_output_gate.cpp",
+        build_dir + "test/test_source_simulation_table.cpp",
         build_dir + "test/test_fmod_source_sync_policy.cpp",
+        build_dir + "test/test_latest_value_slot.cpp",
         build_dir + "test/test_dynamic_transform_queue_policy.cpp",
         build_dir + "test/test_playback_input_started_policy.cpp",
         build_dir + "test/test_playback_host_fade_policy.cpp",
         build_dir + "test/test_hrtf_rate_policy.cpp",
+        build_dir + "test/test_reflections_adaptive_budget_policy.cpp",
+        build_dir + "test/test_block_stage_timer.cpp",
+        build_dir + "test/test_block_time_histogram.cpp",
     ]
     test_dir = "build/tests"
     test_exe = env_test.Program(os.path.join(test_dir, "nexus_resonance_tests"), test_sources)
     env.Alias("test", test_exe)
 
+# Standalone raw Steam Audio benchmark: links phonon, no Godot. Opt-in, Linux only.
+build_bench = ARGUMENTS.get("build_bench", "0") == "1"
+bench_exe = None
+if build_bench and env["platform"] == "linux":
+    env_bench = env.Clone()
+    phonon_dir = env_bench.Dir(os.path.join(steam_audio_lib, arch_subdir)).abspath
+    env_bench.Replace(LIBS=["phonon"], LIBPATH=[phonon_dir])
+    bench_linkflags = [f for f in env_bench["LINKFLAGS"] if "--version-script" not in str(f)]
+    env_bench.Replace(LINKFLAGS=bench_linkflags + ["-Wl,-rpath," + phonon_dir])
+    bench_obj_dir = "build/bench/obj/{}/{}/".format(env["platform"], env["target"])
+    env_bench.VariantDir(bench_obj_dir, "src", duplicate=0)
+    bench_exe = env_bench.Program("build/bench/convolution_apply_bench", [bench_obj_dir + "bench/convolution_apply_bench.cpp"])
+    env.Alias("bench", bench_exe)
+elif build_bench:
+    print("build_bench=1 is only supported on Linux; skipping the benchmark.")
+
 # Include compile_commands.json in default target when compiledb=1 (for C++ IntelliSense)
 default_targets = [library]
 if test_exe:
     default_targets.append(test_exe)
+if bench_exe:
+    default_targets.append(bench_exe)
 if env.get("compiledb", False):
     default_targets.append("compiledb")
 Default(default_targets)

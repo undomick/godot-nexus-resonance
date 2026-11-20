@@ -1,17 +1,11 @@
 @tool
 extends RefCounted
 
-## Backup/restore for probe data before bake.
+## Backs up probe data before a bake, on disk for Undo and in memory for rolling back a failed bake.
 ##
-## Disk: 1:1 copies via [DirAccess.copy_absolute] to avoid triggering the custom probe saver,
-## which may call [code]take_over_path[/code] and accidentally redirect future saves to the .bak file.
-##
-## Memory: snapshots of live [ResonanceProbeData] so mid-pipeline failures can roll back in-editor
-## mutations (reflections [code]set_data[/code] before a later pathing/static step fails).
-##
-## Disk backups are keyed by probe-data instance id so Undo still works after
-## [code]_prepare_probe_data_for_bake[/code] migrates [member Resource.resource_path]
-## (legacy audio_data/, scene rename, node rename).
+## Disk backups are plain file copies: saving through the probe saver could call
+## [code]take_over_path[/code] and redirect later saves to the .bak file.
+## They are keyed by instance id because preparing a bake can move [member Resource.resource_path].
 
 const UIStrings = preload("res://addons/nexus_resonance/scripts/resonance_ui_strings.gd")
 const ResonanceEditorDialogs = preload(
@@ -19,13 +13,11 @@ const ResonanceEditorDialogs = preload(
 )
 
 var _backup_paths: Dictionary = {}  # original resource_path -> backup file path
-## Object instance_id (int) -> { original_path: String, backup_path: String }
-var _backup_by_instance_id: Dictionary = {}
-## Object instance_id (int) -> property snapshot Dictionary.
+var _backup_by_instance_id: Dictionary = {}  # instance_id -> { original_path, backup_path }
 var _memory_snapshots: Dictionary = {}
 
 
-## Strips trailing .bak suffixes (e.g. self-heal a path like "foo.res.bak.bak" -> "foo.res").
+## "foo.res.bak.bak" -> "foo.res"
 static func _strip_bak_suffixes(path: String) -> String:
 	var p := path
 	while p.ends_with(".bak"):
@@ -33,8 +25,8 @@ static func _strip_bak_suffixes(path: String) -> String:
 	return p
 
 
-## Resolves disk backup for a probe-data resource. Prefers instance-id (stable across path
-## migration), then falls back to current resource_path. Returns empty Dictionary on miss.
+## Looks up the disk backup by instance id first, which survives path migration, then by
+## resource_path. Returns an empty Dictionary on a miss.
 static func resolve_disk_backup(
 	backup_by_instance_id: Dictionary, backup_by_path: Dictionary, pd: Resource
 ) -> Dictionary:
@@ -121,8 +113,7 @@ func create_backups(volumes: Array[Node], make_disk_copies: bool = true) -> void
 		if not pd.resource_path or pd.resource_path.get_file().length() == 0:
 			continue
 		var original_path: String = _strip_bak_suffixes(pd.resource_path)
-		# Self-heal: if a previous (buggy) bake left resource_path pointing at a .bak file,
-		# point it back to the canonical path before saving anything else.
+		# A resource_path that points at a .bak file would send later saves into the backup.
 		if original_path != pd.resource_path and pd.has_method("take_over_path"):
 			pd.take_over_path(original_path)
 		if not FileAccess.file_exists(original_path):
@@ -159,7 +150,7 @@ func clear_memory_snapshots() -> void:
 func discard_backups() -> void:
 	for backup_path in _backup_paths.values():
 		_remove_backup_file(backup_path)
-	# Instance-id map may reference the same files; path map is the ownership set for delete.
+	# The path map owns the files; the instance-id map points at the same ones.
 	_backup_paths.clear()
 	_backup_by_instance_id.clear()
 	_memory_snapshots.clear()
@@ -168,14 +159,13 @@ func discard_backups() -> void:
 static func _remove_backup_file(backup_path: String) -> void:
 	if FileAccess.file_exists(backup_path):
 		DirAccess.remove_absolute(backup_path)
-	# Companion .uid files may exist from legacy ResourceSaver-based backups.
+	# Backups written with ResourceSaver can leave a .uid file behind.
 	var uid_path := backup_path + ".uid"
 	if FileAccess.file_exists(uid_path):
 		DirAccess.remove_absolute(uid_path)
 
 
-## Restores in-memory probe data from pre-bake snapshots (failed / canceled pipeline).
-## Returns true if any volume was rolled back.
+## Rolls probe data back to the pre-bake snapshots. Returns true if any volume was restored.
 func restore_memory_snapshots(volumes: Array[Node], on_reload: Callable = Callable()) -> bool:
 	var restored_any := false
 	for vol in volumes:
@@ -226,8 +216,6 @@ func restore(
 			pd.copy_from(backup)
 		else:
 			_copy_probe_data_properties(pd, backup)
-		# Keep the post-bake canonical path when prepare migrated resource_path; only fall back
-		# to the pre-bake path when the resource has no path of its own.
 		if pd.has_method("take_over_path"):
 			pd.take_over_path(save_path)
 		var save_err: int = ResourceSaver.save(pd, save_path)
@@ -249,7 +237,7 @@ func restore(
 		ResonanceEditorDialogs.show_warning(editor_interface, UIStrings.WARN_BACKUP_RESTORE_PARTIAL)
 	else:
 		ResonanceEditorDialogs.show_warning(editor_interface, UIStrings.WARN_BACKUP_RESTORE_FAILED)
-	# Only delete backups that were successfully written back; keep the rest for retry.
+	# Backups that failed to restore stay for a retry.
 	for backup_path in restored_backup_paths.keys():
 		_remove_backup_file(str(backup_path))
 	var remaining_by_id: Dictionary = {}
@@ -270,12 +258,8 @@ func restore(
 	on_complete.call()
 
 
-## Loads a disk backup. Text [.tres.bak] works via ResourceLoader; binary [.res.bak] does not
-## (extension is .bak), so restore by copying onto the canonical path then loading that file.
+## Binary .res.bak files have no loader, so every backup is copied onto the canonical path and loaded there.
 static func _load_disk_backup_resource(backup_path: String, save_path: String) -> Resource:
-	var backup = load(backup_path) as Resource
-	if backup != null:
-		return backup
 	if save_path.is_empty() or not FileAccess.file_exists(backup_path):
 		return null
 	var copy_err: int = DirAccess.copy_absolute(backup_path, save_path)
@@ -293,7 +277,7 @@ static func _load_disk_backup_resource(backup_path: String, save_path: String) -
 func _copy_probe_data_properties(dst: Resource, src: Resource) -> void:
 	if dst.has_method("set_data") and src.has_method("get_data"):
 		dst.set_data(src.get_data())
-	# Fallback when copy_from unavailable; keep in sync with ResonanceProbeData storage props.
+	# Keep in sync with the stored properties of ResonanceProbeData.
 	for prop in [
 		"probe_positions",
 		"bake_params_hash",

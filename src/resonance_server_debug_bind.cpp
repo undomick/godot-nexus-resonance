@@ -10,7 +10,6 @@
 
 using namespace godot;
 
-// --- SETTERS ---
 void ResonanceServer::set_debug_occlusion(bool p_enabled) { debug_occlusion.store(p_enabled, std::memory_order_release); }
 bool ResonanceServer::is_debug_occlusion_enabled() const { return debug_occlusion.load(std::memory_order_acquire); }
 void ResonanceServer::set_debug_reflections(bool p_enabled) { debug_reflections.store(p_enabled, std::memory_order_release); }
@@ -137,14 +136,37 @@ void ResonanceServer::reset_pathing_instrumentation() {
     instrumentation_worker_us_sync_fetch_pathing.store(0, std::memory_order_relaxed);
     instrumentation_worker_last_num_rays_.store(0, std::memory_order_relaxed);
     instrumentation_worker_last_adaptive_num_rays_target_.store(0, std::memory_order_relaxed);
-    instrumentation_worker_active_reflection_sources_.store(0, std::memory_order_relaxed);
-    instrumentation_worker_active_realtime_reflection_sources_.store(0, std::memory_order_relaxed);
+    instrumentation_reflections_age_us_last_.store(0, std::memory_order_relaxed);
+    instrumentation_reflections_age_us_max_.store(0, std::memory_order_relaxed);
+    instrumentation_reflections_age_samples_.store(0, std::memory_order_relaxed);
+}
+
+Dictionary ResonanceServer::get_resource_pool_stats() const {
+    const resonance::ResourcePoolStats stats = resource_pool_.get_stats();
+    Dictionary d;
+    d["ready_sources"] = stats.ready_sources;
+    d["ready_reflection_effects"] = stats.ready_effects;
+    d["source_misses"] = static_cast<int64_t>(stats.source_misses);
+    d["reflection_effect_misses"] = static_cast<int64_t>(stats.effect_misses);
+    return d;
 }
 
 Dictionary ResonanceServer::get_simulation_worker_timing() const {
+    // Counters first: writers publish a value before bumping its counter, so a value read after the counter is
+    // never older than it.
+    const auto reflection_passes = static_cast<int64_t>(reflection_pass_count_.load(std::memory_order_acquire));
+    const auto age_samples = static_cast<int64_t>(instrumentation_reflections_age_samples_.load(std::memory_order_acquire));
     Dictionary d;
+    d["reflection_passes"] = reflection_passes;
+    d["reflections_age_samples"] = age_samples;
+    d["reflections_age_us_last"] = static_cast<int64_t>(instrumentation_reflections_age_us_last_.load(std::memory_order_relaxed));
+    d["reflections_age_us_max"] = static_cast<int64_t>(instrumentation_reflections_age_us_max_.load(std::memory_order_relaxed));
     d["us_run_direct"] = (int64_t)instrumentation_worker_us_run_direct.load(std::memory_order_relaxed);
     d["us_run_reflections"] = (int64_t)instrumentation_worker_us_run_reflections.load(std::memory_order_relaxed);
+    d["reflection_passes_skipped"] =
+        static_cast<int64_t>(instrumentation_worker_reflection_passes_skipped_.load(std::memory_order_relaxed));
+    d["pathing_passes_skipped"] =
+        static_cast<int64_t>(instrumentation_worker_pathing_passes_skipped_.load(std::memory_order_relaxed));
     d["us_run_pathing"] = (int64_t)instrumentation_worker_us_run_pathing.load(std::memory_order_relaxed);
     d["us_sync_fetch"] = (int64_t)instrumentation_worker_us_sync_fetch.load(std::memory_order_relaxed);
     d["us_simulator_commit"] = (int64_t)instrumentation_worker_us_simulator_commit.load(std::memory_order_relaxed);
@@ -156,8 +178,11 @@ Dictionary ResonanceServer::get_simulation_worker_timing() const {
     d["worker_last_wake_heavy"] = instrumentation_worker_last_wake_was_heavy.load(std::memory_order_relaxed);
     d["shared_num_rays"] = (int64_t)instrumentation_worker_last_num_rays_.load(std::memory_order_relaxed);
     d["shared_adaptive_num_rays_target"] = (int64_t)instrumentation_worker_last_adaptive_num_rays_target_.load(std::memory_order_relaxed);
-    d["active_reflection_sources"] = (int64_t)instrumentation_worker_active_reflection_sources_.load(std::memory_order_relaxed);
-    d["active_realtime_reflection_sources"] = (int64_t)instrumentation_worker_active_realtime_reflection_sources_.load(std::memory_order_relaxed);
+    std::vector<int32_t> handles;
+    source_manager.get_all_handles(handles);
+    const ReflectionSourceCounts reflection_counts = _count_reflection_source_flags(handles);
+    d["active_reflection_sources"] = static_cast<int64_t>(reflection_counts.active_reflection_sources);
+    d["active_realtime_reflection_sources"] = static_cast<int64_t>(reflection_counts.active_realtime_sources);
     d["reflections_adaptive_extra_interval"] = reflections_adaptive_extra_interval_;
     d["main_us_dynamic_transform_enqueue"] = (int64_t)instrumentation_main_us_dynamic_transform_enqueue_.load(std::memory_order_relaxed);
     d["main_last_dynamic_transform_enqueue_us"] = (int64_t)instrumentation_main_us_last_dynamic_transform_enqueue_.load(std::memory_order_relaxed);
@@ -266,6 +291,8 @@ Dictionary ResonanceServer::get_reverb_bus_instrumentation() const {
     d["mixer_readers"] = (int64_t)reflection_mixer_readers_.load(std::memory_order_relaxed);
     d["mixer_release_deferred_count"] = (int64_t)reflection_mixer_release_deferred_.load(std::memory_order_relaxed);
     d["source_flush_try_lock_fail"] = (int64_t)instrumentation_source_flush_try_lock_fail_.load(std::memory_order_relaxed);
+    d["direct_passes_during_reflections"] =
+        static_cast<int64_t>(instrumentation_direct_passes_during_reflections_.load(std::memory_order_relaxed));
     d["source_update_skip_unchanged"] = (int64_t)instrumentation_source_update_skip_unchanged_.load(std::memory_order_relaxed);
     d["attenuation_callback_skip_unchanged"] =
         (int64_t)instrumentation_attenuation_callback_skip_unchanged_.load(std::memory_order_relaxed);
@@ -404,8 +431,9 @@ void ResonanceServer::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_version"), &ResonanceServer::get_version);
     ClassDB::bind_method(D_METHOD("is_initialized"), &ResonanceServer::is_initialized);
     ClassDB::bind_method(D_METHOD("is_simulating"), &ResonanceServer::is_simulating);
+    ClassDB::bind_method(D_METHOD("get_global_triangle_count"), &ResonanceServer::get_global_triangle_count);
     ClassDB::bind_method(D_METHOD("is_spatial_audio_output_ready"), &ResonanceServer::is_spatial_audio_output_ready);
-    ClassDB::bind_method(D_METHOD("reset_spatial_audio_warmup_passes"), &ResonanceServer::reset_spatial_audio_warmup_passes);
+    ClassDB::bind_method(D_METHOD("is_source_spatial_output_ready", "handle"), &ResonanceServer::is_source_spatial_output_ready);
     ClassDB::bind_method(D_METHOD("arm_spatial_audio_output_gate"), &ResonanceServer::arm_spatial_audio_output_gate);
     ClassDB::bind_method(D_METHOD("get_sample_rate"), &ResonanceServer::get_sample_rate);
     ClassDB::bind_method(D_METHOD("get_audio_frame_size"), &ResonanceServer::get_audio_frame_size);
@@ -433,7 +461,6 @@ void ResonanceServer::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_source_occlusion_linear_gain", "handle"), &ResonanceServer::get_source_occlusion_linear_gain);
     // TODO: enqueue_source_update batching should match ResonancePlayer defer path.
 
-    // Probes
     ClassDB::bind_method(D_METHOD("generate_manual_grid", "tr", "ext", "sp", "generation_type", "height_above_floor"),
                          &ResonanceServer::generate_manual_grid, DEFVAL(2), DEFVAL(1.5));
     ClassDB::bind_method(D_METHOD("generate_probes_scene_aware", "volume_transform", "extents", "spacing", "generation_type", "height_above_floor"),
@@ -469,6 +496,9 @@ void ResonanceServer::_bind_methods() {
     ClassDB::bind_method(D_METHOD("export_static_scene_to_asset", "scene_root", "path"), &ResonanceServer::export_static_scene_to_asset);
     ClassDB::bind_method(D_METHOD("export_static_scene_to_obj", "scene_root", "file_base_name"), &ResonanceServer::export_static_scene_to_obj);
     ClassDB::bind_method(D_METHOD("get_static_scene_hash", "scene_root"), &ResonanceServer::get_static_scene_hash);
+    ClassDB::bind_method(D_METHOD("build_static_scene_export", "scene_root", "skip_if_hash"), &ResonanceServer::build_static_scene_export,
+                         DEFVAL(0));
+    ClassDB::bind_method(D_METHOD("save_geometry_asset", "asset", "path"), &ResonanceServer::save_geometry_asset);
     ClassDB::bind_method(D_METHOD("get_geometry_asset_hash", "asset"), &ResonanceServer::get_geometry_asset_hash);
     ClassDB::bind_method(D_METHOD("cancel_reflections_bake"), &ResonanceServer::cancel_reflections_bake);
     ClassDB::bind_method(D_METHOD("cancel_pathing_bake"), &ResonanceServer::cancel_pathing_bake);
@@ -494,7 +524,6 @@ void ResonanceServer::_bind_methods() {
     ClassDB::bind_method(D_METHOD("clear_pathing_deviation_callback"), &ResonanceServer::clear_pathing_deviation_callback);
     ClassDB::bind_method(D_METHOD("is_pathing_deviation_custom_enabled"), &ResonanceServer::is_pathing_deviation_custom_enabled);
 
-    // Bind Setter/Getters
     ClassDB::bind_method(D_METHOD("set_debug_occlusion", "p_enabled"), &ResonanceServer::set_debug_occlusion);
     ClassDB::bind_method(D_METHOD("is_debug_occlusion_enabled"), &ResonanceServer::is_debug_occlusion_enabled);
 
@@ -527,14 +556,16 @@ void ResonanceServer::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_perspective_correction_factor", "p_factor"), &ResonanceServer::set_perspective_correction_factor);
     ClassDB::bind_method(D_METHOD("get_perspective_correction_factor"), &ResonanceServer::get_perspective_correction_factor);
     ClassDB::bind_method(D_METHOD("get_reflection_type"), &ResonanceServer::get_reflection_type);
+    ClassDB::bind_method(D_METHOD("is_listener_reverb_enabled"), &ResonanceServer::is_listener_reverb_enabled);
+    ClassDB::bind_method(D_METHOD("get_listener_reverb_source_handle"), &ResonanceServer::get_listener_reverb_source_handle);
     ClassDB::bind_method(D_METHOD("get_realtime_rays"), &ResonanceServer::get_realtime_rays);
     ClassDB::bind_method(D_METHOD("get_ambisonic_order"), &ResonanceServer::get_ambisonic_order);
-    ClassDB::bind_method(D_METHOD("get_default_reflections_mode"), &ResonanceServer::get_default_reflections_mode);
     ClassDB::bind_method(D_METHOD("get_reverb_bus_instrumentation"), &ResonanceServer::get_reverb_bus_instrumentation);
     ClassDB::bind_method(D_METHOD("reset_reverb_bus_instrumentation"), &ResonanceServer::reset_reverb_bus_instrumentation);
     ClassDB::bind_method(D_METHOD("get_pathing_instrumentation"), &ResonanceServer::get_pathing_instrumentation);
     ClassDB::bind_method(D_METHOD("reset_pathing_instrumentation"), &ResonanceServer::reset_pathing_instrumentation);
     ClassDB::bind_method(D_METHOD("get_simulation_worker_timing"), &ResonanceServer::get_simulation_worker_timing);
+    ClassDB::bind_method(D_METHOD("get_resource_pool_stats"), &ResonanceServer::get_resource_pool_stats);
     ClassDB::bind_method(D_METHOD("get_active_source_count"), &ResonanceServer::get_active_source_count);
     ClassDB::bind_method(D_METHOD("get_active_probe_batch_count"), &ResonanceServer::get_active_probe_batch_count);
     ClassDB::bind_method(D_METHOD("get_source_lifecycle_epoch"), &ResonanceServer::get_source_lifecycle_epoch);
@@ -542,7 +573,6 @@ void ResonanceServer::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_convolution_audio_timing"), &ResonanceServer::get_convolution_audio_timing);
     ClassDB::bind_method(D_METHOD("get_simulation_tracer_profile"), &ResonanceServer::get_simulation_tracer_profile);
 
-    // Properties
     ADD_PROPERTY(PropertyInfo(Variant::BOOL, "debug_occlusion"), "set_debug_occlusion", "is_debug_occlusion_enabled");
     ADD_PROPERTY(PropertyInfo(Variant::BOOL, "debug_reflections"), "set_debug_reflections", "is_debug_reflections_enabled");
     ADD_PROPERTY(PropertyInfo(Variant::BOOL, "debug_pathing"), "set_debug_pathing", "is_debug_pathing_enabled");

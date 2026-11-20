@@ -1,6 +1,6 @@
 extends RefCounted
 
-## Connects Nexus Coda event voices to ResonanceServer source handles (Option A).
+## Connects Nexus Coda event voices to ResonanceServer source handles.
 ## Applies occlusion/transmission/distance as volume_db on Coda's AudioStreamPlayer pool.
 
 const VoiceSyncScript := preload(
@@ -11,7 +11,7 @@ const _POS_EPS := 1e-4
 
 var _coda: Node = null
 var _runtime: Node = null
-var _active: Dictionary = {}  # coda_handle_id -> Dictionary
+var _active: Dictionary = {}  # coda handle id -> voice entry
 var _warned_missing_coda: bool = false
 
 
@@ -49,8 +49,8 @@ func is_active() -> bool:
 	return _coda != null
 
 
-## Drop local Resonance handles without destroy_source_handle (server reinit already freed IPLSources;
-## IDs may already be recycled by ResonancePlayer / other clients).
+## Drops the local source handles without destroying them: the reinit already freed the sources,
+## and their IDs may already belong to other clients.
 func invalidate_sources_after_reinit() -> void:
 	for key in _active.keys():
 		var handle_id: int = int(key)
@@ -151,7 +151,7 @@ func _sync_entry(handle_id: int) -> void:
 	if not VoiceSyncScript.handle_matches_lifecycle_epoch(
 		res_handle, epoch, VoiceSyncScript.lifecycle_epoch()
 	):
-		# Stale after reinit before reload_sources_after_reinit ran; drop without destroy.
+		# Handle from before a reinit: its ID may be reused, so drop it without destroying.
 		_drop_entry_without_destroy(handle_id)
 		return
 	var pos: Vector3 = emitter.global_position
@@ -282,9 +282,9 @@ func _coda_handle_id(handle: Variant) -> int:
 		return int(handle.id)
 	return handle.get_instance_id()
 
-## TODO: Timeline voices — one Resonance handle per lane player in timeline dispatchers.
-## TODO: BLEND siblings — separate source handle per parallel graph voice.
-## TODO: Map occlusion/transmission to Coda Get-Properties (handle.get_property via runtime).
-## TODO: Wire Coda wet sends to Resonance reverb bus activator (global room tone).
-## TODO: Event metadata — min/max distance, directivity from CodaBrowserNode.
-## TODO: Phase B — route spatial events through ResonancePlayer DSP instead of volume_db hack.
+# TODO: Timeline voices - one source handle per lane player in timeline dispatchers.
+# TODO: BLEND siblings - separate source handle per parallel graph voice.
+# TODO: Map occlusion/transmission to Coda Get-Properties (handle.get_property via runtime).
+# TODO: Wire Coda wet sends to the reverb bus activator.
+# TODO: Event metadata - min/max distance and directivity from CodaBrowserNode.
+# TODO: Route spatial events through ResonancePlayer DSP instead of setting volume_db.

@@ -14,14 +14,14 @@ class ResonanceProbeData : public Resource {
 
   private:
     PackedByteArray internal_data;
-    PackedVector3Array probe_positions; // Stored at bake time for visualization after restart
+    PackedVector3Array probe_positions; // Saved at bake time so probes can be drawn after a restart
     uint32_t bake_params_hash = 0;
     uint32_t pathing_params_hash = 0;         // 0 = not baked
-    uint32_t static_scene_params_hash = 0;    // Hash of static geometry asset used at bake; 0 = legacy
+    uint32_t static_scene_params_hash = 0;    // Static geometry asset used at bake; 0 = not recorded
     uint32_t static_source_params_hash = 0;   // 0 = not baked
     uint32_t static_listener_params_hash = 0; // 0 = not baked
-    int baked_reflection_type = -1;           // 0=Convolution, 1=Parametric, 2=Hybrid; -1=legacy (both baked)
-    int baked_ambisonics_order = -1;          // HOA order used for baked convolution IRs; -1=legacy (assume default)
+    int baked_reflection_type = -1;           // kBakedReflection*; -1 = unknown, accepted by every runtime type
+    int baked_ambisonics_order = -1;          // Order of the baked convolution IRs; -1 = unknown, default assumed
 
   protected:
     static void _bind_methods();
@@ -30,7 +30,6 @@ class ResonanceProbeData : public Resource {
     ResonanceProbeData();
     ~ResonanceProbeData();
 
-    // Standard Setters/Getters for Godot serialization
     void set_data(const PackedByteArray& p_data);
     PackedByteArray get_data() const;
 
@@ -58,24 +57,21 @@ class ResonanceProbeData : public Resource {
     void set_baked_ambisonics_order(int p_order);
     int get_baked_ambisonics_order() const;
 
-    // C++ Helpers for efficient access
-    /// Returns pointer to internal probe data. Valid only during the current call; do not hold across
-    /// set_data() or other mutations – PackedByteArray may reallocate and invalidate the pointer.
+    /// Invalidated by set_data() or any other mutation of the data.
     const uint8_t* get_data_ptr() const;
     int64_t get_size() const;
 
-    /// Returns bake layer statistics for debug/editor. Dictionary with keys:
-    /// "total_size" (int), "layers" (Array of {"type": String, "baked": bool, ...}).
+    /// Keys: "total_size" (int), "layers" (Array of {"type": String, "baked": bool, ...}).
     Dictionary get_bake_layer_info() const;
 };
 
-/// Returns [code]res[/code] or [code]tres[/code] from ProjectSettings [code]nexus/resonance/export/probe_data_format[/code].
+/// "res" or "tres", from the export/probe_data_format project setting.
 String resonance_probe_data_save_extension_from_settings();
 
-/// Bake output root from Project Settings (trailing slash). Default [code]res://resonance_data/[/code].
+/// With trailing slash. Default res://resonance_data/.
 String resonance_bake_output_root_from_settings();
 
-/// [code]{{root}}batches/[/code] under the bake output root (trailing slash).
+/// batches/ under the bake output root, with trailing slash.
 String resonance_bake_batches_dir_from_settings();
 
 } // namespace godot

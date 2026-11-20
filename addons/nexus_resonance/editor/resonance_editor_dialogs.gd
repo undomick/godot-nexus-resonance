@@ -1,7 +1,7 @@
 @tool
 extends RefCounted
 
-## Dialogs and toasts for the addon (consistent with editor theme).
+## Dialogs and toasts in the editor theme.
 
 const UIStrings = preload("res://addons/nexus_resonance/scripts/resonance_ui_strings.gd")
 
@@ -16,7 +16,7 @@ static func get_icon(base: Control, icon_path: String, fallback_icon: String) ->
 	return base.get_theme_icon(fallback_icon, "EditorIcons")
 
 
-## Modal error (blocking).
+## Error dialog titled "Bake failed" unless [param title] is set.
 static func show_critical(
 	editor_interface: EditorInterface, message: String, title: String = ""
 ) -> void:
@@ -36,7 +36,7 @@ static func show_info(message: String) -> void:
 	print_rich("[color=cyan]Nexus Resonance:[/color] " + message)
 
 
-## Error dialog; optional cause, solution, doc link button.
+## Error dialog with optional cause, solution and documentation link.
 static func show_error_dialog(
 	editor_interface: EditorInterface,
 	title: String,
@@ -62,7 +62,7 @@ static func show_error_dialog(
 	dialog.dialog_text = full_text
 	dialog.theme = editor_interface.get_editor_theme()
 	dialog.min_size = Vector2i(420, 0)
-	# Non-exclusive: progress UI or a prior dialog must not fight Godot's single exclusive child.
+	# Godot allows one exclusive child; the progress dialog or an earlier dialog may hold it.
 	dialog.exclusive = false
 	dialog.confirmed.connect(dialog.queue_free)
 	dialog.close_requested.connect(dialog.queue_free)
@@ -144,7 +144,7 @@ static func show_confirm_dialog(
 	dialog.get_ok_button().call_deferred("grab_focus")
 
 
-## Backup prompt; [param on_confirmed] gets [code]cancel_requested[/code] (true = cancel/close).
+## Backup prompt. [param on_confirmed] receives true if the user canceled or closed it.
 static func show_backup_confirm_dialog(
 	editor_interface: EditorInterface, on_confirmed: Callable
 ) -> void:

@@ -3,20 +3,14 @@
 
 namespace resonance {
 
-/// Audio thread: passthrough (W-channel dry) until main-thread prewarm/reinit completes.
-inline bool ambisonic_audio_should_passthrough(bool initialized, bool steam_context_stale, bool processor_config_stale,
-                                               bool processor_matches) {
-    return !initialized || steam_context_stale || processor_config_stale || !processor_matches;
+// The audio thread may touch the processor only while no stale flag is set. Only the audio thread sets a flag,
+// and it stops touching the processor for the rest of the block once it has; main clears the flag when done.
+inline bool ambisonic_audio_owns_processor(bool initialized, bool steam_context_stale, bool processor_config_stale) {
+    return initialized && !steam_context_stale && !processor_config_stale;
 }
 
-/// Main thread: reinit ambisonic IPL effects when config drifted or audio flagged stale.
-inline bool ambisonic_main_should_reinit_processor(bool initialized, bool processor_config_stale, bool processor_matches) {
-    return initialized && (processor_config_stale || !processor_matches);
-}
-
-/// Break ambisonic pump when decode cannot consume input (avoid busy-loop on full input ring).
-inline bool ambisonic_pump_should_break(bool processor_matches, bool spatial_output_ready) {
-    return !processor_matches || !spatial_output_ready;
+inline bool ambisonic_main_should_reinit_processor(bool initialized, bool processor_config_stale) {
+    return initialized && processor_config_stale;
 }
 
 } // namespace resonance

@@ -34,9 +34,8 @@ void IPLCALL log_callback(IPLLogLevel level, const char* message) {
             UtilityFunctions::print(msg);
     }
 }
-/// Valve Steam Audio: Radeon Rays and TrueAudio Next are supported on 64-bit Windows only.
-/// Avoid OpenCL device setup on Linux, macOS, Android, iOS, etc. to match that matrix and reduce driver crash risk.
-/// For `iplOpenCLDeviceCreateFromExisting` / Linux GPU experiments, see wiki ResonanceRuntime-and-RuntimeConfig.md.
+// Steam Audio supports Radeon Rays and TrueAudio Next on 64-bit Windows only; elsewhere OpenCL setup is
+// skipped, which also avoids driver crashes.
 static bool opencl_radeon_tan_supported_host_os() {
 #if defined(_WIN32) && (defined(_M_X64) || defined(_M_AMD64) || defined(__x86_64__) || defined(__amd64__))
     return true;
@@ -46,6 +45,17 @@ static bool opencl_radeon_tan_supported_host_os() {
 }
 
 } // namespace
+
+IPLContext acquire_export_context(IPLContext live_context) {
+    if (live_context)
+        return iplContextRetain(live_context);
+    IPLContextSettings settings{};
+    settings.version = STEAMAUDIO_VERSION;
+    IPLContext context = nullptr;
+    if (iplContextCreate(&settings, &context) != IPL_STATUS_SUCCESS)
+        return nullptr;
+    return context;
+}
 
 ResonanceSteamAudioContext::~ResonanceSteamAudioContext() {
     shutdown();
@@ -57,13 +67,11 @@ bool ResonanceSteamAudioContext::init(ResonanceSteamAudioContextConfig& config) 
     ctxSettings.logCallback = log_callback;
     ctxSettings.allocateCallback = nullptr;
     ctxSettings.freeCallback = nullptr;
-    // Phonon: SSE2=0, SSE4=1, AVX=2, AVX2=3, AVX512=4.
-    // config 0=highest (AVX512), 4=lowest (SSE2). Maps to 4 - config.
+    // Phonon counts SSE2=0 up to AVX512=4; the config counts the other way, 0 = highest.
     ctxSettings.simdLevel = (config.context_simd_level >= 0 && config.context_simd_level <= 4)
                                 ? static_cast<IPLSIMDLevel>(4 - config.context_simd_level)
                                 : IPL_SIMDLEVEL_AVX512;
-    // Respect config: validation can produce warnings (reverbTimes=0, eqCoeffs>1) from Steam Audio
-    // simulation edge cases. Set context_validation=true in config when debugging API misuse.
+    // Validation warns on harmless simulation edge cases (reverbTimes=0, eqCoeffs>1), so it stays opt-in.
     bool use_validation = config.context_validation;
     ctxSettings.flags = use_validation ? static_cast<IPLContextFlags>(IPL_CONTEXTFLAGS_VALIDATION) : static_cast<IPLContextFlags>(0);
 
@@ -121,8 +129,8 @@ bool ResonanceSteamAudioContext::init(ResonanceSteamAudioContextConfig& config) 
         return false;
     }
 
-    // OpenCL/TAN init may crash on systems without AMD GPU (TAN) or compatible OpenCL. SEH (__try/__except)
-    // is used on Windows/MSVC to catch crashes and fall back to Convolution/Default.
+    // OpenCL/TAN init can crash without an AMD GPU or compatible OpenCL; on MSVC, SEH catches that and
+    // falls back to Convolution/Default.
     const bool wants_opencl_features = (config.scene_type == 2) || (config.reflection_type == resonance::kReflectionTan);
     if (wants_opencl_features && !opencl_radeon_tan_supported_host_os()) {
         if (config.scene_type == 2) {
@@ -181,7 +189,7 @@ bool ResonanceSteamAudioContext::init(ResonanceSteamAudioContextConfig& config) 
                         tanSettings.frameSize = config.frame_size;
                         tanSettings.irSize = (IPLint32)(config.max_reverb_duration * (float)config.sample_rate);
                         tanSettings.order = config.ambisonic_order;
-                        tanSettings.maxSources = config.max_simulation_sources;
+                        tanSettings.maxSources = config.max_simulation_sources + resonance::kListenerReverbSourceSlots;
                         IPLerror tan_status = iplTrueAudioNextDeviceCreate(opencl_device_, &tanSettings, &tan_device_);
                         if (tan_status != IPL_STATUS_SUCCESS || !tan_device_) {
                             ResonanceLog::error("ResonanceSteamAudioContext: iplTrueAudioNextDeviceCreate failed (status=" + String::num(tan_status) + ").");

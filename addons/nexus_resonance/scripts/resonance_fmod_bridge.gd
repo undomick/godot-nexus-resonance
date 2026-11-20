@@ -16,7 +16,7 @@ var _bridge: Object = null
 
 
 ## Initialize the FMOD bridge. Call after ResonanceServer and FMOD are ready.
-## Returns true on success. Creates C++ bridge instance on first call (lazy init).
+## Returns true on success.
 func init_bridge() -> bool:
 	if (
 		_bridge == null

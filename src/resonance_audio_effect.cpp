@@ -5,6 +5,7 @@
 #include "resonance_server.h"
 #include <algorithm>
 #include <chrono>
+#include <godot_cpp/classes/audio_server.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 #include <mutex>
@@ -12,7 +13,6 @@
 
 using namespace godot;
 
-// One warning if Godot's frame_count != server audio_frame_size (avoids log spam).
 static bool s_frame_size_mismatch_warned = false;
 
 namespace {
@@ -50,28 +50,14 @@ void ResonanceAudioEffectInstance::try_prewarm_all_live_instances() {
     }
 }
 
-// Copy prior bus chain into `dst` (IPL mix_return: dry/chain first, then add wet). `src` may alias `dst` or be null (silence).
-static void copy_bus_input_to_dst(const void* src_buffer, AudioFrame* dst_buffer, int32_t frame_count) {
-    if (!dst_buffer || frame_count <= 0)
-        return;
-    if (src_buffer == static_cast<const void*>(dst_buffer)) {
-        return;
-    }
-    if (src_buffer) {
-        const AudioFrame* src = static_cast<const AudioFrame*>(src_buffer);
-        for (int32_t i = 0; i < frame_count; i++) {
-            dst_buffer[i] = src[i];
-        }
-        return;
-    }
+static void write_silence(AudioFrame* dst_buffer, int32_t frame_count) {
     for (int32_t i = 0; i < frame_count; i++) {
         dst_buffer[i].left = 0.0f;
         dst_buffer[i].right = 0.0f;
     }
 }
 
-// Reinit: server unregisters this client under `AudioServer` lock before `iplContextRelease`.
-
+// Called on reinit under the AudioServer lock, before iplContextRelease.
 void ResonanceAudioEffectInstance::ipl_context_reinit_cleanup(void* userdata) {
     if (!userdata)
         return;
@@ -82,6 +68,7 @@ void ResonanceAudioEffectInstance::_reset_ipl_mixer_for_context_lifecycle() {
     if (ResonanceServer* srv = ResonanceServer::get_singleton())
         srv->unregister_ipl_context_client(this);
     processor.cleanup();
+    listener_reverb_.cleanup();
     initialized_processor = false;
 }
 
@@ -113,6 +100,8 @@ bool ResonanceAudioEffectInstance::try_prewarm_processor() {
         ResonanceLog::error("ResonanceAudioEffect: MixerProcessor initialization failed. Reverb will be silent until init succeeds.");
         return false;
     }
+    if (!listener_reverb_.initialize(*srv))
+        ResonanceLog::error("ResonanceAudioEffect: listener reverb init failed. Listener reverb will be silent.");
     srv->register_ipl_context_client(this, &ResonanceAudioEffectInstance::ipl_context_reinit_cleanup);
     initialized_processor = true;
     return true;
@@ -121,7 +110,6 @@ bool ResonanceAudioEffectInstance::try_prewarm_processor() {
 void ResonanceAudioEffectInstance::_process(const void* src_buffer, AudioFrame* dst_buffer, int32_t frame_count) {
     ResonanceServer* srv = ResonanceServer::get_singleton();
 
-    // Exit, teardown, or pre-mixer state: output silence (recheck before heavy work).
     if (!srv || !srv->is_initialized() || ResonanceServer::ipl_audio_teardown_active()) {
         for (int i = 0; i < frame_count; i++) {
             dst_buffer[i].left = 0.0f;
@@ -130,12 +118,12 @@ void ResonanceAudioEffectInstance::_process(const void* src_buffer, AudioFrame* 
         return;
     }
 
-    // Context exists before reflection mixer is created - passthrough chain only (not an error path).
+    // The context can exist before the reflection mixer does; that is a normal startup state.
     {
         const int rt_init = srv->get_reflection_type();
         if ((rt_init == resonance::kReflectionConvolution || rt_init == resonance::kReflectionTan) &&
             srv->get_reflection_mixer_handle() == nullptr) {
-            copy_bus_input_to_dst(src_buffer, dst_buffer, frame_count);
+            write_silence(dst_buffer, frame_count);
             return;
         }
     }
@@ -143,12 +131,12 @@ void ResonanceAudioEffectInstance::_process(const void* src_buffer, AudioFrame* 
     int server_frame_size = srv->get_audio_frame_size();
 
     if (!initialized_processor) {
-        // Main-thread try_prewarm_processor only - no IPL create here. Passthrough bus chain (no mixer wet yet).
-        copy_bus_input_to_dst(src_buffer, dst_buffer, frame_count);
+        // IPL objects are created only by try_prewarm_processor on the main thread.
+        write_silence(dst_buffer, frame_count);
         return;
     }
 
-    // Mismatch → possible crackle/overrun; Auto frame size can request reinit.
+    // A mismatched block size can crackle or overrun.
     if (frame_count != server_frame_size) {
         if (srv->get_audio_frame_size_was_auto()) {
             srv->request_reinit_with_frame_size(frame_count);
@@ -177,14 +165,8 @@ void ResonanceAudioEffectInstance::_process(const void* src_buffer, AudioFrame* 
         }
         return;
     }
-    // Parametric/Hybrid: no shared mixer (wet per source). Null mixer here: rare ordering/teardown - passthrough only.
-    if (!mixer) {
-        copy_bus_input_to_dst(src_buffer, dst_buffer, frame_count);
-        srv->update_reverb_effect_instrumentation(false, true, frame_count, 0.0f, 0.0f, 0.0f, 0.0f);
-        return;
-    }
-
-    copy_bus_input_to_dst(src_buffer, dst_buffer, frame_count);
+    listener_reverb_.capture_input(static_cast<const AudioFrame*>(src_buffer), frame_count);
+    write_silence(dst_buffer, frame_count);
 
     if (ResonanceServer::ipl_audio_teardown_active()) {
         for (int i = 0; i < frame_count; i++) {
@@ -196,9 +178,14 @@ void ResonanceAudioEffectInstance::_process(const void* src_buffer, AudioFrame* 
 
     IPLCoordinateSpace3 listener_coords = srv->get_current_listener_coords();
 
-    // One pull: `iplReflectionMixerApply` + decode; hold-last in `MixerProcessor` if no source fed this tick.
+    // The listener reverb feeds the mixer before the mixer return pulls it.
     const auto bus_t0 = std::chrono::steady_clock::now();
-    bool success = processor.process_mixer_return(mixer, listener_coords, dst_buffer, frame_count);
+    listener_reverb_.apply(*srv, dst_buffer, frame_count, mixer, listener_coords);
+    const int reflection_type = srv->get_reflection_type();
+    const bool feeds_mixer =
+        reflection_type == resonance::kReflectionConvolution || reflection_type == resonance::kReflectionTan;
+    // Parametric and Hybrid wet is already in dst.
+    bool success = !feeds_mixer || (mixer && processor.process_mixer_return(mixer, listener_coords, dst_buffer, frame_count));
     const auto bus_t1 = std::chrono::steady_clock::now();
     srv->record_convolution_reverb_bus_usec(static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::microseconds>(bus_t1 - bus_t0).count()));
@@ -209,7 +196,7 @@ void ResonanceAudioEffectInstance::_process(const void* src_buffer, AudioFrame* 
     float rms_post_gain = 0.0f;
     int32_t frames_written = 0;
     if (success) {
-        // Never `iplReflectionMixerReset` here - would clear state between source Apply and bus Apply (choppy wet).
+        // Never call iplReflectionMixerReset here: it clears state between source and bus Apply and chops the wet.
         frames_written = frame_count;
 
         float gain = 1.0f;
@@ -217,7 +204,6 @@ void ResonanceAudioEffectInstance::_process(const void* src_buffer, AudioFrame* 
             gain = static_cast<float>(UtilityFunctions::db_to_linear(effect_ref->get_gain_db()));
         }
 
-        // Pre-gain RMS/peak (decoded wet as written by MixerProcessor; bus input was already copied into dst_buffer).
         double sum_sq_pre = 0.0;
         for (int i = 0; i < frame_count; i++) {
             const float l = resonance::sanitize_audio_float(dst_buffer[i].left);
@@ -233,7 +219,7 @@ void ResonanceAudioEffectInstance::_process(const void* src_buffer, AudioFrame* 
             rms_pre_gain = static_cast<float>(std::sqrt(std::max(0.0, mean_sq)));
         }
 
-        // Gain + sanitize. (No hard clip: host mixer chains typically clip/limit later.)
+        // No hard clip: the host mix chain limits later.
         double sum_sq_post = 0.0;
         for (int i = 0; i < frame_count; i++) {
             const float left = resonance::sanitize_audio_float(dst_buffer[i].left * gain);
@@ -252,7 +238,8 @@ void ResonanceAudioEffectInstance::_process(const void* src_buffer, AudioFrame* 
         }
     }
 
-    // Loud → ~silent in one block: linear fade out (Godot can drop the last fed block vs. IPL timing). Ignore slow decay (threshold gap).
+    // A drop from loud to silent within one block clicks; Godot can drop the last fed block against IPL timing.
+    // The gap between the thresholds keeps slow decays out.
     const float prev_loud_thr = 1.0e-2f;
     const float now_silent_thr = 1.0e-7f;
     if (frames_written > 0 && prev_peak_ >= prev_loud_thr && peak < now_silent_thr) {
@@ -276,7 +263,7 @@ void ResonanceAudioEffectInstance::_process(const void* src_buffer, AudioFrame* 
     srv->update_reverb_effect_instrumentation(false, success, frames_written, peak, rms_post_gain, peak_pre_gain, rms_pre_gain);
 }
 
-ResonanceAudioEffect::ResonanceAudioEffect() { set_name("Resonance Reverb"); } // Audio bus strip label
+ResonanceAudioEffect::ResonanceAudioEffect() { set_name("Resonance Reverb"); }
 
 Ref<AudioEffectInstance> ResonanceAudioEffect::_instantiate() {
     Ref<ResonanceAudioEffectInstance> ins;
@@ -294,4 +281,17 @@ void ResonanceAudioEffect::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_gain_db", "p_db"), &ResonanceAudioEffect::set_gain_db);
     ClassDB::bind_method(D_METHOD("get_gain_db"), &ResonanceAudioEffect::get_gain_db);
     ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "gain_db", PROPERTY_HINT_RANGE, "-60,24,0.1,suffix:dB"), "set_gain_db", "get_gain_db");
+}
+
+void godot::detach_resonance_bus_effects() {
+    AudioServer* audio = AudioServer::get_singleton();
+    if (!audio)
+        return;
+    for (int bus = 0; bus < audio->get_bus_count(); bus++) {
+        for (int idx = audio->get_bus_effect_count(bus) - 1; idx >= 0; idx--) {
+            Ref<AudioEffect> effect = audio->get_bus_effect(bus, idx);
+            if (effect.is_valid() && Object::cast_to<ResonanceAudioEffect>(effect.ptr()))
+                audio->remove_bus_effect(bus, idx);
+        }
+    }
 }

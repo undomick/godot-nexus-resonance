@@ -1,4 +1,5 @@
 #include "resonance_ambisonic_player.h"
+#include "resonance_ambisonic_input_chunk_policy.h"
 #include "resonance_ambisonic_processor_thread_policy.h"
 #include "resonance_ambisonics_decode_orientation.h"
 #include "resonance_constants.h"
@@ -14,6 +15,7 @@
 #include <godot_cpp/classes/node.hpp>
 #include <godot_cpp/classes/node3d.hpp>
 #include <godot_cpp/classes/object.hpp>
+#include <godot_cpp/classes/time.hpp>
 #include <godot_cpp/classes/viewport.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/basis.hpp>
@@ -60,7 +62,7 @@ void fill_ambisonics_bed_local_to_world_row16(const Transform3D& src_world, floa
 }
 
 void basis_to_ambisonics_listener_rotation_row16(const Basis& rotary_world_to_listener, float L[16]) {
-    // Caller zeroes matrix; row-major 4×4 with columns stored at indices (0,4,8), (1,5,9), (2,6,10).
+    // Caller zeroes L. Basis column i goes to elements 4i..4i+2.
     for (int col = 0; col < 3; ++col) {
         Vector3 c = rotary_world_to_listener.get_column(col);
         L[0 + col * 4 + 0] = c.x;
@@ -152,13 +154,11 @@ AmbisonicPlaybackParameters build_ambisonic_params_from_player(ResonanceAmbisoni
 } // namespace
 
 ResonanceAmbisonicInternalPlayback::ResonanceAmbisonicInternalPlayback() {
-    params_next.listener_orientation.ahead = {0, 0, -1};
-    params_next.listener_orientation.up = {0, 1, 0};
-    params_next.listener_orientation.right = {1, 0, 0};
-    params_next.listener_orientation.origin = {0, 0, 0};
-    params_current = params_next;
-
-    // Buffers initialized in set_channel_playbacks when order is known
+    params_current.listener_orientation.ahead = {0, 0, -1};
+    params_current.listener_orientation.up = {0, 1, 0};
+    params_current.listener_orientation.right = {1, 0, 0};
+    params_current.listener_orientation.origin = {0, 0, 0};
+    params_latest_ = params_current;
 }
 
 ResonanceAmbisonicInternalPlayback::~ResonanceAmbisonicInternalPlayback() { _cleanup_steam_audio(); }
@@ -183,7 +183,6 @@ void ResonanceAmbisonicInternalPlayback::set_channel_playbacks(const Array& play
     }
     channel_mix_bufs_.resize(num_channels);
 
-    // Resize buffers
     size_t in_capacity = resonance::kRingBufferCapacity * num_channels;
     input_ring.resize(in_capacity);
 
@@ -191,19 +190,17 @@ void ResonanceAmbisonicInternalPlayback::set_channel_playbacks(const Array& play
     output_ring_l.resize(out_capacity);
     output_ring_r.resize(out_capacity);
 
-    temp_interleaved_input.resize(static_cast<size_t>(resonance::kGodotDefaultFrameSize) * static_cast<size_t>(num_channels)); // Resized to frame_size_ in _lazy_init
+    temp_interleaved_input.resize(static_cast<size_t>(resonance::kGodotDefaultFrameSize) * static_cast<size_t>(num_channels)); // Resized to frame_size_ in _lazy_init_steam_audio
 }
 
 void ResonanceAmbisonicInternalPlayback::update_parameters(const AmbisonicPlaybackParameters& p_params) {
-    params_next = p_params;
-    params_dirty.store(true, std::memory_order_release);
+    params_latest_ = p_params;
+    params_slot_.publish(p_params);
 }
 
 void ResonanceAmbisonicInternalPlayback::_sync_params() {
-    if (params_dirty.load(std::memory_order_acquire)) {
-        params_current = params_next;
-        params_dirty.store(false, std::memory_order_release);
-    }
+    if (params_slot_.consume())
+        params_current = params_slot_.front();
 }
 
 bool ResonanceAmbisonicInternalPlayback::_has_pending_output() const {
@@ -224,7 +221,7 @@ void ResonanceAmbisonicInternalPlayback::_cleanup_steam_audio() {
     }
     memset(&sa_out_buffer, 0, sizeof(sa_out_buffer));
     context = nullptr;
-    is_initialized = false;
+    is_initialized.store(false, std::memory_order_release);
     steam_context_stale_.store(false, std::memory_order_release);
     processor_config_stale_.store(false, std::memory_order_release);
 
@@ -233,60 +230,59 @@ void ResonanceAmbisonicInternalPlayback::_cleanup_steam_audio() {
     output_ring_r.clear();
 }
 
-bool ResonanceAmbisonicInternalPlayback::_processor_matches_current_config(ResonanceServer* srv) const {
-    if (!srv || !srv->is_initialized() || !context)
-        return true;
-    const AmbisonicPlaybackParameters& p = params_current;
-    const bool use_rot_eff = ambisonic_needs_rotation_effect(p);
-    return processor.matches_config(ambisonic_order, use_rot_eff, p.apply_hrtf, p.input_is_sn3d, p.apply_output_gain);
+bool ResonanceAmbisonicInternalPlayback::_audio_owns_processor() const {
+    // Flags before is_initialized: main clears the flags only after storing is_initialized = false.
+    const bool steam_context_stale = steam_context_stale_.load(std::memory_order_acquire);
+    const bool processor_config_stale = processor_config_stale_.load(std::memory_order_acquire);
+    return resonance::ambisonic_audio_owns_processor(is_initialized.load(std::memory_order_acquire), steam_context_stale,
+                                                     processor_config_stale);
+}
+
+bool ResonanceAmbisonicInternalPlayback::_processor_matches(const AmbisonicPlaybackParameters& p) const {
+    return processor.matches_config(ambisonic_order, ambisonic_needs_rotation_effect(p), p.apply_hrtf, p.input_is_sn3d,
+                                    p.apply_output_gain);
 }
 
 void ResonanceAmbisonicInternalPlayback::_reinit_ambisonic_processor_on_main(ResonanceServer* srv) {
-    if (!srv || !srv->is_initialized() || !context || !is_initialized)
+    if (!srv || !srv->is_initialized() || !context)
         return;
-    _sync_params();
-    const AmbisonicPlaybackParameters& p = params_current;
-    const bool use_rot_eff = ambisonic_needs_rotation_effect(p);
-    if (processor.matches_config(ambisonic_order, use_rot_eff, p.apply_hrtf, p.input_is_sn3d, p.apply_output_gain)) {
-        processor_config_stale_.store(false, std::memory_order_release);
-        return;
+    // params_current belongs to the audio thread; if params_latest_ differs from it, audio flags again after its next sync.
+    const AmbisonicPlaybackParameters& p = params_latest_;
+    if (!_processor_matches(p)) {
+        processor.cleanup();
+        processor.initialize(context, current_sample_rate, frame_size_, ambisonic_order, ambisonic_needs_rotation_effect(p),
+                             p.apply_hrtf, p.input_is_sn3d, p.apply_output_gain, srv->get_hrtf_handle());
     }
-    processor.cleanup();
-    processor.initialize(context, current_sample_rate, frame_size_, ambisonic_order, use_rot_eff, p.apply_hrtf, p.input_is_sn3d,
-                         p.apply_output_gain, srv->get_hrtf_handle());
     processor_config_stale_.store(false, std::memory_order_release);
 }
 
 bool ResonanceAmbisonicInternalPlayback::prewarm_steam_audio() {
-    if (is_initialized)
+    if (is_initialized.load(std::memory_order_acquire))
         return true;
     _lazy_init_steam_audio();
-    return is_initialized;
+    return is_initialized.load(std::memory_order_acquire);
 }
 
 void ResonanceAmbisonicInternalPlayback::resolve_stale_steam_context_on_main() {
-    // Stale: teardown old IPL. Always retry prewarm when uninitialized (late server
-    // ready, failed first prewarm, or reinit cleanup which clears the stale flag).
+    // Retry prewarm whenever uninitialized: the server came up late, the first prewarm failed, or reinit cleanup ran.
     if (steam_context_stale_.load(std::memory_order_acquire)) {
         _cleanup_steam_audio();
         steam_context_stale_.store(false, std::memory_order_release);
     }
-    if (!is_initialized)
+    if (!is_initialized.load(std::memory_order_acquire))
         prewarm_steam_audio();
-    if (is_initialized) {
-        _sync_params();
-        ResonanceServer* srv = ResonanceServer::get_singleton();
-        if (resonance::ambisonic_main_should_reinit_processor(
-                is_initialized, processor_config_stale_.load(std::memory_order_acquire),
-                _processor_matches_current_config(srv)))
-            _reinit_ambisonic_processor_on_main(srv);
-    }
+    if (resonance::ambisonic_main_should_reinit_processor(is_initialized.load(std::memory_order_acquire),
+                                                          processor_config_stale_.load(std::memory_order_acquire)))
+        _reinit_ambisonic_processor_on_main(ResonanceServer::get_singleton());
 }
 
 void ResonanceAmbisonicInternalPlayback::_lazy_init_steam_audio() {
     // Main-thread only (via prewarm_steam_audio). Do not call from _mix.
     ResonanceServer* srv = ResonanceServer::get_singleton();
     if (!srv || !srv->is_initialized())
+        return;
+    const uint64_t now_msec = Time::get_singleton()->get_ticks_msec();
+    if (now_msec < next_prewarm_retry_msec_)
         return;
 
     current_sample_rate = srv->get_sample_rate();
@@ -296,30 +292,24 @@ void ResonanceAmbisonicInternalPlayback::_lazy_init_steam_audio() {
     int num_channels = resonance::ambisonic_num_channels_for_order(ambisonic_order);
     temp_interleaved_input.resize(static_cast<size_t>(frame_size_) * static_cast<size_t>(num_channels));
 
-    processor.initialize(context, current_sample_rate, frame_size_, ambisonic_order, ambisonic_needs_rotation_effect(params_current),
-                         params_current.apply_hrtf, params_current.input_is_sn3d, params_current.apply_output_gain,
-                         srv->get_hrtf_handle());
+    processor.initialize(context, current_sample_rate, frame_size_, ambisonic_order, ambisonic_needs_rotation_effect(params_latest_),
+                         params_latest_.apply_hrtf, params_latest_.input_is_sn3d, params_latest_.apply_output_gain, srv->get_hrtf_handle());
 
-    // Allocate Output Buffer (Stereo)
-    if (iplAudioBufferAllocate(context, 2, frame_size_, &sa_out_buffer) != IPL_STATUS_SUCCESS) {
-        ResonanceLog::error("ResonanceAmbisonicPlayer: Buffer allocation failed (IPLerror).");
+    if (iplAudioBufferAllocate(context, 2, frame_size_, &sa_out_buffer) != IPL_STATUS_SUCCESS || !sa_out_buffer.data) {
+        ResonanceLog::error("ResonanceAmbisonicPlayer: Output buffer allocation failed; retrying in " +
+                            String::num_uint64(resonance::kPrewarmRetryIntervalMsec) + " ms.");
         processor.cleanup();
-        return;
-    }
-    if (!sa_out_buffer.data) {
-        ResonanceLog::error("ResonanceAmbisonicPlayer: Buffer allocation returned null.");
-        processor.cleanup();
+        next_prewarm_retry_msec_ = now_msec + resonance::kPrewarmRetryIntervalMsec;
         return;
     }
 
-    is_initialized = true;
+    is_initialized.store(true, std::memory_order_release);
     if (ResonanceServer* reg_srv = ResonanceServer::get_singleton())
         reg_srv->register_ipl_context_client(this, &ResonanceAmbisonicInternalPlayback::ipl_context_reinit_cleanup);
     ResonanceLog::info("Nexus Resonance: Ambisonic DSP Initialized (Order: " + String::num(ambisonic_order) + ").");
 }
 
 bool ResonanceAmbisonicInternalPlayback::_process_steam_audio_block() {
-    // Crash protection: validate buffers before use
     if (!sa_out_buffer.data || !sa_out_buffer.data[0] || !sa_out_buffer.data[1])
         return false;
 
@@ -327,10 +317,6 @@ bool ResonanceAmbisonicInternalPlayback::_process_steam_audio_block() {
     size_t block_samples = static_cast<size_t>(frame_size_) * static_cast<size_t>(num_channels);
 
     ResonanceServer* srv = ResonanceServer::get_singleton();
-    if (!_processor_matches_current_config(srv)) {
-        processor_config_stale_.store(true, std::memory_order_release);
-        return false;
-    }
     if (srv && srv->is_initialized() && !srv->is_spatial_audio_output_ready())
         return false;
 
@@ -369,22 +355,31 @@ int32_t ResonanceAmbisonicInternalPlayback::pull_channel_samples(float rate_scal
     return samples_read;
 }
 
-void ResonanceAmbisonicInternalPlayback::push_interleaved_input(int32_t samples_read, int num_channels) {
-    const size_t interleaved_count = static_cast<size_t>(samples_read) * static_cast<size_t>(num_channels);
-    if (temp_interleaved_input.size() < interleaved_count)
-        temp_interleaved_input.resize(interleaved_count);
-
-    for (int i = 0; i < samples_read; i++) {
+void ResonanceAmbisonicInternalPlayback::interleave_input_chunk(int32_t first_frame, int32_t frame_count, int num_channels) {
+    for (int32_t f = 0; f < frame_count; f++) {
+        const int32_t i = first_frame + f;
         for (int c = 0; c < num_channels; c++) {
             float sample = (c < (int)channel_mix_bufs_.size() && (int)channel_mix_bufs_[c].size() > i)
                                ? channel_mix_bufs_[c][i].x
                                : 0.0f;
-            temp_interleaved_input[static_cast<size_t>(i) * static_cast<size_t>(num_channels) + static_cast<size_t>(c)] = sample;
+            temp_interleaved_input[static_cast<size_t>(f) * static_cast<size_t>(num_channels) + static_cast<size_t>(c)] = sample;
         }
     }
-    const size_t to_write = std::min(interleaved_count, input_ring.get_available_write());
-    if (to_write > 0)
-        input_ring.write(temp_interleaved_input.data(), to_write);
+}
+
+void ResonanceAmbisonicInternalPlayback::push_interleaved_input(int32_t samples_read, int num_channels) {
+    // Godot does not bound the mix size, so chunk through the main-thread-sized scratch buffer instead of growing it here.
+    int32_t first_frame = 0;
+    while (first_frame < samples_read) {
+        const size_t free_floats = std::min(temp_interleaved_input.size(), input_ring.get_available_write());
+        const int32_t chunk_frames =
+            resonance::ambisonic_input_chunk_frames(free_floats, num_channels, samples_read - first_frame);
+        if (chunk_frames == 0)
+            return;
+        interleave_input_chunk(first_frame, chunk_frames, num_channels);
+        input_ring.write(temp_interleaved_input.data(), static_cast<size_t>(chunk_frames) * static_cast<size_t>(num_channels));
+        first_frame += chunk_frames;
+    }
 }
 
 void ResonanceAmbisonicInternalPlayback::pull_stereo_output(AudioFrame* buffer, int32_t samples_read, bool holding_decode) {
@@ -417,6 +412,17 @@ void ResonanceAmbisonicInternalPlayback::pull_stereo_output(AudioFrame* buffer, 
     }
 }
 
+int32_t ResonanceAmbisonicInternalPlayback::mix_w_passthrough(AudioFrame* buffer, int32_t samples_read) {
+    has_pending_output_.store(false, std::memory_order_release);
+    const PackedVector2Array& w_channel = channel_mix_bufs_[0];
+    for (int32_t i = 0; i < samples_read; i++) {
+        const float w = i < w_channel.size() ? w_channel[i].x : 0.0f;
+        buffer[i].left = w;
+        buffer[i].right = w;
+    }
+    return samples_read;
+}
+
 int32_t ResonanceAmbisonicInternalPlayback::_mix(AudioFrame* buffer, float rate_scale, int32_t frames) {
     if (ResonanceServer::ipl_audio_teardown_active()) {
         for (int32_t i = 0; i < frames; i++) {
@@ -431,7 +437,7 @@ int32_t ResonanceAmbisonicInternalPlayback::_mix(AudioFrame* buffer, float rate_
     _sync_params();
 
     ResonanceServer* srv_guard = ResonanceServer::get_singleton();
-    if (is_initialized && srv_guard && srv_guard->is_initialized() && context != srv_guard->get_context_handle())
+    if (_audio_owns_processor() && srv_guard && srv_guard->is_initialized() && context != srv_guard->get_context_handle())
         steam_context_stale_.store(true, std::memory_order_release);
 
     bool spatial_output_ready = true;
@@ -439,9 +445,11 @@ int32_t ResonanceAmbisonicInternalPlayback::_mix(AudioFrame* buffer, float rate_
         spatial_output_ready = srv_guard->is_spatial_audio_output_ready();
 
     const bool stopping = stop_requested.load(std::memory_order_acquire);
-    if (!stopping && srv_guard && srv_guard->is_initialized() &&
+    // Main may clear the rings while audio does not own the processor.
+    if (_audio_owns_processor() && !stopping && srv_guard && srv_guard->is_initialized() &&
         resonance::geometry_gate_should_hold_ambisonic_decoder_advance(spatial_output_ready)) {
         pull_stereo_output(buffer, frames, true);
+        has_pending_output_.store(_has_pending_output(), std::memory_order_release);
         geometry_gate_was_holding_decode_ = true;
         if (frames > 0) {
             last_mix_out_l_ = buffer[frames - 1].left;
@@ -451,9 +459,7 @@ int32_t ResonanceAmbisonicInternalPlayback::_mix(AudioFrame* buffer, float rate_
         return frames;
     }
 
-    int num_channels = resonance::ambisonic_num_channels_for_order(ambisonic_order);
-    size_t block_samples = static_cast<size_t>(frame_size_) * static_cast<size_t>(num_channels);
-
+    const int num_channels = resonance::ambisonic_num_channels_for_order(ambisonic_order);
     int32_t samples_read;
     if (stopping) {
         // Keep mixer alive while input/output rings drain after stop().
@@ -466,43 +472,29 @@ int32_t ResonanceAmbisonicInternalPlayback::_mix(AudioFrame* buffer, float rate_
             return 0;
     }
 
-    const bool processor_matches = _processor_matches_current_config(srv_guard);
-    if (!processor_matches)
-        processor_config_stale_.store(true, std::memory_order_release);
-    if (resonance::ambisonic_audio_should_passthrough(
-            is_initialized, steam_context_stale_.load(std::memory_order_acquire),
-            processor_config_stale_.load(std::memory_order_acquire), processor_matches)) {
-        // No IPL create/teardown on the audio thread; W-channel passthrough until main resolve/prewarm/reinit.
-        for (int i = 0; i < samples_read; i++) {
-            float w = (!channel_mix_bufs_[0].is_empty() && channel_mix_bufs_[0].size() > (unsigned)i)
-                          ? channel_mix_bufs_[0][i].x
-                          : 0.0f;
-            buffer[i].left = w;
-            buffer[i].right = w;
-        }
-        return samples_read;
+    if (!_audio_owns_processor()) {
+        return mix_w_passthrough(buffer, samples_read);
     }
+    if (srv_guard && srv_guard->is_initialized() && !_processor_matches(params_current)) {
+        processor_config_stale_.store(true, std::memory_order_release);
+        return mix_w_passthrough(buffer, samples_read);
+    }
+    if (processor_reset_requested_.exchange(false, std::memory_order_acq_rel))
+        processor.reset_for_new_playback();
 
     if (!stopping) {
         if (!resonance::geometry_gate_should_pause_ambisonic_input_ingest(spatial_output_ready))
             push_interleaved_input(samples_read, num_channels);
     }
 
-    while (input_ring.get_available_read() >= block_samples) {
-        const bool processor_matches = _processor_matches_current_config(srv_guard);
-        if (!processor_matches)
-            processor_config_stale_.store(true, std::memory_order_release);
-        if (resonance::ambisonic_pump_should_break(processor_matches, spatial_output_ready))
+    const size_t block_samples = static_cast<size_t>(frame_size_) * static_cast<size_t>(num_channels);
+    while (spatial_output_ready && input_ring.get_available_read() >= block_samples &&
+           output_ring_l.get_available_write() >= frame_size_) {
+        if (!_process_steam_audio_block())
             break;
-        if (output_ring_l.get_available_write() >= frame_size_) {
-            if (!_process_steam_audio_block())
-                break;
-        } else {
-            break;
-        }
     }
 
-    if (stopping && is_initialized && sa_out_buffer.data && sa_out_buffer.data[0] && sa_out_buffer.data[1]) {
+    if (stopping && sa_out_buffer.data && sa_out_buffer.data[0] && sa_out_buffer.data[1]) {
         while (output_ring_l.get_available_write() >= frame_size_ && processor.get_tail_size_samples() > 0) {
             if (!processor.process_tail(sa_out_buffer))
                 break;
@@ -523,7 +515,9 @@ int32_t ResonanceAmbisonicInternalPlayback::_mix(AudioFrame* buffer, float rate_
         last_mix_out_valid_ = true;
     }
 
-    if (stopping && !_has_pending_output()) {
+    const bool pending_output = _has_pending_output();
+    has_pending_output_.store(pending_output, std::memory_order_release);
+    if (stopping && !pending_output) {
         stop_requested.store(false, std::memory_order_release);
     }
 
@@ -532,7 +526,7 @@ int32_t ResonanceAmbisonicInternalPlayback::_mix(AudioFrame* buffer, float rate_
 
 void ResonanceAmbisonicInternalPlayback::_start(double from_pos) {
     stop_requested.store(false, std::memory_order_release);
-    processor.reset_for_new_playback();
+    processor_reset_requested_.store(true, std::memory_order_release);
     for (size_t i = 0; i < channel_playbacks.size(); i++) {
         if (channel_playbacks[i].is_valid())
             channel_playbacks[i]->start(from_pos);
@@ -546,7 +540,7 @@ void ResonanceAmbisonicInternalPlayback::_stop() {
     }
 }
 bool ResonanceAmbisonicInternalPlayback::_is_playing() const {
-    if (stop_requested.load(std::memory_order_acquire) && _has_pending_output())
+    if (stop_requested.load(std::memory_order_acquire) && has_pending_output_.load(std::memory_order_acquire))
         return true;
     return !channel_playbacks.empty() && channel_playbacks[0].is_valid() && channel_playbacks[0]->is_playing();
 }
@@ -592,7 +586,7 @@ void ResonanceAmbisonicInternalStream::set_ambisonic_order(int p_order) {
 int ResonanceAmbisonicInternalStream::get_ambisonic_order() const { return ambisonic_order; }
 
 double ResonanceAmbisonicInternalStream::_get_length() const {
-    // Length from channel_streams[0]; all channels assumed same duration (typical B-format).
+    // All channels are assumed to be as long as channel 0.
     if (!channel_streams.is_empty()) {
         Variant elem = channel_streams[0];
         Object* obj = (elem.get_type() == Variant::OBJECT) ? static_cast<Object*>(elem) : nullptr;

@@ -23,13 +23,6 @@
 				Effective reverb bus. Use Global = [param global_fallback]; Custom = [member reverb_bus_name] or fallback if empty.
 			</description>
 		</method>
-		<method name="get_editor_reverb_bus_override_warning">
-			<return type="String" />
-			<param index="0" name="owner" type="Node" />
-			<description>
-				Editor hint when Custom reverb bus is set under Convolution/TAN (split routing only affects Parametric/Hybrid). Empty string when OK.
-			</description>
-		</method>
 		<method name="create_default" qualifiers="static">
 			<return type="ResonancePlayerConfig" />
 			<description>
@@ -84,10 +77,10 @@
 			Bus when [member bus_override] is Custom. Must exist in the Audio Bus Layout.
 		</member>
 		<member name="reverb_bus_override" type="int" default="-1">
-			[code]-1[/code] Use Global, [code]0[/code] Custom. For Parametric/Hybrid selects the split wet bus; Convolution/TAN stay on the global reverb mixer.
+			[code]-1[/code] Use Global, [code]0[/code] Custom. Selects the bus this source sends to for the listener reverb.
 		</member>
 		<member name="reverb_bus_name" type="StringName" default="">
-			Parametric/Hybrid split wet bus when Custom. Convolution/TAN wet stays on [member ResonanceRuntimeConfig.reverb_bus_name].
+			Reverb send bus when [member reverb_bus_override] is Custom. It needs a [ResonanceAudioEffect] to apply the listener reverb.
 		</member>
 		<member name="directivity_enabled" type="bool" default="false">
 			Enable directional emission pattern.
@@ -113,11 +106,14 @@
 		<member name="playback_coeff_smoothing_time" type="float" default="0.0">
 			Smoothing time (s) for simulated occlusion/transmission. [code]0[/code] = off. Simulation Defined only.
 		</member>
-		<member name="reflections_enabled" type="bool" default="true">
-			Per-source reflections toggle. Still gated by [member reflections_mix_level] and [member ResonanceServer.output_reverb].
+		<member name="reflections_enabled" type="bool" default="false">
+			Per-source reflections on top of the listener reverb. Each source with reflections costs its own simulation and convolution. Still gated by [member reflections_mix_level] and [member ResonanceServer.output_reverb].
 		</member>
-		<member name="reflections_type" type="int" default="-1">
-			[code]-1[/code] Use Global, [code]0[/code] Realtime, [code]1[/code] Baked Reverb, [code]2[/code] Static Source, [code]3[/code] Static Listener.
+		<member name="reflections_type" type="int" default="0">
+			[code]0[/code] Realtime (needs [member ResonanceRuntimeConfig.realtime_rays] &gt; 0), [code]2[/code] Static Source, [code]3[/code] Static Listener. Static types use baked probe data. The removed values [code]-1[/code] (Use Global) and [code]1[/code] (Baked Reverb) load as Realtime.
+		</member>
+		<member name="reverb_send" type="bool" default="true">
+			Sends this source to the listener reverb on its reverb bus while [member ResonanceListener.apply_reverb] is on.
 		</member>
 		<member name="pathing_enabled_override" type="int" default="-1">
 			[code]-1[/code] Use Global, [code]0[/code] Disabled, [code]1[/code] Enabled.

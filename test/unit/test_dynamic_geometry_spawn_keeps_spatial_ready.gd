@@ -1,11 +1,7 @@
 extends GutTest
 
-## Regression: spawning ResonanceDynamicGeometry into a non-empty scene must not re-arm the
-## spatial output gate (no hard mute of ongoing ResonancePlayer audio).
-##
-## Setup: baseline dynamic geometry (0->N arms once) + looping player. After the gate is ready,
-## spawn a second dynamic mesh and assert is_spatial_audio_output_ready() stays true and the
-## player keeps playing.
+## Spawning ResonanceDynamicGeometry into a non-empty scene must not re-arm the spatial output
+## gate: the scene and player gates stay open and the looping player keeps playing.
 
 var _runtime: Node
 var _root: Node3D
@@ -33,7 +29,7 @@ func before_each() -> void:
 	_root.add_child(_make_dynamic_mesh_branch("BaselineBlock", Vector3(0, 0, -4), Vector3(2, 2, 0.5)))
 
 	var config := ResonancePlayerConfig.new()
-	config.reflections_enabled = 0
+	config.reflections_enabled = false
 	config.pathing_enabled_override = 0
 
 	_player = ClassDB.instantiate("ResonancePlayer") as ResonancePlayer
@@ -73,7 +69,6 @@ func _make_looping_tone_stream() -> AudioStreamWAV:
 	var data := PackedByteArray()
 	data.resize(frames * 2)
 	for i in frames:
-		# ~440 Hz sine, moderate amplitude
 		var sample: int = int(sin(float(i) * TAU * 440.0 / 44100.0) * 10000.0)
 		data.encode_s16(i * 2, sample)
 	wav.data = data
@@ -97,7 +92,7 @@ func _make_dynamic_mesh_branch(branch_name: String, pos: Vector3, size: Vector3)
 func _await_spatial_ready(max_frames: int = 180) -> bool:
 	for _i in max_frames:
 		var srv: Variant = _server()
-		if srv != null and srv.is_spatial_audio_output_ready():
+		if srv != null and srv.is_spatial_audio_output_ready() and _player.is_spatial_output_ready():
 			return true
 		await wait_process_frames(1)
 	return false
@@ -108,7 +103,7 @@ func test_spawn_dynamic_geometry_keeps_spatial_output_ready_and_player_playing()
 	assert_ne(srv, null, "ResonanceServer must initialize with ResonanceRuntime in the tree")
 
 	var became_ready: bool = await _await_spatial_ready()
-	assert_true(became_ready, "baseline geometry should make spatial output ready after commit+warmup")
+	assert_true(became_ready, "baseline geometry and the player's first direct result should open the gate")
 	assert_true(_player.playing or _player.is_playing(), "looping tone should be playing before spawn")
 
 	# Second dynamic mesh into a non-empty scene must not re-arm the gate.
@@ -117,14 +112,14 @@ func test_spawn_dynamic_geometry_keeps_spatial_output_ready_and_player_playing()
 	var saw_not_ready := false
 	for _i in 90:
 		srv = _server()
-		if srv == null or not srv.is_spatial_audio_output_ready():
+		if srv == null or not srv.is_spatial_audio_output_ready() or not _player.is_spatial_output_ready():
 			saw_not_ready = true
 			break
 		await wait_process_frames(1)
 
 	assert_false(
 		saw_not_ready,
-		"is_spatial_audio_output_ready must stay true after spawning ResonanceDynamicGeometry into a non-empty scene"
+		"scene and player gate must stay open after spawning ResonanceDynamicGeometry into a non-empty scene"
 	)
 	assert_true(
 		_player.playing or _player.is_playing(),

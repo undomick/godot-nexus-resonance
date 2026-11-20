@@ -18,24 +18,24 @@ func _init() -> void:
 	_runner.bake_finished.connect(func(): bake_finished.emit())
 
 
-## Bakes into RAM only ([param save_results] false on runner; no ResourceSaver).
+## Bakes into memory only; nothing is saved to disk.
 func bake_volumes_to_ram(volumes: Array[Node], scene_root: Node) -> void:
 	if volumes.is_empty() or not scene_root:
 		push_error("Nexus Resonance: Runtime bake needs volumes and scene_root.")
-		bake_finished.emit()
+		bake_finished.emit.call_deferred()
 		return
 
 	_runner.run_bake(volumes, scene_root, false)
 
 
-## [code]release_probe_batch[/code] per volume (probe_data unchanged; skip if missing).
+## Releases the loaded probe batch of each volume. probe_data stays assigned.
 func flush_volumes(volumes: Array[Node]) -> void:
 	for vol in volumes:
 		if vol and vol.has_method("release_probe_batch"):
 			vol.release_probe_batch()
 
 
-## All probe volumes under [param scene_root] (teardown / before re-bake).
+## Releases the probe batches of all volumes under [param scene_root], e.g. on teardown or before a re-bake.
 func flush_all_runtime_bakes(scene_root: Node) -> void:
 	if not scene_root:
 		return
@@ -44,7 +44,7 @@ func flush_all_runtime_bakes(scene_root: Node) -> void:
 	flush_volumes(collected)
 
 
-## [code]reload_probe_batch[/code] where present (after flush or RAM probe updates).
+## Reloads the probe batch of each volume, e.g. after a flush or an in-memory bake.
 func reload_volumes(volumes: Array[Node]) -> void:
 	for vol in volumes:
 		if vol and vol.has_method("reload_probe_batch"):
@@ -60,7 +60,7 @@ func reload_all_runtime_bakes(scene_root: Node) -> void:
 	reload_volumes(collected)
 
 
-## [method ResonanceBakeRunner.shutdown]
+## Shuts down the bake runner. The baker cannot be used afterwards.
 func shutdown() -> void:
 	if _runner and _runner.has_method("shutdown"):
 		_runner.shutdown()

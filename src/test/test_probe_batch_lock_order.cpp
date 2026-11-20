@@ -5,9 +5,8 @@
 #include <thread>
 #include <vector>
 
-// Mirrors ResonanceProbeBatchRegistry lock order vs the simulation worker:
-// both sides take simulation_mutex before the registry mutex. The previous
-// load_batch order (registry then simulation) deadlocked against get_pathing_batch.
+// The probe batch registry and the simulation worker both lock simulation_mutex before the
+// registry mutex; registry-then-simulation deadlocks against get_pathing_batch.
 
 namespace {
 
@@ -38,7 +37,7 @@ TEST_CASE("probe batch lock order sim-then-registry does not deadlock under load
     std::thread loader([&]() {
         while (!start.load(std::memory_order_acquire)) {
         }
-        // Fixed load/remove/clear path: simulation_mutex first, then registry.
+        // load/remove/clear path: simulation_mutex first, then registry.
         acquire_sim_then_registry(simulation_mutex, registry_mutex, completed, kIterations);
     });
 

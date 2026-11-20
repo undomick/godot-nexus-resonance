@@ -1,6 +1,6 @@
 extends RefCounted
 
-## Initializes ResonanceServer for editor bakes and surfaces init / config errors.
+## Initializes ResonanceServer for bakes and reports init and config errors.
 
 const _BakeDiscovery = preload("res://addons/nexus_resonance/editor/resonance_bake_discovery.gd")
 const UIStrings = preload("res://addons/nexus_resonance/scripts/resonance_ui_strings.gd")
@@ -10,7 +10,7 @@ var _runner: Object
 
 
 func _init(runner: Object) -> void:
-	# Conditionally initialize this variable to avoid crashes when running in headless mode.
+	# Editor-only script; not loaded in a running game.
 	if Engine.is_editor_hint():
 		resonance_editor_dialogs = load(
 			"res://addons/nexus_resonance/editor/resonance_editor_dialogs.gd"

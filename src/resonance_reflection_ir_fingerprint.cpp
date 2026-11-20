@@ -26,7 +26,6 @@ uint16_t reflection_conv_ir_fir_energy_q16(const void* ir, int32_t ir_size, int3
     (void)ir;
     (void)ir_size;
     (void)num_channels;
-    // IPLReflectionParams.ir is IPLReflectionEffectIR (overlap-save), not IPLImpulseResponse.
     return 0;
 }
 

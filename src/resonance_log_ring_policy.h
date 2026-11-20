@@ -5,8 +5,7 @@
 
 namespace resonance {
 
-/// Lock-free log ring (fixed slots). Posting overwrites the slot for (ticket-1) % slot_count.
-/// Returns true when the slot still holds an undrained message that will be lost.
+/// True when the slot about to be overwritten still holds an undrained message.
 inline bool log_ring_slot_overwrite_drops_message(uint32_t prev_slot_ticket, uint32_t drained_ticket) {
     return prev_slot_ticket > 0u && prev_slot_ticket > drained_ticket;
 }

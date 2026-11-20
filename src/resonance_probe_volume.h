@@ -32,7 +32,6 @@ class ResonanceProbeVolume : public Node3D {
     float spacing = 2.0f;
     float height_above_floor = 1.5f;
 
-    // Default True for better UX
     bool viz_visible = true;
     float viz_probe_scale = 1.0f;
     int viz_color_state = 0; // 0=gray (outdated/missing), 1=blue (up-to-date), 2=red (settings mismatch)
@@ -40,14 +39,11 @@ class ResonanceProbeVolume : public Node3D {
     Ref<ResonanceProbeData> probe_data;
     Ref<Resource> bake_config;
     int32_t probe_batch_handle = -1;
-    /// Captured from ResonanceServer::get_probe_batch_lifecycle_epoch() at load; mismatch => stale after reinit.
+    /// Server probe batch lifecycle epoch at load; a mismatch means the server reinitialized and the handle is stale.
     uint32_t probe_batch_lifecycle_epoch_ = 0;
 
-    // Bake targets: NodePaths to ResonancePlayer (sources) and ResonanceListener (listeners).
-    // The editor bake pipeline issues one STATICSOURCE pass per valid bake_sources entry and one
-    // STATICLISTENER pass per valid bake_listeners entry so fixed outdoor emitters get
-    // position-dependent baked IRs that respect source->listener occlusion.
-    // scan_targets: editor roots for "Update Targets" (fills bake_sources / bake_listeners).
+    // The editor bake runs one STATICSOURCE pass per valid bake_sources entry and one STATICLISTENER pass per
+    // valid bake_listeners entry. scan_targets are the roots "Update Targets" searches to fill both lists.
     Array scan_targets;
     Array bake_sources;
     Array bake_listeners;
@@ -72,6 +68,9 @@ class ResonanceProbeVolume : public Node3D {
     void _ensure_viz_instance();
     bool _compute_is_probe_dirty() const;
     bool _has_valid_resonance_config() const;
+    // A runtime bake target with no data yet: skip auto-load until reload_probe_batch.
+    bool _awaits_headless_bake() const;
+    void _load_probe_batch_on_enter_tree();
     /// remove_probe_batch only when the local handle still matches the server lifecycle epoch.
     void _release_probe_batch_if_live();
     void _store_probe_batch_handle(int32_t handle);
@@ -91,6 +90,7 @@ class ResonanceProbeVolume : public Node3D {
     void _ready() override;
     void _process(double delta) override;
     void _exit_tree() override;
+    PackedStringArray _get_configuration_warnings() const override;
 
     void set_bake_config(const Ref<Resource>& p_config);
     Ref<Resource> get_bake_config() const;
@@ -104,7 +104,7 @@ class ResonanceProbeVolume : public Node3D {
     void set_bake_influence_radius(float p_radius);
     float get_bake_influence_radius() const;
 
-    /// Resolves BakeConfig bake_ambisonics_order (0 = Use Global) against [param p_global_order].
+    /// A BakeConfig bake_ambisonics_order of 0 means p_global_order.
     int resolved_bake_ambisonic_order(int p_global_order) const;
 
     /// Accepts NodePath or Node (resolved via get_path_to). Dedupes; no-op on empty/invalid.
@@ -116,7 +116,7 @@ class ResonanceProbeVolume : public Node3D {
     void set_probe_data(const Ref<ResonanceProbeData>& p_data);
     Ref<ResonanceProbeData> get_probe_data() const;
 
-    /// Ensures probe_data and bake_config exist (editor defaults). Safe to call repeatedly.
+    /// Creates missing probe_data and bake_config with editor defaults. Idempotent.
     void ensure_default_resources();
 
     /// Enabled ResonanceProbeExclusion descendants as Dictionary { xform, size } (stable path order).
@@ -142,26 +142,24 @@ class ResonanceProbeVolume : public Node3D {
     void set_viz_probe_scale(float p_scale);
     float get_viz_probe_scale() const;
 
-    void set_viz_color_state(int p_state); // 0=gray, 1=blue, 2=red
+    void set_viz_color_state(int p_state);
     int get_viz_color_state() const;
 
     void set_headless_baking_mode(bool p_mode);
     bool is_headless_baking_mode() const;
 
-    /// Called by ResonanceRuntime when runtime config affecting probe compatibility changes.
-    /// [param p_runtime_bake_amb] is the global Bake Ambisonic Order (not realtime playback order).
+    /// p_runtime_bake_amb is the global bake ambisonic order, not the realtime playback order.
     void notify_runtime_config_changed(int p_runtime_refl, bool p_runtime_pathing, int p_runtime_bake_amb = 1);
 
     int64_t get_bake_params_hash() const;
 
-    /// For Uniform Floor: raycast down onto collision geometry. Returns empty if no collisions. Requires CollisionShape3D on floor. MUST be called from main thread.
+    /// Uniform Floor probes from downward raycasts against collision shapes; empty when nothing is hit. Main thread only.
     PackedVector3Array generate_probes_on_floor_raycast() const;
-    /// Returns the probe batch handle for pathing (used when ResonancePlayer.pathing_probe_volume points here). -1 if not loaded.
+    /// -1 when not loaded.
     int32_t get_probe_batch_handle() const { return probe_batch_handle; }
     void reload_probe_batch();
-    /// Unloads the native IPLProbeBatch from the Steam Audio simulator and resets the local handle
-    /// to -1. Leaves [code]probe_data[/code] untouched so a subsequent [code]reload_probe_batch[/code]
-    /// can re-register the same data. Safe to call when no batch is loaded (no-op).
+    /// Unloads the batch from the simulator but keeps probe_data, so reload_probe_batch can register it again.
+    /// No-op when nothing is loaded.
     void release_probe_batch();
     void _update_visuals();
     void _runtime_load_probe_batch();

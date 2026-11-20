@@ -70,6 +70,8 @@ Public GDScript helpers (not native nodes): `ResonanceRuntimeBaker` (RAM probe b
 
 IPL scene/simulator work and the worker phonon tick are serialized by `simulation_mutex`. Other mutexes are domain-specific; avoid holding `simulation_mutex` while waiting on `AudioServer::lock`.
 
+Two workers share the simulator (ADR 0003). The reflections worker holds `simulation_mutex` for its whole pass. Around `RunReflections` / `RunPathing` only, it opens `ReflectionsPassGate`, and the direct worker then runs a direct-only pass without `simulation_mutex`: direct `SetInputs` (reflections and pathing inputs are re-queued), `RunDirect` and the occlusion cache sync. Source adds, commits and scene changes wait for the pass to end. The main thread never waits for that: live geometry attach/detach, runtime material swaps on live geometry, static pack add/remove and probe batch add/remove are queued and applied by the direct worker at the start of its next full pass, before the scene commit. `phonon_context_exclusive_mutex_` is a writer-preferring shared mutex: both workers and the Custom main-thread sim take it shared, the bake takes it exclusive, always before `simulation_mutex`.
+
 When both registry and simulation state are needed:
 
 1. `simulation_mutex` (scene commit, sources, bake, `_run_phonon_simulation_locked`)
@@ -77,7 +79,7 @@ When both registry and simulation state are needed:
 
 The worker already holds `simulation_mutex` when it calls `get_pathing_batch` / `for_each_probe_data` (which take `mutex_`). Taking `mutex_` first then `simulation_mutex` deadlocks that path (`resonance_probe_batch_registry.cpp`).
 
-Separate (do not nest with `simulation_mutex` unless a call site documents it): `pending_source_lifecycle_mutex_`, `worker_mutex`, `pathing_vis_mutex`, `_attenuation_callback_mutex`, `dynamic_instanced_transform_queue_mutex_`, `ipl_context_clients_mutex_`.
+Separate (do not nest with `simulation_mutex` unless a call site documents it): `pending_source_lifecycle_mutex_`, `worker_mutex`, `pathing_vis_mutex`, `_attenuation_callback_mutex`, `dynamic_instanced_transform_queue_mutex_`, `scene_mesh_queue_mutex_`, `static_pack_queue_mutex_`, `ipl_context_clients_mutex_`. The worker takes the queue mutexes under `simulation_mutex` only to swap the queue out.
 
 ## Custom scene threading (`IPL_SCENETYPE_CUSTOM`)
 
@@ -97,7 +99,7 @@ Implications: high `max_rays` or pathing on Custom can hitch frames; `ResonanceR
 | ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Main thread                     | `update_source`, `load_probe_batch`, `tick` (Custom: `_run_phonon_simulation_locked`), probe/volume/player updates, `prewarm_steam_audio`, `ResonanceAudioEffectInstance::try_prewarm_processor`                                                                                                                                                                            |
 | Audio thread                    | `fetch_reverb_params`, `fetch_pathing_params`, `get_source_occlusion_data` (epoch caches only), `ResonanceStreamPlayback::_mix`, `ResonanceAudioEffectInstance::_process`. No `ipl*EffectCreate` / buffer alloc in `_mix` - dry passthrough until main-thread `prewarm_steam_audio` / `try_prewarm_processor`.                                                              |
-| Worker thread                   | `_worker_thread_func`, `iplSimulatorRunDirect`, `RunReflections`, `RunPathing`, `_worker_sync_fetch_caches` (`iplSourceGetOutputs`) — **not used for Custom scene type**                                                                                                                                                                                                    |
+| Worker threads                  | Direct worker `_worker_thread_func` (input drain, commits, `iplSimulatorRunDirect`, occlusion sync); reflections worker `_reflections_worker_thread_func` (`RunReflections`, `RunPathing`, their cache sync) — **not used for Custom scene type**                                                                                                                                                                                                    |
 | Bake thread (GDScript `Thread`) | `ResonanceServer::bake_*` via `_with_bake_scene`: Phonon bake on an **isolated temp** `IPLScene` (asset / runtime-static clone / live snapshot). `simulation_mutex` only during prepare. Progress via `get_bake_progress()` atomic poll - not Godot signals. Stop editor play mode before baking or export (`is_playing_scene()` guards on bake runner and export handler). |
 | Callbacks                       | `_pathing_vis_callback`, `_distance_attenuation_callback` run in worker/simulation context                                                                                                                                                                                                                                                                                  |
 
@@ -109,30 +111,41 @@ Implications: high `max_rays` or pathing on Custom can hitch frames; `ResonanceR
 - **Simulation outputs**: Worker fills occlusion/reflection/pathing double buffers under `simulation_mutex`; audio reads published front slots by epoch (no `simulation_mutex` on fetch).
 - **Reflection mixer**: `std::atomic<IPLReflectionMixer>` plus `MixerReadGuard` (reader count). Swaps/releases run on main/worker only.
 - **Listener pose**: Seqlock on `listener_coords_latest_` / `listener_seq_` (`get_current_listener_coords`).
-- **Spatial output gate**: `global_triangle_count` (atomic), `phonon_scene_audio_ready_`, `spatial_audio_warmup_passes_remaining_` (`is_spatial_audio_output_ready`).
+- **Spatial output gate**: `global_triangle_count` (atomic), `phonon_scene_audio_ready_`, `ResonanceGodotPhysicsSceneBridge::is_world_bound` (scene ready, `is_spatial_audio_output_ready`) and `source_direct_readiness_` (per source, `is_source_spatial_output_ready`).
 - **ResonancePlayer polyphony**: Main mutates `internal_playbacks_` under mutex, then publishes `playback_snap_[2]`; `ResonanceReverbPlayback::_mix` reads the snapshot without locking.
+- **Reverb send child**: `ResonanceReverbPlayback` reaches its parent only through a shared `ReverbParentLink` lease and reads only `playing_for_audio_` (published by the parent on play/stop/`_process`) plus the voice snapshot, never Node APIs. The parent orphans the link on tree exit and in its destructor; `orphan()` waits for an open lease.
 - **ResonanceStreamPlayback source**: `update_parameters` (main) retains `IPLSource` into atomics; `_sync_params` (audio) only copies the handle and reads simulation caches, never `SourceManager::mutex`. On tree exit, `ResonancePlayer` pushes `source_handle = -1` to all playbacks before `destroy_source_handle`.
+- **Playback parameters**: `ResonanceStreamPlayback` and `ResonanceAmbisonicInternalPlayback` hand `update_parameters` (main thread only) to `_mix` (audio thread only) through `resonance::LatestValueSlot`, a lock-free triple buffer where the latest value wins. `params_current` is audio-only; the ambisonic main-thread checks read `params_latest_`. A second writer or reader thread breaks the slot.
+- **Ambisonic processor handoff**: Only `_mix` detects a decode-config mismatch and sets `processor_config_stale_`. While that flag or `steam_context_stale_` is set, or the playback is not initialized, `_mix` stays in W passthrough and does not touch the processor, the IPL buffers or the rings. Main reinits or tears down only while a flag is set and clears it with release ordering. `_start()` only requests `reset_for_new_playback()`; `_mix` applies it once it owns the processor.
 - **Logging**: `ResonanceLog` posts to a lock-free ring from non-main threads; `ResonanceServer::tick` drains to Godot on the main thread.
 
 
 
-## Spatial output startup gate
+## Spatial output gate
 
-Spatial output is muted only on **cold start / full scene reload / first triangles into an empty scene**, not on incremental geometry edits (e.g. spawning `ResonanceDynamicGeometry` into an already non-empty scene).
+The gate is per source (ADR 0001, `resonance_spatial_output_gate.h`). A source may produce spatial output only when the **scene is ready** and the source is **direct ready**:
+
+- **Scene ready** (`is_spatial_audio_output_ready`, `spatial_scene_ready`): an empty scene at once; a scene with triangles once the worker committed it (`phonon_scene_audio_ready_`); a Godot physics traced scene (`IPL_SCENETYPE_CUSTOM`) once its physics world is bound and the scene is committed.
+- **Source direct ready** (`SourceDirectReadiness`): after the direct pass published the source's first result into the occlusion cache. The worker reads the readiness generation at the start of a direct pass and stamps only results of passes that ran against a committed scene, so a reload armed mid-pass does not count that pass. Playing a stopped source runs its first direct pass inline, so the wait is usually a few milliseconds.
+- `is_source_spatial_output_ready(handle)` combines both; `ResonancePlayer.is_spatial_output_ready()` exposes it to scripts. A negative handle waits for scene ready only. `ResonanceAmbisonicPlayer` has no direct simulation and checks scene ready only.
+
+Direct readiness clears only for a new source handle (`add_source`) or a hard scene reload, never on stop, replay, virtualization or incremental geometry edits (e.g. spawning `ResonanceDynamicGeometry` into an already non-empty scene).
 
 - `notify_geometry_changed` with a non-zero triangle delta updates `global_triangle_count` and marks the scene dirty. It calls `arm_spatial_audio_output_gate()` only when the count crosses **0 -> N** (`spatial_audio_geometry_notify_should_arm_gate` in `resonance_constants.h`).
-- `arm_spatial_audio_output_gate()` clears `phonon_scene_audio_ready_` and resets `spatial_audio_warmup_passes_remaining_` to `kSpatialAudioWarmupWorkerPasses`. Explicit callers: runtime init/handoff/reinit, deferred refresh after `load_scene_data`, and hard static-pack clear/replace/load.
+- `arm_spatial_audio_output_gate()` clears `phonon_scene_audio_ready_`, bumps the readiness generation (every source loses direct ready) and marks the scene dirty. Explicit callers: runtime init/handoff/reinit, deferred refresh after `load_scene_data`, and hard static-pack clear/replace/load.
 
-**Runtime config reinit:** IPL-context fields (`ambisonic_order`, HRTF toggles, SOFA index, frame size, etc.) go through `ResonanceRuntimeConfig.native_engine_reinit_requested` and `reload_after_reinit` (probe reload, source handles, bus prewarm). Until that frame completes, players may W-passthrough (`arm_spatial_audio_output_gate`). The reverb bus passes through its Godot bus chain until `ResonanceAudioEffectInstance` prewarm completes (no shared convolution wet mixed yet). Patching config without `ResonanceRuntimeConfig` setters (no signal) can still drift until manual reinit. SN3D normalization at bake time is not live-toggled.
+**Runtime config reinit:** IPL-context fields (`ambisonic_order`, HRTF toggles, SOFA index, frame size, etc.) go through `ResonanceRuntimeConfig.native_engine_reinit_requested` and `reload_after_reinit` (probe reload, source handles, bus prewarm). Until that frame completes, players may W-passthrough (`arm_spatial_audio_output_gate`). The reverb bus stays silent until `ResonanceAudioEffectInstance` prewarm completes. Patching config without `ResonanceRuntimeConfig` setters (no signal) can still drift until manual reinit. SN3D normalization at bake time is not live-toggled.
 
-**Reverb activator:** `ResonanceReverbActivator` pushes silence only onto `ResonanceRuntimeConfig.reverb_bus_name` so `ResonanceAudioEffect` runs on the shared convolution/TAN path. Per-player `ResonancePlayerConfig` custom reverb buses (Parametric/Hybrid split) are not activator-fed; use a `ResonanceReverbOutput` child when that bus must stay hot without a player on it.
+**Reverb activator:** `ResonanceReverbActivator` pushes near-silence onto `ResonanceRuntimeConfig.reverb_bus_name` so `ResonanceAudioEffect` keeps running when no player sends. Per-player custom reverb buses are not activator-fed.
+
+**Listener reverb:** like Steam Audio's listener-centric reverb. `ResonanceListener.apply_reverb` makes the server keep one IPLSource at the listener pose (`listener_reverb_source_handle_`, realtime or baked REVERB variation) in a simulator slot reserved on top of `max_simulation_sources`; the FMOD bridge uses the same source. Each `ResonancePlayer` with `ResonancePlayerConfig.reverb_send` copies its final output into its send ring, which the `ResonanceReverbOutput` child plays on the reverb bus. `ResonanceAudioEffect` captures that bus input, convolves it once with the listener source's reflections (into the shared mixer for Convolution/TAN, decoded directly for Parametric/Hybrid) and outputs wet only. Per-source reflections (`reflections_enabled`, default off) remain for Realtime, Static Source and Static Listener.
 
 **Debug HUD signal R:** With Convolution reflection type and the player debug overlay on, the HUD `R` column shows shared reverb bus RMS (`get_reverb_bus_output_rms_pre_gain`), labeled `R(bus)`, not per-source wet send. Parametric/Hybrid still show per-player reverb send in `R`.
 
-- The worker sets `phonon_scene_audio_ready_` after `iplSceneCommit`. `is_spatial_audio_output_ready()` combines warmup and commit (`spatial_audio_geometry_gate_allows_output`); audio and main read it via atomics only.
+- The worker sets `phonon_scene_audio_ready_` after `iplSceneCommit`. Audio and main read the gate via atomics only.
 - Mesh rebuilds inside `ResonanceGeometry::_create_meshes` use a silent clear plus a single net triangle notify so clear+create does not falsely look like 0 -> N.
 
-Until ready, `ResonancePlayer` does not push playback parameters (`params_ever_synced_` stays false), and `ResonanceStreamPlayback::_process_steam_audio_block` zeros spatial output instead of running direct/reflection/pathing. This avoids audible unoccluded output before the Phonon scene matches registered meshes on cold start.
+While a source's gate is closed, `ResonancePlayer` does not push playback parameters (`params_ever_synced_` stays false), and `ResonanceStreamPlayback` holds its decoder and emits silence instead of running direct/reflection/pathing, so the source starts late but complete. This avoids audible unoccluded output before the scene matches registered meshes or before the source has an occlusion result.
 
 ### Accepted residual: incremental mesh add
 
@@ -140,7 +153,7 @@ Incremental triangle adds into an **already non-empty** scene do **not** re-arm 
 
 ### Accepted residual: Custom scene readiness
 
-With `IPL_SCENETYPE_CUSTOM`, `ResonanceGeometry` is a no-op (`global_triangle_count` often stays 0). `is_spatial_audio_output_ready()` can open after warmup alone (`spatial_audio_geometry_gate_allows_output`). Godot physics world binding (`set_physics_world`) runs from `ResonanceRuntime` each frame and may lag the first runtime tick; the first frames after init can see empty occlusion until the Custom tracer has a valid `World3D`. No large custom-tracer rewrite planned.
+With `IPL_SCENETYPE_CUSTOM`, `ResonanceGeometry` is a no-op (`global_triangle_count` often stays 0). The scene is not ready before Godot physics world binding (`set_physics_world`, from `ResonanceRuntime` each frame), so sources stay gated until the Custom tracer has a valid `World3D`. Changes inside the bound physics world do not re-arm the gate. No large custom-tracer rewrite planned.
 
 ## Runtime pathing and probe batches (QA audit)
 

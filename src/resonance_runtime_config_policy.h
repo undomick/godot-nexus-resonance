@@ -3,14 +3,14 @@
 
 namespace resonance {
 
-/// SSOT: ResonanceRuntimeConfig property names (UTF-8) that require ipl reinit.
+/// Takes a ResonanceRuntimeConfig property name.
 bool runtime_config_property_requires_engine_reinit(const char* property);
 
 bool runtime_config_property_is_live_patchable(const char* property);
 
 bool runtime_config_property_requires_routing_refresh(const char* property);
 
-/// SSOT: get_config() keys safe to patch on a running engine without reinit.
+/// Takes a get_config() dictionary key, not a property name.
 bool runtime_config_dict_key_is_live_patchable(const char* key);
 
 } // namespace resonance

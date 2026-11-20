@@ -41,7 +41,7 @@ static func filesystem_path_for_dir_access(path: String) -> String:
 	return p
 
 
-## [method DirAccess.open]: globalized path first, then logical (export handler convention).
+## [method DirAccess.open] on the globalized path first, then on the logical path.
 static func open_dir_for_path(path: String) -> DirAccess:
 	if path.is_empty():
 		return null
@@ -62,7 +62,7 @@ static func file_exists_for_path(path: String) -> bool:
 	return FileAccess.file_exists(path)
 
 
-## UTF-8 text: prefer globalized path if that file exists.
+## Reads UTF-8 text, preferring the globalized path if that file exists.
 static func read_file_as_string(path: String) -> String:
 	if path.is_empty():
 		return ""

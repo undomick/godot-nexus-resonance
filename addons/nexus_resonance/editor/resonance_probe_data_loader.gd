@@ -2,8 +2,8 @@
 extends ResourceFormatLoader
 class_name ResonanceProbeDataLoader
 
-## Custom text loader for ResonanceProbeData [.tres] / [.bak] headers. [.res] stays on the default loader.
-## Caps: [code]data[/code] expression max 256 MiB; [code]probe_positions[/code] max 1 MiB (str_to_var safety).
+## Text loader for ResonanceProbeData in .tres and text .bak files. Binary .res uses the default loader.
+## Limits the [code]data[/code] expression to 256 MiB and [code]probe_positions[/code] to 1 MiB before str_to_var.
 
 
 func _read_tres_header(path: String) -> String:
@@ -81,7 +81,7 @@ func _load_tres(path: String) -> Variant:
 	return res
 
 
-## Parses .tres file; returns dict with data, probe_positions, bake_params_hash, etc. or null on error.
+## Returns the stored fields as a Dictionary, or null on error.
 func _parse_tres_data(content: String) -> Variant:
 	var in_resource := false
 	var data_expr := ""
@@ -97,7 +97,7 @@ func _parse_tres_data(content: String) -> Variant:
 		var stripped := line.strip_edges()
 		if stripped == "[resource]":
 			if in_resource:
-				break  # Second [resource] block - use first block only
+				break  # Only the first [resource] block counts.
 			in_resource = true
 			continue
 		if not in_resource:

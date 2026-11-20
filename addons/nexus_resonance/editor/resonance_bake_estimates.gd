@@ -24,7 +24,7 @@ static func estimate_probe_count(vol: Node) -> int:
 	else:
 		var ny := int(ceil(extents.y * 2 / spacing))
 		count = nx * ny * nz
-	# Approximate exclusion cull for UI estimates (axis-aligned overlap only).
+	# Estimates exclusion by testing a sample grid against the exclusion boxes.
 	if vol.has_method("collect_exclusion_boxes") and count > 0 and gen_type != 0:
 		var boxes: Array = vol.collect_exclusion_boxes()
 		if not boxes.is_empty():
@@ -32,7 +32,6 @@ static func estimate_probe_count(vol: Node) -> int:
 				vol.global_transform if vol is Node3D else Transform3D.IDENTITY
 			)
 			var kept := 0
-			# Coarse: sample grid like Uniform Floor / Volume and count survivors.
 			var height: float = (
 				float(vol.get("height_above_floor")) if "height_above_floor" in vol else 1.5
 			)
@@ -109,8 +108,8 @@ static func _estimate_sample_points(
 	return points
 
 
-## [param bc] must be a [ResonanceBakeConfig]-like resource with bake_num_rays, etc.
-## [param pathing_enabled] comes from ResonanceRuntime (caller resolves); falls back to bc.
+## [param bc] needs bake_num_rays, bake_num_bounces and bake_num_threads.
+## Pathing counts as on if [param pathing_enabled] or bc.pathing_enabled is set.
 static func estimate_bake_time(vol: Node, bc: Resource, pathing_enabled: bool = false) -> String:
 	if bc == null:
 		return ""

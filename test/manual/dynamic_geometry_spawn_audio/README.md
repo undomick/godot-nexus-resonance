@@ -5,7 +5,7 @@ Verifies that spawning `ResonanceDynamicGeometry` while a `ResonancePlayer` is a
 ## What it does
 
 1. Starts `ResonanceRuntime`, a listener, baseline dynamic geometry, and a looping ~440 Hz tone.
-2. Waits until `ResonanceServer.is_spatial_audio_output_ready()` is true (cold-start warmup).
+2. Waits until `ResonanceServer.is_spatial_audio_output_ready()` is true (scene ready after cold start).
 3. After ~2.5 s, spawns a second mesh with `ResonanceDynamicGeometry`.
 4. Observes ~1.5 s: spatial ready must stay true and the player must keep playing.
 5. Prints `PASS` / `FAIL` and quits (exit code 0 / 1) when `auto_quit` is on.

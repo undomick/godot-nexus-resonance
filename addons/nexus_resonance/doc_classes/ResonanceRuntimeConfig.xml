@@ -129,9 +129,6 @@
 		<member name="perspective_correction_factor" type="float" default="1.0">
 			Perspective factor (0.5-2.0). Live-patched like [member perspective_correction_enabled].
 		</member>
-		<member name="default_reflections_mode" type="int" default="0">
-			For players with reflections Use Global: [code]0[/code] Baked (probes), [code]1[/code] Realtime (needs [member realtime_rays] &gt; 0).
-		</member>
 		<member name="reflection_type" type="int" default="0">
 			[code]0[/code] Convolution, [code]1[/code] Parametric, [code]2[/code] Hybrid, [code]3[/code] TrueAudio Next (AMD GPU; else falls back).
 		</member>
@@ -229,7 +226,7 @@
 			Batch deferred source updates instead of blocking the main thread on a busy simulation mutex.
 		</member>
 		<member name="scene_type" type="int" default="1">
-			[code]0[/code] Default, [code]1[/code] Embree, [code]2[/code] Radeon Rays, [code]3[/code] Custom (Godot physics; main-thread sim, no mesh upload).
+			[code]0[/code] Default, [code]1[/code] Embree, [code]2[/code] Radeon Rays, [code]3[/code] Custom (Godot physics; main-thread sim, no mesh upload). On Linux, Embree can crash with distribution Godot packages that link the system Embree; use the official Godot binary or [code]0[/code].
 		</member>
 		<member name="physics_ray_collision_mask" type="int" default="-1">
 			Custom-scene ray collision mask. [code]-1[/code] = all layers.
@@ -244,7 +241,7 @@
 			OpenCL device index (0 = first matching).
 		</member>
 		<member name="reflections_adaptive_budget_us" type="int" default="0">
-			If last reflections tick exceeds this (us), increase effective reflection interval. [code]0[/code] = off.
+			Target duration (us) of one reflections pass. Over budget, realtime rays are lowered first, then the reflection interval grows once rays reach [member reflections_adaptive_ray_min]. [code]0[/code] = off.
 		</member>
 		<member name="reflections_adaptive_ray_min" type="int" default="128">
 			Lower bound for adaptive realtime rays when the budget is enabled.
@@ -256,7 +253,7 @@
 			Cap on per-tick ray recovery. [code]0[/code] = unlimited.
 		</member>
 		<member name="reflections_adaptive_step_sec" type="float" default="0.02">
-			Seconds added to the effective reflection interval when over budget.
+			Seconds added to the effective reflection interval per over-budget reflections pass that already runs at the minimum ray count.
 		</member>
 		<member name="reflections_adaptive_max_extra_interval" type="float" default="0.2">
 			Upper bound (s) for adaptive extra reflection delay.

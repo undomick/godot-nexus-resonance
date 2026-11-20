@@ -1,9 +1,8 @@
 @tool
 extends EditorPlugin
 
-## This EditorPlugin registers gizmos, inspectors, menus, and probe resource I/O.
-## Native node types (ResonanceProbeVolume, etc.) come from GDExtension (nexus_resonance.gdextension)
-## and stay in ClassDB until the editor is restarted, so existing nodes remain movable like any Node3D.
+## Registers gizmos, inspectors, menus and probe resource I/O.
+## The native node types come from the GDExtension and stay in ClassDB until the editor restarts, even with the plugin off.
 
 const LOGGER_AUTOLOAD_PATH = "res://addons/nexus_resonance/scripts/resonance_logger.tscn"
 const GIZMO_SCRIPT = "res://addons/nexus_resonance/editor/resonance_probe_gizmo.gd"
@@ -13,7 +12,7 @@ const PLAYER_GIZMO_CLASS_NAME = "ResonancePlayer"
 const REVERB_DATA_POINT_GIZMO_SCRIPT = "res://addons/nexus_resonance/editor/resonance_reverb_data_point_gizmo.gd"
 
 const EFFECT_CLASS = "ResonanceAudioEffect"
-## After plugin re-enable, GDExtension can register native classes a frame later; retry bus effect + gizmo refresh.
+## After a plugin re-enable the GDExtension classes can appear late, so the bus effect and gizmo setup retry this often.
 const _DEFERRED_EDITOR_INTEGRATION_MAX_FRAMES := 10
 const SOFA_IMPORTER_SCRIPT = "res://addons/nexus_resonance/editor/sofa_importer.gd"
 const RESONANCE_GEOMETRY_INSPECTOR_SCRIPT = "res://addons/nexus_resonance/editor/resonance_geometry_inspector.gd"
@@ -81,13 +80,13 @@ func _enter_tree() -> void:
 	_migrate_nexus_bake_output_dir()
 	_migrate_resonance_asset_format_setting()
 	_migrate_default_output_directory_path()
-	# Export format keys before any other registration (avoids "nonexistent project setting" if the engine
-	# touches keys during later steps). Idempotent with _register_export_project_settings.
+	# Before any other registration: later steps can read these keys and log "nonexistent project setting".
 	_ensure_export_format_project_settings()
 	_clear_obsolete_resonance_project_settings()
 	_clear_bus_project_settings()
 	_register_logger_project_settings()
 	_register_editor_project_settings()
+	_register_pool_project_settings()
 	_register_bake_project_settings()
 	_register_physics_project_settings()
 	_register_export_project_settings()
@@ -132,7 +131,7 @@ func _migrate_legacy_project_settings() -> void:
 			ProjectSettings.set_setting(new_key, ProjectSettings.get_setting(old_key))
 		ProjectSettings.clear(old_key)
 
-	# Legacy bake/output_dir -> nexus/.../bake/default_output_directory (not the old bus keys).
+	# Legacy bake/output_dir -> bake/default_output_directory.
 	var legacy_bake := LEGACY_SETTINGS_PREFIX + "bake/output_dir"
 	var new_bake := ResonancePaths.SETTING_BAKE_OUTPUT_DIR
 	if ProjectSettings.has_setting(legacy_bake) and not ProjectSettings.has_setting(new_bake):
@@ -184,11 +183,8 @@ func _clear_bus_project_settings() -> void:
 
 
 func _init_editor_plugin_ui() -> void:
-	# ResonanceProbeDataSaver / ResonanceProbeDataLoader: do not call add_resource_format_* here.
-	# Global classes that extend ResourceFormatSaver/Loader are registered by the engine
-	# (ResourceSaver.add_custom_savers / ResourceLoader.add_custom_loaders). A second manual
-	# registration duplicates handlers; remove_resource_format_* in _exit_tree then hits
-	# "i >= saver_count" when the engine has already removed the custom instances.
+	# Do not add_resource_format_* the probe data saver/loader: the engine registers global saver/loader classes itself,
+	# and a second registration makes remove_resource_format_* fail on exit with "i >= saver_count".
 
 	var export_handler_script: Script = load(RESONANCE_EXPORT_HANDLER_SCRIPT) as Script
 	if export_handler_script:
@@ -449,7 +445,7 @@ func _exit_tree() -> void:
 	if scene_changed.is_connected(_on_editor_scene_changed_refresh_probe_gizmos):
 		scene_changed.disconnect(_on_editor_scene_changed_refresh_probe_gizmos)
 	_detach_reverb_effect()
-	# Break RefCounted reference cycles in bake system (prevents exit leak warnings).
+	# Break RefCounted cycles in the bake system, else exit reports leaks.
 	if resonance_probe_volume_inspector and "bake_runner" in resonance_probe_volume_inspector:
 		resonance_probe_volume_inspector.bake_runner = null
 	if (
@@ -502,12 +498,12 @@ func _exit_tree() -> void:
 
 
 func _enable_plugin() -> void:
-	# Before autoload / editor subsystems read export format keys (avoids "nonexistent project setting").
+	# Before the autoload or editor subsystems read the export format keys.
 	_migrate_resonance_asset_format_setting()
 	_ensure_export_format_project_settings()
-	# No ProjectSettings.save() here; [_register_export_project_settings] persists when the editor loads the plugin.
+	# No ProjectSettings.save() here; _register_export_project_settings saves when the editor loads the plugin.
 	add_autoload_singleton("ResonanceLogger", LOGGER_AUTOLOAD_PATH)
-	# Defer bus + gizmo follow-up: ClassDB may not list ResonanceAudioEffect until the next frame(s) after re-enable.
+	# Deferred: after a re-enable ClassDB may list ResonanceAudioEffect only a little later.
 	call_deferred("_deferred_finish_editor_integration", 0)
 
 
@@ -553,9 +549,8 @@ func _finish_editor_probe_gizmo_integration() -> void:
 
 
 func _disable_plugin() -> void:
-	# Do not call ResonanceServer.clear_probe_batches() here: it wipes the native registry while
-	# ResonanceProbeVolume nodes still hold stale probe_batch_handle values, corrupting state after
-	# re-enable. Use Project → Tools → Nexus Resonance → Clear Probe Batches when you want that.
+	# Do not clear_probe_batches() here: probe volumes keep their probe_batch_handle values,
+	# which would be stale after a re-enable. Users clear batches from the Tools menu instead.
 	_detach_reverb_effect()
 	remove_autoload_singleton("ResonanceLogger")
 
@@ -579,7 +574,7 @@ func _detach_reverb_effect() -> void:
 
 func _setup_audio_bus() -> void:
 	var bus_name: StringName = _get_reverb_bus_name_editor()
-	# Matches ResonanceRuntimeConfig defaults (buses are not Project Settings anymore).
+	# Same default as ResonanceRuntimeConfig.
 	var send_name: StringName = ResonancePaths.DEFAULT_OUTPUT_BUS_NAME
 	var idx: int = AudioServer.get_bus_index(bus_name)
 	if idx == -1:
@@ -682,6 +677,28 @@ func _register_logger_project_settings() -> void:
 	)
 
 
+func _register_pool_project_settings() -> void:
+	_register_int_project_setting(ResonancePaths.SETTING_POOL_MIN_READY, 2, "0,32")
+	_register_int_project_setting(ResonancePaths.SETTING_POOL_MAX_KEPT, 8, "0,128")
+
+
+func _register_int_project_setting(key: String, default_value: int, range_hint: String) -> void:
+	if not ProjectSettings.has_setting(key):
+		ProjectSettings.set_setting(key, default_value)
+	ProjectSettings.set_initial_value(key, default_value)
+	(
+		ProjectSettings
+		. add_property_info(
+			{
+				"name": key,
+				"type": TYPE_INT,
+				"hint": PROPERTY_HINT_RANGE,
+				"hint_string": range_hint,
+			}
+		)
+	)
+
+
 func _register_editor_project_settings() -> void:
 	var k := ResonancePaths.SETTING_EDITOR_AUTO_CONVERT_ANIMATION
 	if not ProjectSettings.has_setting(k):
@@ -731,8 +748,8 @@ func _register_physics_project_settings() -> void:
 	)
 
 
-## Ensures export asset format keys exist with defaults (no save). Returns whether [method ProjectSettings.save] is recommended.
-## Default is Binary (.res) = 1. Existing valid 0/1 values are kept (no overwrite).
+## Adds the export format keys with default 1 (Binary .res) and repairs invalid values; valid 0/1 values stay.
+## Does not save; returns whether a save is needed.
 func _ensure_export_format_project_settings() -> bool:
 	var save_needed := false
 	save_needed = (
@@ -917,8 +934,7 @@ func _run_convert_animation_audio_all_scenes_confirmed() -> void:
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_EDITOR_PRE_SAVE:
 		_on_editor_pre_save_animation_audio()
-	# NOTE: In GDScript, calling super on virtual callbacks is only valid if the parent is a script
-	# that defines the method. EditorPlugin's native implementation is not callable via super here.
+	# No super call: EditorPlugin's native _notification is not reachable via super from GDScript.
 
 
 func _on_editor_pre_save_animation_audio() -> void:

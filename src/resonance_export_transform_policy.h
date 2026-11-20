@@ -6,7 +6,7 @@
 
 namespace resonance {
 
-/// Godot Transform3D multiply: parent * local (column basis).
+/// Same as Godot's parent * local, column basis.
 inline MeshBakeTransform multiply_mesh_bake_transform(const MeshBakeTransform& parent, const MeshBakeTransform& local) {
     MeshBakeTransform out{};
     for (int c = 0; c < 3; ++c) {
@@ -26,7 +26,7 @@ inline MeshBakeTransform multiply_mesh_bake_transform(const MeshBakeTransform& p
     return out;
 }
 
-/// Compose local transforms root-first (index 0 = topmost ancestor), matching Godot global = parent * local.
+/// locals[0] is the topmost ancestor.
 inline MeshBakeTransform compose_mesh_bake_xforms_root_first(const MeshBakeTransform* locals, size_t count) {
     MeshBakeTransform out = identity_mesh_bake_transform();
     if (!locals || count == 0)

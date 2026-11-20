@@ -27,10 +27,7 @@ TEST_CASE("apply_volume_ramp constant unity no change", "[volume_ramp]") {
 TEST_CASE("apply_volume_ramp 0 to 1 over N samples", "[volume_ramp]") {
     float buffer[4] = {1.0f, 1.0f, 1.0f, 1.0f};
     apply_volume_ramp(0.0f, 1.0f, 4, buffer);
-    // Sample 0: vol 0.0, 1*0=0
-    // Sample 1: vol 0.25, 1*0.25=0.25
-    // Sample 2: vol 0.5, 1*0.5=0.5
-    // Sample 3: vol 0.75, 1*0.75=0.75
+    // The last sample is one step short of the end volume.
     REQUIRE(buffer[0] == Approx(0.0f));
     REQUIRE(buffer[1] == Approx(0.25f));
     REQUIRE(buffer[2] == Approx(0.5f));
@@ -60,7 +57,6 @@ TEST_CASE("effective_asp3d_volume_linear unity at 0 dB under max_db", "[asp3d_vo
 }
 
 TEST_CASE("effective_asp3d_volume_linear caps at max_db", "[asp3d_volume]") {
-    // volume_db above max_db must use the ceiling (Godot ASP3D max_db semantics).
     const float capped = effective_asp3d_volume_linear(12.0f, 0.0f);
     REQUIRE(capped == Approx(1.0f));
     const float uncapped = effective_asp3d_volume_linear(-6.0f, 3.0f);
@@ -72,8 +68,8 @@ TEST_CASE("effective_asp3d_volume_linear minus 6 dB is half amplitude", "[asp3d_
 }
 
 TEST_CASE("effective_asp3d_volume_linear is source loudness pre-steam", "[asp3d_volume]") {
-    // Contract: node volume is min(volume_db, max_db) -> linear, applied to dry input before Steam DSP
-    // so wet/convolution follow. Independent of IPL distance attenuation.
+    // Applied to the dry input before Steam Audio DSP so wet and convolution follow it; independent
+    // of IPL distance attenuation.
     const float a = effective_asp3d_volume_linear(-20.0f, 3.0f);
     const float b = effective_asp3d_volume_linear(-20.0f, -40.0f); // max_db wins
     REQUIRE(a == Approx(std::pow(10.0f, -20.0f / 20.0f)));
@@ -124,10 +120,8 @@ TEST_CASE("reflection_effect_create_ir_size caps to convolution_ir_max_samples",
     REQUIRE(reflection_effect_create_ir_size(48000, 0.0f, 512) == 1);
 }
 
-// --- Pathing (ResonancePathProcessor + ResonancePlayer) ---
-// Steam Audio spatialize (Valve spatialize_effect.cpp): applyVolumeRamp(prevPathingMixLevel,
-// pathingMixLevel) on mono after downmix, then iplPathEffectApply; no extra multiply by Direct distanceAttenuation
-// on the wet (path SH includes distanceAttenuationModel at RunPathing in path_simulator.cpp).
+// Like Steam Audio's spatialize effect, pathing ramps the mono downmix by the pathing mix level before
+// iplPathEffectApply. The path SH already contains distance attenuation, so the wet gets no Direct attenuation.
 
 TEST_CASE("pathing: mono input ramp matches apply_volume_ramp step", "[volume_ramp][pathing]") {
     const int n = 8;

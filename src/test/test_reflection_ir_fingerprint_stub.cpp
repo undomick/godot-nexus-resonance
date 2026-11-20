@@ -2,7 +2,7 @@
 
 namespace godot {
 
-// Unit tests link without phonon; production implementations live in resonance_reflection_ir_fingerprint.cpp.
+// Stubs: unit tests link without phonon.
 float reflection_energy_field_total(const void* field) {
     (void)field;
     return 0.0f;

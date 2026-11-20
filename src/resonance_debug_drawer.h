@@ -20,7 +20,7 @@ struct ResonanceDebugData {
     Vector3 air_absorption;
     float directivity_val;
 
-    /// First closestHit T (diagnosis); valid when hit0_valid.
+    /// Transmission at the first closest hit; valid when hit0_valid.
     float hit0_transmission[3] = {1.0f, 1.0f, 1.0f};
     bool hit0_valid = false;
     int num_transmission_rays = 1;
@@ -31,9 +31,9 @@ struct ResonanceDebugData {
     float signal_direct = 0.0f;
     float signal_reverb = 0.0f;
     float signal_pathing = 0.0f;
-    /// Debug HUD: R column is shared reverb bus RMS (Convolution), not per-source wet send.
+    /// With convolution the HUD R column shows the shared reverb bus RMS, not this source's wet send.
     bool signal_reverb_from_shared_bus = false;
-    /// Sim occlusion/transmission snapshot held during overlay grace (signals may still update).
+    /// Occlusion and transmission are a held snapshot during the overlay grace period.
     bool sim_snapshot_hold = false;
 };
 
@@ -61,7 +61,7 @@ class ResonanceDebugDrawer {
     void initialize(Node3D* p_parent);
     void cleanup();
 
-    /// Per-player 3D HUD label. show_occ / show_player_hud OR-gate (server debug_occlusion / debug_reflections).
+    /// Draws when either show_occ or show_player_hud is set.
     void process(double delta, const ResonanceDebugData& data, bool show_occ, bool show_player_hud, String node_name, bool hud_active);
 };
 

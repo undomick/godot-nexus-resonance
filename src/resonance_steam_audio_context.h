@@ -8,15 +8,14 @@
 
 namespace godot {
 
-/// Configuration subset required for Steam Audio context and device initialization.
 struct ResonanceSteamAudioContextConfig {
     int sample_rate = 48000;
     int frame_size = resonance::kGodotDefaultFrameSize;
     int ambisonic_order = 1;
     float max_reverb_duration = 2.0f;
-    int reflection_type = resonance::kReflectionConvolution; // May be modified (e.g. TAN fallback)
-    int scene_type = 0;                                      // 0=Default, 1=Embree, 2=Radeon, 3=Custom (Godot Physics)
-    int opencl_device_type = 0;                              // 0=GPU, 1=CPU, 2=Any
+    int reflection_type = resonance::kReflectionConvolution;
+    int scene_type = 0;         // 0=Default, 1=Embree, 2=Radeon, 3=Custom (Godot Physics)
+    int opencl_device_type = 0; // 0=GPU, 1=CPU, 2=Any
     int opencl_device_index = 0;
     bool context_validation = false;
     int context_simd_level = -1;
@@ -27,11 +26,8 @@ struct ResonanceSteamAudioContextConfig {
     Ref<ResonanceSOFAAsset> hrtf_sofa_asset;
 };
 
-/// Manages Steam Audio context and all device handles (Context, Embree, OpenCL, Radeon Rays, TAN, HRTF).
-/// ResonanceServer delegates device creation and shutdown to this class.
-///
-/// Lifetime: If init() returns false, native handles may be partially allocated (e.g. IPL context without a valid HRTF).
-/// Call shutdown() or destroy the object before calling init() again; do not retry init() without cleaning up first.
+/// Owns the Steam Audio context, its devices (Embree, OpenCL, Radeon Rays, TAN) and the HRTF.
+/// A failed init() can leave handles allocated: call shutdown() before retrying.
 class ResonanceSteamAudioContext {
   public:
     ResonanceSteamAudioContext() = default;
@@ -42,9 +38,7 @@ class ResonanceSteamAudioContext {
     ResonanceSteamAudioContext(ResonanceSteamAudioContext&&) = delete;
     ResonanceSteamAudioContext& operator=(ResonanceSteamAudioContext&&) = delete;
 
-    /// Initialize context and devices. reflection_type in config may be modified (TAN fallback).
-    /// config.scene_type is set to the effective tracer index (0–3) after device setup.
-    /// Returns true on success. On false, call shutdown() or destroy this object (see class lifetime note).
+    /// May change config.reflection_type (TAN fallback) and sets config.scene_type to the tracer actually used.
     bool init(ResonanceSteamAudioContextConfig& config);
 
     void shutdown();
@@ -54,8 +48,7 @@ class ResonanceSteamAudioContext {
     IPLOpenCLDevice get_opencl_device() const { return opencl_device_; }
     IPLRadeonRaysDevice get_radeon_rays_device() const { return radeon_rays_device_; }
     IPLTrueAudioNextDevice get_tan_device() const { return tan_device_; }
-    /// Returns HRTF for the audio thread. Double-buffer: init/main writes [1]; this call may sync [1] to [0].
-    /// Despite const, updates internal handles and atomics; use only with the server's init/audio thread split.
+    /// Audio thread only. Despite const, it swaps in an HRTF that init wrote to hrtf_[1].
     IPLHRTF get_hrtf() const;
     IPLSceneType get_scene_type() const { return scene_type_; }
 
@@ -70,6 +63,10 @@ class ResonanceSteamAudioContext {
     mutable std::atomic<bool> new_hrtf_written_{false};
     IPLSceneType scene_type_ = IPL_SCENETYPE_DEFAULT;
 };
+
+// iplContextCreate resets Steam Audio's process-wide SIMD level, IPP dispatch and log callback, so a second
+// context would switch them under the live one. Release the result with iplContextRelease.
+IPLContext acquire_export_context(IPLContext live_context);
 
 } // namespace godot
 

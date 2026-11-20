@@ -190,12 +190,12 @@ void ResonanceFmodEventEmitter::register_fmod_source() {
 
 void ResonanceFmodEventEmitter::try_push_simulation_handle_to_fmod(int32_t fmod_plugin_handle) {
     (void)fmod_plugin_handle;
-    // TODO: fmod-gdextension DSP API for Simulation Outputs Handle.
+    // TODO: needs a DSP parameter API in fmod-gdextension to pass the simulation outputs handle.
 }
 
 void ResonanceFmodEventEmitter::invalidate_handles_after_engine_reinit() {
-    // Server already destroyed IPLSources; FMOD plugin terminate drops its source map.
-    // Do not destroy_source_handle / remove_fmod_source - IDs may already be recycled.
+    // The server already destroyed the IPLSources and the plugin terminate dropped its source map.
+    // Do not destroy_source_handle / remove_fmod_source: the IDs may already be recycled.
     fmod_handle = -1;
     resonance_handle = -1;
     source_lifecycle_epoch_ = 0;

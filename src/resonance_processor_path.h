@@ -55,7 +55,9 @@ class ResonancePathProcessor {
     void ensure_hrtf_on_main(IPLHRTF runtime_hrtf);
 
   private:
-    bool create_path_effect(IPLHRTF hrtf);
+    IPLPathEffect build_path_effect(IPLHRTF hrtf) const;
+    /// Swaps `effect` with the live path effect; the caller releases what comes back. A null `effect` disables the path.
+    void swap_in_path_effect_while_audio_idle(IPLPathEffect& effect, IPLHRTF hrtf);
 };
 
 } // namespace godot

@@ -7,7 +7,7 @@
 
 namespace godot {
 
-// Steam Audio FMOD plugin loader; wires ResonanceServer context into phonon_fmod.
+// Loads the Steam Audio FMOD plugin and hands it the ResonanceServer context.
 class ResonanceFMODBridge : public Object {
     GDCLASS(ResonanceFMODBridge, Object)
 
@@ -20,7 +20,7 @@ class ResonanceFMODBridge : public Object {
 
     bool init_bridge();
     void shutdown_bridge();
-    /// After ResonanceServer reinit: terminate + re-init with the new IPLContext without unloading the plugin.
+    /// After a ResonanceServer reinit: re-initializes with the new IPLContext without unloading the plugin.
     bool rebind_after_reinit();
     bool is_bridge_loaded() const { return plugin_handle_ != nullptr; }
     bool is_bridge_initialized() const { return initialized_; }
@@ -32,12 +32,11 @@ class ResonanceFMODBridge : public Object {
 #if defined(_WIN32) || defined(_WIN64)
     void* plugin_handle_ = nullptr; // HMODULE
 #else
-    void* plugin_handle_ = nullptr; // void* from dlopen
+    void* plugin_handle_ = nullptr; // dlopen handle
 #endif
 
     bool initialized_ = false;
 
-    // Function pointers (loaded from plugin)
     void (*fn_iplFMODInitialize_)(IPLContext) = nullptr;
     void (*fn_iplFMODTerminate_)() = nullptr;
     void (*fn_iplFMODSetHRTF_)(IPLHRTF) = nullptr;

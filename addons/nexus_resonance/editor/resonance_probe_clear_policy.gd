@@ -1,11 +1,9 @@
 extends RefCounted
 
-## Pure helpers for "Clear Unreferenced Probe Data". Keeps cancel / partial-scan
-## decisions out of the editor UI path so they can be unit-tested.
+## Decides what "Clear Unreferenced Probe Data" may delete.
 
 
-## Builds the deletion plan after a project reference scan.
-## When [param scan_cancelled] is true the scan may be incomplete - never offer deletes.
+## A canceled scan may be incomplete, so it deletes nothing.
 static func build_clear_plan(
 	probe_files: PackedStringArray, referenced: PackedStringArray, scan_cancelled: bool
 ) -> Dictionary:

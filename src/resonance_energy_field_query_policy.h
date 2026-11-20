@@ -5,10 +5,10 @@
 
 namespace resonance {
 
-/// Steam Audio energy fields store 3 diffuse bands per channel; band count is not a separate IPL getter.
+/// Steam Audio has no getter for this.
 constexpr int kEnergyFieldDiffuseBands = 3;
 
-/// Skip IR reconstruct below this total (empty / missing baked energy).
+/// Below this total energy there is no baked data worth reconstructing an IR from.
 constexpr float kEnergyFieldReconstructMinTotal = 1e-9f;
 
 constexpr const char* kProbeQueryErrNoContext = "no_context";

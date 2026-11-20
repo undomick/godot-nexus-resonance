@@ -35,7 +35,6 @@ func _redraw(gizmo: EditorNode3DGizmo) -> void:
 	if node == null:
 		return
 	_ensure_live_connection(node)
-	# show_directivity_gizmo toggles visibility (editor + runtime).
 	if not bool(node.get("show_directivity_gizmo")):
 		return
 	var cfg: Object = node.get("player_config") as Object
@@ -51,7 +50,7 @@ func _redraw(gizmo: EditorNode3DGizmo) -> void:
 		power = float(cfg.get("directivity_power"))
 		user_value = float(cfg.get("directivity_value"))
 
-	# Instance call is fine for the GDExtension-bound static (global class timing).
+	# Called on the instance because the class name may not resolve yet when this script is parsed.
 	var lines: PackedVector3Array = node.build_directivity_gizmo_lines(
 		enabled, input_mode, weight, power, user_value, GIZMO_SIZE_METERS
 	)
@@ -63,8 +62,7 @@ func _redraw(gizmo: EditorNode3DGizmo) -> void:
 	gizmo.add_lines(lines, get_material(mat_name, gizmo))
 
 
-## Connect [signal Resource.changed] on [code]player_config[/code] to [method Node3D.update_gizmos]
-## (native nodes may not repaint in editor on config edits). [Callable] match keeps this idempotent.
+## Repaints the gizmo when [code]player_config[/code] changes; native nodes do not do this on their own.
 func _ensure_live_connection(node: Node3D) -> void:
 	var cfg: Resource = node.get("player_config") as Resource
 	if cfg == null:

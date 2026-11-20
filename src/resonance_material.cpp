@@ -1,9 +1,8 @@
 #include "resonance_material.h"
+#include "resonance_constants.h"
 #include <godot_cpp/core/class_db.hpp>
 
 using namespace godot;
-
-// --- Getters / Setters ---
 
 void ResonanceMaterial::set_low_freq_absorption(float p_val) {
     low_freq_absorption = CLAMP(p_val, 0.0f, 1.0f);
@@ -50,10 +49,7 @@ float ResonanceMaterial::get_transmission() const {
     return (transmission_low + transmission_mid + transmission_high) / 3.0f;
 }
 
-// --- Internal Logic ---
-
 IPLMaterial ResonanceMaterial::get_ipl_material() const {
-    // ResonanceMaterial maps to Steam Audio 3-band model. IPL_NUM_BANDS must be 3 (not IPL_ENABLE_OCTAVE_BANDS).
     static_assert(IPL_NUM_BANDS == 3, "ResonanceMaterial expects IPL_NUM_BANDS == 3");
     IPLMaterial mat{};
     mat.absorption[0] = low_freq_absorption;
@@ -66,10 +62,21 @@ IPLMaterial ResonanceMaterial::get_ipl_material() const {
     return mat;
 }
 
-// --- Binding ---
+IPLMaterial ResonanceMaterial::default_ipl_material() {
+    IPLMaterial mat{};
+    mat.absorption[0] = resonance::kSceneExportAbsorptionLow;
+    mat.absorption[1] = resonance::kSceneExportAbsorptionMid;
+    mat.absorption[2] = resonance::kSceneExportAbsorptionHigh;
+    mat.scattering = resonance::kSceneExportScattering;
+    mat.transmission[0] = mat.transmission[1] = mat.transmission[2] = resonance::kSceneExportTransmission;
+    return mat;
+}
+
+IPLMaterial ResonanceMaterial::ipl_material_or_default(const Ref<ResonanceMaterial>& p_material) {
+    return p_material.is_valid() ? p_material->get_ipl_material() : default_ipl_material();
+}
 
 void ResonanceMaterial::_bind_methods() {
-    // Absorption Group
     ClassDB::bind_method(D_METHOD("set_low_freq_absorption", "p_val"), &ResonanceMaterial::set_low_freq_absorption);
     ClassDB::bind_method(D_METHOD("get_low_freq_absorption"), &ResonanceMaterial::get_low_freq_absorption);
     ClassDB::bind_method(D_METHOD("set_mid_freq_absorption", "p_val"), &ResonanceMaterial::set_mid_freq_absorption);
@@ -77,11 +84,9 @@ void ResonanceMaterial::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_high_freq_absorption", "p_val"), &ResonanceMaterial::set_high_freq_absorption);
     ClassDB::bind_method(D_METHOD("get_high_freq_absorption"), &ResonanceMaterial::get_high_freq_absorption);
 
-    // Scattering
     ClassDB::bind_method(D_METHOD("set_scattering", "p_val"), &ResonanceMaterial::set_scattering);
     ClassDB::bind_method(D_METHOD("get_scattering"), &ResonanceMaterial::get_scattering);
 
-    // Transmission (3-band)
     ClassDB::bind_method(D_METHOD("set_transmission_low", "p_val"), &ResonanceMaterial::set_transmission_low);
     ClassDB::bind_method(D_METHOD("get_transmission_low"), &ResonanceMaterial::get_transmission_low);
     ClassDB::bind_method(D_METHOD("set_transmission_mid", "p_val"), &ResonanceMaterial::set_transmission_mid);
@@ -91,7 +96,6 @@ void ResonanceMaterial::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_transmission", "p_val"), &ResonanceMaterial::set_transmission);
     ClassDB::bind_method(D_METHOD("get_transmission"), &ResonanceMaterial::get_transmission);
 
-    // Inspector Properties
     ADD_GROUP("Absorption", "");
     ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "absorption_low", PROPERTY_HINT_RANGE, "0,1"), "set_low_freq_absorption", "get_low_freq_absorption");
     ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "absorption_mid", PROPERTY_HINT_RANGE, "0,1"), "set_mid_freq_absorption", "get_mid_freq_absorption");
@@ -103,6 +107,6 @@ void ResonanceMaterial::_bind_methods() {
     ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "transmission_low", PROPERTY_HINT_RANGE, "0,1"), "set_transmission_low", "get_transmission_low");
     ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "transmission_mid", PROPERTY_HINT_RANGE, "0,1"), "set_transmission_mid", "get_transmission_mid");
     ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "transmission_high", PROPERTY_HINT_RANGE, "0,1"), "set_transmission_high", "get_transmission_high");
-    // Read-only: computed average for display. Must not be serialized, else it overwrites per-band values on load.
+    // Display-only average without storage usage; storing it would overwrite the per-band values on load.
     ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "transmission", PROPERTY_HINT_RANGE, "0,1", PROPERTY_USAGE_READ_ONLY), "", "get_transmission");
 }

@@ -133,7 +133,7 @@ func run_bake_pipeline_main_thread(volumes: Array[Node]) -> void:
 		if _runner_unavailable():
 			return
 		if not ok:
-			# Specific step errors are logged inside _run_bake_for_volume / step helpers.
+			# The failing step already logged its specific error.
 			if not _runner.get("_bake_error_dialog_shown"):
 				(
 					_runner
@@ -163,7 +163,7 @@ func _wait_before_bake(tree: SceneTree) -> bool:
 
 
 func _run_in_thread_with_cancel_poll(bake_callable: Callable) -> Variant:
-	# GDScript lambdas capture locals by value - do not assign into an outer Variant.
+	# The result comes back through wait_to_finish because a lambda cannot assign to a captured local.
 	var thread := Thread.new()
 	_active_bake_thread = thread
 	thread.start(bake_callable)
@@ -177,7 +177,7 @@ func _run_in_thread_with_cancel_poll(bake_callable: Callable) -> Variant:
 		if tree:
 			await tree.process_frame
 		else:
-			# No SceneTree: yield so this cancel loop cannot spin at 100% CPU.
+			# No SceneTree to await: sleep so this loop does not spin a core.
 			OS.delay_msec(10)
 
 		if _is_canceled() and srv:
@@ -278,7 +278,7 @@ func _bake_reflections(ctx: Variant) -> bool:
 	if bake_ok != true:
 		_runner._log_and_show_error(
 			"Reflections bake failed for %s" % ctx.vol.name,
-			"Bake failed; previous probe data was kept. Check geometry and probe volume settings.",
+			"Bake failed; previous probe data was kept. The Output panel names the cause.",
 			"bake_probes_for_volume returned false",
 			ctx.vol.name,
 			"reflections"
@@ -355,7 +355,7 @@ func _bake_pathing(ctx: Variant) -> bool:
 	return ok
 
 
-## Reflections rebake clears static hashes; force static passes when enabled (partial-rebake fix).
+## A reflections rebake clears the static hashes, so the enabled static passes must run again.
 static func _rebake_sets_static_pass_needed(ctx: Variant) -> void:
 	if ctx.add_flags.get("static_source", false):
 		ctx.need_static_source = true
@@ -527,7 +527,6 @@ func _get_active_tree(volumes: Array[Node] = [], fallback_root: Node = null) -> 
 	if volumes.size() > 0 and volumes[0].is_inside_tree():
 		return volumes[0].get_tree()
 
-	# In a running game, the main loop will usually be the SceneTree.
 	var main_loop = Engine.get_main_loop()
 	if main_loop is SceneTree:
 		return main_loop

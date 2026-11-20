@@ -107,10 +107,10 @@
 				After [method ResonanceServer.reinit_audio_engine]: reloads probes, source handles, and bus prewarm. Called from config reinit signals.
 			</description>
 		</method>
-		<method name="deferred_reset_spatial_audio_warmup_passes">
+		<method name="deferred_arm_spatial_audio_output_gate">
 			<return type="void" />
 			<description>
-				Resets the spatial-output warmup gate on the next frame after geometry/scene handoff.
+				Arms the spatial output gate on the next frame after geometry/scene handoff, unless geometry already armed it.
 			</description>
 		</method>
 		<method name="notify_volumes_runtime_config_changed">
@@ -128,13 +128,7 @@
 		<method name="prepare_for_shutdown">
 			<return type="void" />
 			<description>
-				Hard-stops players and detaches [ResonanceAudioEffect] so AudioServer can tear down before GDExtension deinit. Call a few frames before quit.
-			</description>
-		</method>
-		<method name="on_scene_tree_exiting">
-			<return type="void" />
-			<description>
-				Quit path: arms teardown when the scene tree exits. Connected by the runtime; scripts rarely call this.
+				Hard-stops players and detaches [ResonanceAudioEffect]. Quitting without it is safe; calling it a few frames before quit lets AudioServer free the stopped playbacks instead of leaking them at exit.
 			</description>
 		</method>
 		<method name="on_window_close_requested">

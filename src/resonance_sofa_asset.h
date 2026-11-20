@@ -8,20 +8,19 @@
 
 namespace godot {
 
-/// HRTF SOFA file as Resource with volume and normalization.
-/// Use with ResonanceRuntimeConfig.hrtf_sofa_assets (list) for custom HRTFs with gain/norm control.
+/// Custom HRTF from a SOFA file, used through ResonanceRuntimeConfig.hrtf_sofa_assets.
 class ResonanceSOFAAsset : public Resource {
     GDCLASS(ResonanceSOFAAsset, Resource)
 
   public:
     enum NormType {
-        NORM_NONE = 0, /// IPL_HRTFNORMTYPE_NONE
-        NORM_RMS = 1   /// IPL_HRTFNORMTYPE_RMS
+        NORM_NONE = 0,
+        NORM_RMS = 1
     };
 
   private:
     PackedByteArray sofa_data;
-    float volume_db = 0.0f; /// Volume correction in dB
+    float volume_db = 0.0f;
     int norm_type = NORM_NONE;
 
   protected:
@@ -40,16 +39,15 @@ class ResonanceSOFAAsset : public Resource {
     void set_norm_type(int p_type);
     int get_norm_type() const { return norm_type; }
 
-    /// Raw pointer to sofa_data. Returns nullptr when sofa_data is empty; caller must check is_valid()/get_size().
+    /// nullptr when sofa_data is empty.
     const uint8_t* get_data_ptr() const;
     int64_t get_size() const;
 
     bool is_valid() const { return !sofa_data.is_empty(); }
 
-    /// Load .sofa file from path. Returns OK on success.
     Error load_from_file(const String& p_path);
 
-    /// Convert dB to linear gain for Phonon.
+    /// Returns 0 at or below kHRTFMinDB.
     static float db_to_gain(float db);
 };
 

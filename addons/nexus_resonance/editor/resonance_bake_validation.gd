@@ -1,9 +1,11 @@
 extends Object
 
-## Resolves the edited scene root for bake validation.
+## Scene root lookup and error messages for bake validation.
 
 
-static func get_edited_scene_root(volumes: Array[Node], editor_interface: EditorInterface) -> Node:
+# editor_interface stays untyped: this script is preloaded by the runtime baker, and
+# exported builds have no EditorInterface class to parse the annotation against.
+static func get_edited_scene_root(volumes: Array[Node], editor_interface = null) -> Node:
 	if editor_interface:
 		var root = editor_interface.get_edited_scene_root()
 		if root:
@@ -16,8 +18,7 @@ static func get_edited_scene_root(volumes: Array[Node], editor_interface: Editor
 	return null
 
 
-## Bake step entered with no resolved entries (should not happen when add_flags
-## is derived from resolved nodes).
+## Returns an error if a static source pass was requested but no source resolved.
 static func static_source_entries_error(static_source_wanted: bool, entries: Array) -> String:
 	if not static_source_wanted:
 		return ""
@@ -40,7 +41,7 @@ static func static_listener_entries_error(static_listener_wanted: bool, entries:
 	return ""
 
 
-## Non-empty NodePath list that resolved to zero live nodes (deleted / wrong class).
+## Returns a warning if [param property] has paths but none of them resolved to [param target_class].
 static func stale_bake_paths_warning(
 	property: String, path_count: int, resolved_count: int, target_class: String
 ) -> String:

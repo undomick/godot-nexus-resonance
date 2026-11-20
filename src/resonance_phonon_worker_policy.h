@@ -5,12 +5,14 @@
 
 namespace resonance {
 
-/// Inputs for deciding whether a worker/main-thread phonon tick should run IPL simulation.
 struct PhononWorkerTickInputs {
     bool pending_lifecycle = false;
     bool pending_source_updates = false;
     bool scene_dirty = false;
     bool pending_dynamic_transforms = false;
+    bool pending_static_packs = false;
+    bool pending_probe_batches = false;
+    bool pending_scene_meshes = false;
     bool run_direct_scheduled = false;
     bool run_reflection_heavy = false;
     bool run_pathing_heavy = false;
@@ -28,7 +30,7 @@ inline bool phonon_worker_run_direct_after_input_drain(bool input_drain_had_work
     return run_direct_scheduled || input_drain_had_work;
 }
 
-/// Geo-05: after iplSceneCommit on a dirty tick, refresh direct/occlusion caches even when tick() did not schedule RunDirect.
+/// After iplSceneCommit on a dirty tick, refresh direct/occlusion caches even when tick() did not schedule RunDirect.
 inline bool phonon_worker_run_direct_after_scene_graph_commit(bool scene_graph_committed, bool run_direct_scheduled,
                                                               bool any_direct_outputs) {
     if (!any_direct_outputs)
@@ -36,7 +38,6 @@ inline bool phonon_worker_run_direct_after_scene_graph_commit(bool scene_graph_c
     return run_direct_scheduled || scene_graph_committed;
 }
 
-/// tick() direct schedule: interval tick, batched/lifecycle pending, or inline try_update_source.
 inline bool phonon_worker_run_direct_for_tick(bool run_direct_scheduled, bool lifecycle_or_batched_updates_pending,
                                               bool direct_after_inline_inputs_pending) {
     return run_direct_scheduled || lifecycle_or_batched_updates_pending || direct_after_inline_inputs_pending;
@@ -48,9 +49,15 @@ inline bool phonon_worker_should_clear_stale_direct_after_inline_inputs(bool dir
     return direct_after_inline_inputs_pending && !any_direct_outputs;
 }
 
+inline bool phonon_worker_has_pending_inputs(const PhononWorkerTickInputs& in) {
+    return in.pending_lifecycle || in.pending_source_updates || in.scene_dirty || in.pending_dynamic_transforms ||
+           in.pending_static_packs || in.pending_probe_batches ||
+           in.pending_scene_meshes;
+}
+
 /// Heavy/pathing requests armed before per-source outputs exist must survive idle tick() early-outs.
 inline bool phonon_worker_should_clear_idle_heavy_flags(const PhononWorkerTickInputs& in) {
-    if (in.pending_lifecycle || in.pending_source_updates || in.scene_dirty || in.pending_dynamic_transforms)
+    if (phonon_worker_has_pending_inputs(in))
         return true;
     if (in.run_reflection_heavy && in.output_reverb_enabled && !in.any_reflection_outputs)
         return false;
@@ -59,9 +66,8 @@ inline bool phonon_worker_should_clear_idle_heavy_flags(const PhononWorkerTickIn
     return true;
 }
 
-/// True when lifecycle, scene, or scheduled simulation work requires a phonon tick.
 inline bool phonon_worker_tick_has_work(const PhononWorkerTickInputs& in) {
-    if (in.pending_lifecycle || in.pending_source_updates || in.scene_dirty || in.pending_dynamic_transforms)
+    if (phonon_worker_has_pending_inputs(in))
         return true;
 
     const bool gated_refl = in.output_reverb_enabled && in.any_reflection_outputs;

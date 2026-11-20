@@ -132,15 +132,14 @@ void ResonanceRuntime::apply_resonance_viewport_to_server(Viewport* vp, bool use
             vp_sync_last_had_listener_nodes = false;
         } else {
             vp_sync_last_had_listener_nodes = true;
-            // SSOT listener pose when ResonanceListener nodes exist (ResonanceListener skips duplicate push).
+            // ResonanceListener nodes own the listener pose when present.
             ResonanceListener::sync_viewport_listeners_to_server(vp, listener_nodes);
         }
     }
     vp_sync_cache_valid = true;
 }
 
-// Custom tracer: ResonanceServer.tick runs in _physics_process with the physics World3D. Toggle physics processing
-// to match the active tracer; called after init/reinit (1.3d).
+// With the Custom tracer ResonanceServer.tick runs in _physics_process against the physics World3D.
 void ResonanceRuntime::sync_physics_process_for_custom_tracer() {
     if (editor_hint()) {
         set_physics_process(false);

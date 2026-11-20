@@ -5,7 +5,7 @@
 
 namespace resonance {
 
-/// Per ResonanceGeometry instance: every Nth transform notify/enqueue (see kGeometryTransformCoalesceInterval).
+/// The counter is per ResonanceGeometry instance.
 inline bool geometry_transform_coalesce_tick_due(uint32_t counter_after_increment, int interval) {
     if (interval <= 1)
         return true;

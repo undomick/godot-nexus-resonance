@@ -1,9 +1,9 @@
 extends RefCounted
 
-## Live probe_data references held by editor scene trees (not only on-disk .tscn text).
+## Probe data referenced by scenes open in the editor, which the .tscn files on disk may not show yet.
 
 
-## Canonical resource_path for clear-unreferenced matching (strips legacy .bak suffixes).
+## Normalizes slashes and strips .bak suffixes so paths compare equal.
 static func canonical_probe_resource_path(path: String) -> String:
 	var out := path.strip_edges().replace("\\", "/")
 	while out.ends_with(".bak"):
@@ -11,7 +11,7 @@ static func canonical_probe_resource_path(path: String) -> String:
 	return out
 
 
-## Collect probe_data.resource_path values under [param root] (ResonanceProbeVolume trees).
+## Probe data paths of every node under [param root] that has get_probe_data.
 static func collect_live_probe_data_paths(root: Node) -> PackedStringArray:
 	var out: PackedStringArray = []
 	if root == null:
@@ -31,7 +31,7 @@ static func _collect_live_probe_data_paths_recursive(node: Node, out: PackedStri
 		_collect_live_probe_data_paths_recursive(child, out)
 
 
-## Union of disk-scan and live-editor references; preserves first-seen order.
+## Union of both lists in first-seen order.
 static func merge_referenced_paths(
 	disk_referenced: PackedStringArray, live_referenced: PackedStringArray
 ) -> PackedStringArray:

@@ -26,29 +26,28 @@ inline MixerInitFlags& operator|=(MixerInitFlags& a, MixerInitFlags b) {
 }
 inline bool operator&(MixerInitFlags a, MixerInitFlags b) { return (static_cast<int>(a) & static_cast<int>(b)) != 0; }
 
-/// Reflection mixer HOA → stereo for the reverb bus; optional Virtual Surround decode chain.
+/// Decodes ambisonic reflection output to stereo, directly or through a 7.1 virtual surround chain.
 class ResonanceMixerProcessor {
   private:
     IPLContext context = nullptr;
     IPLAmbisonicsDecodeEffect decode_effect = nullptr;
-    // Optional: HOA → 7.1 → iplVirtualSurroundEffect → stereo
     IPLAmbisonicsDecodeEffect decode_effect_7_1 = nullptr;
     IPLVirtualSurroundEffect virtual_surround_effect = nullptr;
 
-    IPLAudioBuffer sa_ambisonic_buffer{}; // `Apply` output, decoded same callback
-    IPLAudioBuffer sa_stereo_buffer{};    // Decode -> Godot (or VirtualSurround -> Godot)
-    IPLAudioBuffer sa_7_1_buffer{};       // Decode 7.1 intermediate when use_virtual_surround
+    IPLAudioBuffer sa_ambisonic_buffer{};
+    IPLAudioBuffer sa_stereo_buffer{};
+    IPLAudioBuffer sa_7_1_buffer{};
     std::vector<float> last_stereo_left{};
     std::vector<float> last_stereo_right{};
     bool last_stereo_valid = false;
     uint64_t last_seen_mixer_feed_count_ = 0;
     bool have_seen_mixer_feed_count_ = false;
-    /// When equal to `get_mixer_feed_count()`, hold-last is suppressed (one real Apply per stale plateau).
+    /// While the mixer feed count equals this, hold-last is suppressed: one real Apply per stale plateau.
     uint64_t hold_last_suppression_feed_ = std::numeric_limits<uint64_t>::max();
     std::vector<float> pending_stereo_left{};
     std::vector<float> pending_stereo_right{};
     size_t pending_read_index = 0;
-    size_t pending_len_ = 0; // Valid samples in pending_* (fixed capacity; no hotpath resize)
+    size_t pending_len_ = 0; // pending_* have fixed capacity and are never resized on the audio thread
 
     void _write_stereo_to_audio_frames_with_carry(AudioFrame* out_frames, int frame_count);
     void _decode_ambisonic_to_stereo_buffer(IPLAudioBuffer* ambi_in, const IPLCoordinateSpace3& listener_coords, bool apply_binaural);
@@ -72,12 +71,11 @@ class ResonanceMixerProcessor {
     void initialize(IPLContext p_context, int p_sample_rate, int p_frame_size, int p_ambisonic_order);
     void cleanup();
 
-    /// True if initialization succeeded and decode path is usable (for AudioEffect to avoid processing with invalid state).
     bool is_ready() const { return _can_decode(); }
 
     bool process_mixer_return(IPLReflectionMixer mixer_handle, const IPLCoordinateSpace3& listener_coords, AudioFrame* out_frames, int frame_count);
 
-    /// Decode caller-owned HOA (no `iplReflectionMixerApply`; e.g. player convolution tap).
+    /// Decodes a caller-owned ambisonic buffer without iplReflectionMixerApply.
     bool decode_ambisonic_to_stereo(IPLAudioBuffer* ambi_buf, const IPLCoordinateSpace3& listener_coords, AudioFrame* out_frames,
                                     int frame_count, bool apply_binaural);
 };

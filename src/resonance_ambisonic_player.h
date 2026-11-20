@@ -15,6 +15,8 @@
 #include <phonon.h>
 #include <vector>
 
+#include "resonance_exit_pins.h"
+#include "resonance_latest_value_slot.h"
 #include "resonance_processor_ambisonic.h"
 #include "resonance_ring_buffer.h"
 
@@ -23,10 +25,9 @@ namespace godot {
 class ResonanceServer;
 
 struct AmbisonicPlaybackParameters {
-    /// Listener/camera-facing basis in Godot world space (Steam Audio IPL). Used when
-    /// [member combined_matrix_decode] is false.
+    /// Listener basis in Godot world space; used when combined_matrix_decode is false.
     IPLCoordinateSpace3 listener_orientation{};
-    /// When true: decode orientation is taken from combined bed + listener row-major matrices (IPL Ambisonics rotation bypassed).
+    /// Decode orientation comes from combined_decode_orientation and the rotation effect is bypassed.
     bool combined_matrix_decode = false;
     IPLCoordinateSpace3 combined_decode_orientation{};
     bool rotation_enabled = true;
@@ -46,39 +47,43 @@ class ResonanceAmbisonicInternalPlayback : public AudioStreamPlayback {
   private:
     int frame_size_ = resonance::kGodotDefaultFrameSize; // Steam Audio block size from ResonanceServer
 
-    // Playbacks for each Ambisonic channel (4 for 1st, 9 for 2nd, 16 for 3rd order)
+    // One playback per ambisonic channel: (order+1)^2.
     std::vector<Ref<AudioStreamPlayback>> channel_playbacks;
     int ambisonic_order = 1;
+    resonance::ExitPinned exit_pin_{this};
 
-    std::atomic<bool> params_dirty = false;
-    AmbisonicPlaybackParameters params_next;
+    resonance::LatestValueSlot<AmbisonicPlaybackParameters> params_slot_;
+    /// Main thread only: the last value passed to update_parameters.
+    AmbisonicPlaybackParameters params_latest_;
+    /// Audio thread only.
     AmbisonicPlaybackParameters params_current;
 
-    bool is_initialized = false;
+    // Main publishes processor, context and sa_out_buffer with a release store of true.
+    std::atomic<bool> is_initialized{false};
     std::atomic<bool> steam_context_stale_{false};
-    /// Audio sets when decode config drifts; main calls _reinit_ambisonic_processor_on_main().
     std::atomic<bool> processor_config_stale_{false};
+    // _start may run on main or audio; only _mix resets the processor, and only while it owns it.
+    std::atomic<bool> processor_reset_requested_{false};
+    // Written only by _mix, so _is_playing can ask from any thread without reading the rings.
+    std::atomic<bool> has_pending_output_{false};
     std::atomic<bool> stop_requested = false;
     int current_sample_rate = 48000;
     IPLContext context = nullptr;
+    uint64_t next_prewarm_retry_msec_ = 0;
 
     ResonanceAmbisonicProcessor processor;
 
     IPLAudioBuffer sa_out_buffer{};
 
-    // RingBuffers
-    // Input: Interleaved N channels (N = (order+1)^2)
+    // Interleaved, (order+1)^2 channels.
     RingBuffer<float> input_ring;
-    // Output: Stereo (Left/Right)
     RingBuffer<float> output_ring_l;
     RingBuffer<float> output_ring_r;
 
-    // Temp buffer for processing loop
     std::vector<float> temp_interleaved_input;
-    // Temp buffers for batch read from output ring buffers (avoids per-sample memcpy)
     std::vector<float> temp_output_l;
     std::vector<float> temp_output_r;
-    // Reused per _mix: one PackedVector2Array per Ambisonic channel (no per-frame heap alloc).
+    // One per ambisonic channel, reused across _mix calls so the audio thread does not allocate.
     std::vector<PackedVector2Array> channel_mix_bufs_;
     float last_mix_out_l_ = 0.0f;
     float last_mix_out_r_ = 0.0f;
@@ -90,14 +95,17 @@ class ResonanceAmbisonicInternalPlayback : public AudioStreamPlayback {
 
     void _lazy_init_steam_audio();
     void _cleanup_steam_audio();
-    bool _processor_matches_current_config(ResonanceServer* srv) const;
+    bool _audio_owns_processor() const;
+    bool _processor_matches(const AmbisonicPlaybackParameters& p) const;
     void _reinit_ambisonic_processor_on_main(ResonanceServer* srv);
     /// Returns false when input was not consumed (caller must break pump loop).
     bool _process_steam_audio_block();
     void _sync_params();
 
     int32_t pull_channel_samples(float rate_scale, int32_t frames, int num_channels);
+    void interleave_input_chunk(int32_t first_frame, int32_t frame_count, int num_channels);
     void push_interleaved_input(int32_t samples_read, int num_channels);
+    int32_t mix_w_passthrough(AudioFrame* buffer, int32_t samples_read);
     void pull_stereo_output(AudioFrame* buffer, int32_t samples_read, bool holding_decode);
 
   public:
@@ -111,9 +119,9 @@ class ResonanceAmbisonicInternalPlayback : public AudioStreamPlayback {
 
     void update_parameters(const AmbisonicPlaybackParameters& p_params);
 
-    /// Main-thread IPL buffer setup before first `_mix` (same as ResonanceStreamPlayback).
+    /// Main thread: allocates the IPL buffers before the first _mix.
     bool prewarm_steam_audio();
-    /// Main thread: teardown + prewarm when audio flagged a stale IPL context.
+    /// Main thread: tears down and prewarms again after the audio thread flagged a stale IPL context.
     void resolve_stale_steam_context_on_main();
 
     virtual int32_t _mix(AudioFrame* buffer, float rate_scale, int32_t frames) override;
@@ -157,9 +165,9 @@ class ResonanceAmbisonicInternalStream : public AudioStream {
 class ResonanceAmbisonicPlayer : public AudioStreamPlayer {
     GDCLASS(ResonanceAmbisonicPlayer, AudioStreamPlayer)
   private:
-    bool rotation_enabled = true;          ///< Apply Ambisonics rotation (listener orientation). Disable for fixed/world-space decode.
-    bool use_bed_scene_orientation = true; ///< When true, resolve HOA bed orientation from [member ambisonic_orientation_node] or parent Node3D.
-    NodePath ambisonic_orientation_node{}; ///< Optional Node3D for HOA bed basis; empty uses first Node3D ancestor.
+    bool rotation_enabled = true;          ///< Rotates the bed by the listener orientation.
+    bool use_bed_scene_orientation = true; ///< Takes the bed orientation from ambisonic_orientation_node or the parent Node3D.
+    NodePath ambisonic_orientation_node{}; ///< Empty uses the first Node3D ancestor.
     bool apply_hrtf = true;
     bool input_is_sn3d = true;
     bool apply_output_gain = true;
@@ -193,9 +201,7 @@ class ResonanceAmbisonicPlayer : public AudioStreamPlayer {
     void set_apply_output_gain(bool p_enabled);
     bool get_apply_output_gain() const { return apply_output_gain; }
 
-    // This player uses the standard "stream" property of AudioStreamPlayer.
-    // The user must assign a ResonanceAmbisonicInternalStream to it.
-    // We provide a helper to play easily.
+    // Plays the ResonanceAmbisonicInternalStream assigned to the inherited stream property.
 };
 
 } // namespace godot

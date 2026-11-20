@@ -1,10 +1,12 @@
 #include "resonance_processor_path.h"
+#include "resonance_audio_mix_lock.h"
 #include "resonance_log.h"
 #include "resonance_math.h"
 #include "resonance_processor_hrtf_policy.h"
 #include "resonance_server.h"
 #include <algorithm>
 #include <cstring>
+#include <utility>
 
 namespace godot {
 
@@ -26,10 +28,12 @@ void ResonancePathProcessor::initialize(IPLContext p_context, int p_sample_rate,
     ResonanceServer* srv = ResonanceServer::get_singleton();
     IPLHRTF hrtf = (srv && srv->is_initialized()) ? srv->get_hrtf_handle() : nullptr;
 
-    if (!create_path_effect(hrtf)) {
+    path_effect = build_path_effect(hrtf);
+    if (!path_effect) {
         ResonanceLog::error("PathProcessor: Failed to create IPLPathEffect");
         return;
     }
+    bound_hrtf_ = hrtf;
     init_flags = init_flags | PathInitFlags::PATHEFFECT;
 
     if (iplAudioBufferAllocate(context, 1, frame_size, &internal_mono_buffer) != IPL_STATUS_SUCCESS ||
@@ -56,11 +60,10 @@ void ResonancePathProcessor::cleanup() {
     init_flags = PathInitFlags::NONE;
 }
 
-bool ResonancePathProcessor::create_path_effect(IPLHRTF hrtf) {
+IPLPathEffect ResonancePathProcessor::build_path_effect(IPLHRTF hrtf) const {
     if (!context)
-        return false;
+        return nullptr;
 
-    IPLPathEffect new_effect = nullptr;
     IPLAudioSettings audioSettings{};
     audioSettings.samplingRate = sample_rate;
     audioSettings.frameSize = frame_size;
@@ -72,14 +75,18 @@ bool ResonancePathProcessor::create_path_effect(IPLHRTF hrtf) {
     pathSettings.speakerLayout.numSpeakers = 2;
     pathSettings.hrtf = hrtf;
 
-    if (iplPathEffectCreate(context, &audioSettings, &pathSettings, &new_effect) != IPL_STATUS_SUCCESS)
-        return false;
+    IPLPathEffect effect = nullptr;
+    if (iplPathEffectCreate(context, &audioSettings, &pathSettings, &effect) != IPL_STATUS_SUCCESS)
+        return nullptr;
+    return effect;
+}
 
-    if (path_effect)
-        iplPathEffectRelease(&path_effect);
-    path_effect = new_effect;
-    bound_hrtf_ = hrtf;
-    return true;
+void ResonancePathProcessor::swap_in_path_effect_while_audio_idle(IPLPathEffect& effect, IPLHRTF hrtf) {
+    const AudioMixBlockLock mix_lock;
+    std::swap(path_effect, effect);
+    bound_hrtf_ = path_effect ? hrtf : nullptr;
+    if (!path_effect)
+        init_flags = static_cast<PathInitFlags>(static_cast<int>(init_flags) & ~static_cast<int>(PathInitFlags::PATHEFFECT));
 }
 
 void ResonancePathProcessor::ensure_hrtf_on_main(IPLHRTF runtime_hrtf) {
@@ -89,15 +96,13 @@ void ResonancePathProcessor::ensure_hrtf_on_main(IPLHRTF runtime_hrtf) {
         return;
     if (!resonance::path_needs_hrtf_effect_recreate(path_effect != nullptr, bound_hrtf_, runtime_hrtf))
         return;
-    if (!create_path_effect(runtime_hrtf)) {
+
+    IPLPathEffect effect = build_path_effect(runtime_hrtf);
+    if (!effect)
         ResonanceLog::error("PathProcessor: Failed to recreate IPLPathEffect for new HRTF");
-        if (path_effect) {
-            iplPathEffectRelease(&path_effect);
-            path_effect = nullptr;
-        }
-        bound_hrtf_ = nullptr;
-        init_flags = static_cast<PathInitFlags>(static_cast<int>(init_flags) & ~static_cast<int>(PathInitFlags::PATHEFFECT));
-    }
+    swap_in_path_effect_while_audio_idle(effect, runtime_hrtf);
+    if (effect)
+        iplPathEffectRelease(&effect);
 }
 
 void ResonancePathProcessor::process(const IPLAudioBuffer& in_buffer, const IPLPathEffectParams& params, IPLAudioBuffer& out_buffer,

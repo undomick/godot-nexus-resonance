@@ -2,7 +2,7 @@
 extends RefCounted
 class_name ResonanceBakeRunner
 
-## Public bake entry for ResonanceProbeVolume (inspector / project menu). Delegates to bake_* modules.
+## Bakes [ResonanceProbeVolume] nodes for the inspector, the project menu and the runtime baker.
 
 const ResonanceSceneUtils = preload("res://addons/nexus_resonance/scripts/resonance_scene_utils.gd")
 const _BakeEstimates = preload("res://addons/nexus_resonance/editor/resonance_bake_estimates.gd")
@@ -21,11 +21,11 @@ var resonance_bake_backup
 
 const DEFAULT_BAKE_INFLUENCE_RADIUS := 10000.0
 
-var editor_interface  # Untyped to allow null passing in Godot 4.x safely
-## When set, used as quick link in validation dialog when static scene not exported.
+var editor_interface  # Untyped: exported builds have no EditorInterface class.
+## Exports the static scene. Called before a bake when the exported scene is missing or stale.
 var export_static_callback: Callable = Callable()
 var _bake_in_progress: bool = false
-## True after a bake step already popped an error dialog (avoids a second exclusive AcceptDialog).
+## Set when a bake step already showed an error dialog, so the pipeline does not open a second one.
 var _bake_error_dialog_shown: bool = false
 
 var target_root: Node
@@ -33,19 +33,18 @@ var save_to_disk: bool = true
 signal bake_progress_updated(status_message: String)
 signal bake_finished
 
-var _progress_ui  # Untyped to allow headless operation
-var _backup  # Untyped to allow headless operation
+var _progress_ui  # null without an editor interface
+var _backup  # null without an editor interface
 var _server_setup: RefCounted
 var _pipeline: RefCounted
 var _bake_shutdown_requested: bool = false
-## Volumes for the in-flight bake; used to roll back probe_data if the plugin tears down mid-bake.
 var _active_bake_volumes: Array[Node] = []
 ## Set by [method shutdown] so an awaiting pipeline coroutine does not finish twice or touch freed state.
 var _shutdown_completed: bool = false
 
 
 func _init(p_editor_interface = null) -> void:
-	# Conditionally initialize these variables to avoid crashes when running in headless mode.
+	# Editor-only scripts are not loaded in a running game.
 	if Engine.is_editor_hint():
 		_bake_validation = load("res://addons/nexus_resonance/editor/resonance_bake_validation.gd")
 		resonance_editor_dialogs = load(
@@ -91,7 +90,7 @@ func is_shutdown() -> bool:
 	return _shutdown_completed
 
 
-## Roll back mid-bake probe_data mutations, then drop disk .bak files. Safe if no bake was active.
+## Safe to call when no bake is running.
 func _rollback_active_bake_or_discard_backups() -> void:
 	if _backup == null:
 		_active_bake_volumes.clear()
@@ -106,11 +105,10 @@ func _rollback_active_bake_or_discard_backups() -> void:
 
 
 func shutdown() -> void:
-	# Mark first so an awaiting pipeline coroutine skips _finish_pipeline after we restore here.
+	# Set first so an awaiting pipeline coroutine does not finish again after the rollback below.
 	_shutdown_completed = true
 	cancel_active_bake_and_join()
-	# Plugin/_exit_tree can tear down while reflections already mutated probe_data and before the
-	# async pipeline reaches _on_bake_pipeline_finished. Restore now or truncated bakes stick.
+	# The pipeline may already have changed probe data; without this rollback a truncated bake sticks.
 	_rollback_active_bake_or_discard_backups()
 	_bake_in_progress = false
 	_bake_shutdown_requested = false
@@ -139,7 +137,7 @@ func run_bake(volumes: Array[Node], root: Node = null, save_results: bool = true
 		and editor_interface.has_method("is_playing_scene")
 		and editor_interface.is_playing_scene()
 	):
-		_log_and_show_error(
+		_abort_bake_before_pipeline(
 			"Stop play mode before baking",
 			"Stop the running scene before baking probes. Baking shares the Steam Audio context with live simulation.",
 		)
@@ -158,8 +156,7 @@ func run_bake(volumes: Array[Node], root: Node = null, save_results: bool = true
 		actual_root = _get_edited_scene_root(volumes)
 
 	if not actual_root:
-		_active_bake_volumes.clear()
-		_log_and_show_error("No scene open", "Open a scene before baking.")
+		_abort_bake_before_pipeline("No scene open", "Open a scene before baking.")
 		return
 
 	var owned_static_scene: Node = ResonanceSceneUtils.find_owned_resonance_static_scene(
@@ -169,8 +166,8 @@ func run_bake(volumes: Array[Node], root: Node = null, save_results: bool = true
 	_do_run_bake_with_backup(volumes, actual_root, owned_static_scene)
 
 
-## Calls export_static_callback when the owned static asset is missing or export_hash != live local hash
-## (avoids baking against stale local geometry). Nested section packs are not re-exported from Main.
+## Re-exports the static scene when its asset is missing or its export_hash no longer matches the
+## live geometry, so the bake does not run against stale geometry.
 func _auto_reexport_static_scene_if_stale(root: Node, static_scene_node: Node) -> void:
 	if not static_scene_node or not export_static_callback.is_valid():
 		return
@@ -194,8 +191,7 @@ func _auto_reexport_static_scene_if_stale(root: Node, static_scene_node: Node) -
 
 
 func _do_run_bake_with_backup(volumes: Array[Node], root: Node, _owned_static_scene: Node) -> void:
-	# Always snapshot live probe_data so a failed mid-pipeline step can roll back mutations.
-	# Disk .bak copies only when persisting bake results (editor Undo path).
+	# Memory snapshots are always taken for rollback; disk copies only when results are saved.
 	if _backup:
 		_backup.create_backups(volumes, save_to_disk)
 	_do_run_bake_after_validation(volumes, root)
@@ -206,28 +202,36 @@ func _discard_pre_bake_backups() -> void:
 		_backup.discard_backups()
 
 
+## Empty [param message] skips the error report when the caller already showed one.
+func _abort_bake_before_pipeline(
+	message: String = "", solution: String = "", cause: String = ""
+) -> void:
+	_active_bake_volumes.clear()
+	_discard_pre_bake_backups()
+	if not message.is_empty():
+		_log_and_show_error(message, solution, cause)
+	# Deferred because callers await bake_finished after run_bake returns.
+	bake_finished.emit.call_deferred()
+
+
 func _do_run_bake_after_validation(volumes: Array[Node], root: Node) -> void:
 	var packs: Dictionary = ResonanceSceneUtils.collect_bake_static_scene_packs(root)
 	var assets: Array = packs.get("assets", [])
 	var transforms: Array = packs.get("transforms", [])
 	var missing: Array = packs.get("missing", [])
 	if assets.is_empty():
-		_active_bake_volumes.clear()
-		_discard_pre_bake_backups()
-		_log_and_show_error(
+		_abort_bake_before_pipeline(
 			"Static scene not exported",
 			"Use Tools > Nexus Resonance > Export Active Scene on each level section (and Main if it has local geometry) before baking.",
 			"Scene must be exported first."
 		)
 		return
 	if not missing.is_empty():
-		_active_bake_volumes.clear()
-		_discard_pre_bake_backups()
 		var paths: PackedStringArray = PackedStringArray()
 		for ss in missing:
 			if ss is Node:
 				paths.append(str((ss as Node).get_path()))
-		_log_and_show_error(
+		_abort_bake_before_pipeline(
 			"Nested ResonanceStaticScene missing asset",
 			(
 				"Export these sub-scenes first so each ResonanceStaticScene has a static_scene_asset:\n"
@@ -237,15 +241,12 @@ func _do_run_bake_after_validation(volumes: Array[Node], root: Node) -> void:
 		)
 		return
 	if not ResonanceServerAccess.has_server():
-		_active_bake_volumes.clear()
-		_discard_pre_bake_backups()
-		_log_and_show_error(
+		_abort_bake_before_pipeline(
 			"GDExtension not loaded", "The ResonanceServer GDExtension is not available."
 		)
 		return
 	if not _server_setup.ensure_resonance_server_initialized(volumes):
-		_active_bake_volumes.clear()
-		_discard_pre_bake_backups()
+		_abort_bake_before_pipeline()
 		return
 	var srv = ResonanceServerAccess.get_server()
 	if srv and srv.has_method("set_bake_static_scenes_from_assets"):
@@ -316,7 +317,7 @@ func get_volume_bake_status(vol: Node) -> String:
 	return "Probes baked"
 
 
-## Ensures the server is initialized and refreshes probe visuals (e.g. inspector selection).
+## Initializes the server and refreshes the probe visuals. Returns false if the server failed to start.
 func ensure_resonance_server_for_volumes(volumes: Array[Node]) -> bool:
 	if not _server_setup.ensure_resonance_server_initialized(volumes):
 		return false
@@ -367,8 +368,7 @@ func _on_bake_pipeline_finished(success: bool, probe_data_ref, volumes: Array[No
 		if _progress_ui:
 			_progress_ui.set_bake_status(tr("Saving probe data..."))
 
-		# Disk .bak files stay until the completion dialog Undo/discard; memory snapshots
-		# are only needed for failed mid-pipeline rollback.
+		# Disk backups stay for Undo in the completion dialog.
 		if _backup and _backup.has_method("clear_memory_snapshots"):
 			_backup.clear_memory_snapshots()
 
@@ -381,7 +381,6 @@ func _on_bake_pipeline_finished(success: bool, probe_data_ref, volumes: Array[No
 					_save_and_reload_probe_data(probe_data_ref, volumes)
 			_show_bake_complete_dialog(volumes)
 		else:
-			# Runtime: apply to memory only (no save / completion dialog).
 			bake_progress_updated.emit("Applying generated acoustics to memory...")
 			match probe_data_ref:
 				var arr when arr is Array:
@@ -393,9 +392,8 @@ func _on_bake_pipeline_finished(success: bool, probe_data_ref, volumes: Array[No
 				_backup.discard_backups()
 
 	elif not success:
-		# Reflections / pathing / static steps mutate live ResonanceProbeData before the pipeline
-		# finishes. Roll back to the pre-bake memory snapshot so "previous probe data was kept"
-		# matches reality (and Play/Save cannot persist a truncated bake).
+		# Bake steps change live probe data before the pipeline ends; roll back so a
+		# truncated bake cannot be played or saved.
 		if _backup and _backup.has_method("restore_memory_snapshots"):
 			_backup.restore_memory_snapshots(
 				volumes, Callable(self, "_reload_volumes_using_probe_data")
@@ -418,7 +416,7 @@ func _on_bake_pipeline_finished(success: bool, probe_data_ref, volumes: Array[No
 
 
 func _save_and_reload_probe_data(probe_data_ref: Resource, volumes: Array[Node]) -> void:
-	# Strip legacy .bak resource_path so saves go to the canonical .res (avoids .bak chains).
+	# A resource_path ending in .bak would save into the backup file.
 	var path: String = probe_data_ref.resource_path
 	while path.ends_with(".bak"):
 		path = path.get_basename()
@@ -488,7 +486,6 @@ func _notify_volumes_viz_updated(volumes: Array[Node]) -> void:
 
 func _show_bake_complete_dialog(volumes: Array) -> void:
 	if not editor_interface:
-		# Headless: no dialog; drop .bak files immediately.
 		if _backup:
 			_backup.discard_backups()
 		return
@@ -505,7 +502,7 @@ func _show_bake_complete_dialog(volumes: Array) -> void:
 	dialog.title = tr(UIStrings.ADDON_NAME)
 	dialog.dialog_text = msg
 	dialog.theme = editor_interface.get_editor_theme()
-	# True if user chose Undo; otherwise on_dialog_close discards .bak files.
+	# An array so the lambda can set it; without Undo, closing the dialog discards the backups.
 	var undo_invoked := [false]
 	var on_dialog_close := func() -> void:
 		if not undo_invoked[0] and _backup:

@@ -15,8 +15,7 @@ struct TailDrainIplGate {
     bool set_grace_to_zero = false;
 };
 
-/// Gate IPL tail production during zero-input drain. Error paths still emit `frames` of output
-/// (silence pad) so AudioServer does not detach _mix before the player stops the voice.
+/// Error paths still output `frames` of silence so AudioServer does not detach _mix before the voice stops.
 inline TailDrainIplGate tail_drain_ipl_gate(bool playback_initialized, bool steam_context_stale,
                                             bool srv_initialized, bool context_matches) {
     TailDrainIplGate gate;
@@ -47,7 +46,6 @@ inline bool tail_drain_should_flush_input(bool hold_decode) {
     return true;
 }
 
-/// IPL GetTailSize alone must not gate completion: sizes can freeze > 0 once GetTail stops being pulled.
 struct TailDrainEosPullPlan {
     bool direct = false;
     bool reflection = false;
@@ -58,7 +56,7 @@ inline bool tail_drain_eos_pull_plan_any(const TailDrainEosPullPlan& plan) {
     return plan.direct || plan.reflection || plan.path;
 }
 
-/// True when this EOS block will actually call process_tail / GetTail (gate open and pull preconditions met).
+/// Which tails this EOS block will pull with process_tail / GetTail.
 inline TailDrainEosPullPlan tail_drain_eos_pull_plan(bool gate_open, int direct_tail_samples, bool reflection_have_params,
                                                      int reflection_tail_samples, bool reflection_will_pull,
                                                      bool pathing_enabled, int path_tail_samples, bool path_buffers_ok) {
@@ -74,7 +72,7 @@ inline TailDrainEosPullPlan tail_drain_eos_pull_plan(bool gate_open, int direct_
     return plan;
 }
 
-/// Conv/TAN EOS mixer GetTail is pullable with a live mixer handle (Steam GetTail has no cache-epoch gate).
+/// Convolution and TAN pull the tail from the mixer, so they need a live mixer handle; GetTail has no cache-epoch gate.
 inline bool tail_drain_reflection_eos_will_pull(int reflection_type, bool have_params, int reflection_tail_samples,
                                                 bool source_handle_valid, bool mixer_available) {
     if (!source_handle_valid || !have_params || reflection_tail_samples <= 0)
@@ -86,17 +84,24 @@ inline bool tail_drain_reflection_eos_will_pull(int reflection_type, bool have_p
     return false;
 }
 
-/// Block early EOS end while GetTail is actively pullable (Conv/TAN wet on shared bus, not player rings).
+/// The emitter's shared reflection effect gets one Apply or GetTail per round. A draining voice pulls the
+/// tail only when it closes a round that no voice fed with dry audio; otherwise the round's Apply carries it.
+inline bool reflection_round_should_drain_tail(bool is_round_closer, bool round_applied, bool round_have_dry,
+                                               bool tail_applyable, int tail_samples) {
+    return is_round_closer && !round_applied && !round_have_dry && tail_applyable && tail_samples > 0;
+}
+
+/// Convolution and TAN wet audio sits on the shared bus, not in the player rings, so the rings alone cannot tell.
 inline bool tail_drain_eos_actively_pullable(const TailDrainEosPullPlan& plan) {
     return tail_drain_eos_pull_plan_any(plan);
 }
 
-/// Pullable tails extend drain only while grace budget remains; exhausted grace always wins.
 inline bool tail_drain_pullable_blocks_drain(int64_t tail_grace_blocks_remaining, bool eos_actively_pullable) {
     return tail_grace_blocks_remaining > 0 && eos_actively_pullable;
 }
 
-/// IPL GetTailSize must not gate completion; pullable tails extend drain only while grace > 0.
+/// GetTailSize must not gate completion: it can stay > 0 once GetTail stops being pulled. Pullable tails
+/// extend the drain only while grace remains.
 inline bool tail_drain_complete(bool output_ring_drained, bool reverb_ring_drained,
                                 int64_t tail_grace_blocks_remaining, bool eos_actively_pullable = false) {
     if (tail_drain_pullable_blocks_drain(tail_grace_blocks_remaining, eos_actively_pullable))
@@ -104,7 +109,6 @@ inline bool tail_drain_complete(bool output_ring_drained, bool reverb_ring_drain
     return output_ring_drained && reverb_ring_drained && tail_grace_blocks_remaining == 0;
 }
 
-/// IPL GetTail EOS (reflection conv/TAN/parametric/hybrid): keep draining while tail remains.
 inline bool reflection_eos_tail_produced(bool tail_complete) {
     return !tail_complete;
 }

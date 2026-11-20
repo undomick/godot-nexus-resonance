@@ -9,10 +9,7 @@
 
 namespace godot {
 
-/// Runtime-only wireframe drawer that visualises a ResonancePlayer directivity pattern
-/// (dipole polar curve or omni sphere + forward arrow). Pattern math lives in
-/// [method ResonancePlayer.build_directivity_gizmo_lines] so the editor gizmo and this
-/// runtime drawer stay in lockstep.
+/// Shares ResonancePlayer::build_directivity_gizmo_lines with the editor gizmo so both draw the same pattern.
 class ResonanceDirectivityDrawer {
   public:
     struct Params {
@@ -40,10 +37,10 @@ class ResonanceDirectivityDrawer {
     void initialize(Node3D* p_parent);
     void cleanup();
 
-    /// Forces the next [method process] call to rebuild mesh even if [param p] matches the cached value.
+    /// The next process() rebuilds the mesh even if the params are unchanged.
     void mark_dirty() { dirty_ = true; }
 
-    /// When [param visible] is false hides the mesh. Otherwise rebuilds only when parameters change.
+    /// Rebuilds the mesh only when the params change.
     void process(const Params& p, bool visible);
 
   private:
