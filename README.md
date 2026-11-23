@@ -123,6 +123,7 @@ Bake `reflection_type`, pathing on/off, and ambisonics order come from [Resonanc
 | **Probe batch rejected / no reverb** | Baked reflection type must match runtime (see Probe/Runtime Compatibility). |
 | **Pathing silent / Ambisonics warning** | Enable pathing on ResonanceRuntime and rebake pathing, or match Bake Ambisonic Order (Runtime / BakeConfig) to the baked data and rebake. Realtime Ambisonic Order is playback-only. |
 | **Linux: crash `free(): invalid size` with Embree** | Some distribution Godot packages (seen with CachyOS) link the system Embree library and export their own C++ runtime symbols, which clashes with Steam Audio's Embree tracer. Use the official Godot binary from godotengine.org, or set `ResonanceRuntimeConfig.scene_type` to `0` (Default). |
+| **Linux arm64: `GDExtension not loaded`** | No arm64 binary ships with the addon, and Valve's SDK zip has no `linux-arm64` slice. Build it once with `scripts/build_steam_audio_linux_arm64.sh`, then `scons platform=linux arch=arm64 target=template_release -j$(nproc)`. |
 | **Debug Reflection Rays** | Enable **Realtime Rays** (64+) in ResonanceRuntimeConfig and **Debug Reflections** in the config. Add a ResonanceListener (e.g. under Camera3D). Geometry from ResonanceGeometry or re-exported static scenes is used for ray viz. |
 
 ## Requirements
@@ -145,6 +146,21 @@ scons platform=windows target=editor build_tests=1
 ```
 
 When you fix a bug in native code, add a small focused test under `src/test/` if you can check the behavior without loading the full Godot editor (follow the existing `test_*.cpp` patterns).
+
+### Linux arm64 (AArch64)
+
+Valve's Steam Audio SDK ships `linux-x64` and `linux-x86` binaries but no `linux-arm64` slice, even though the core library supports AArch64 (Steam Frame, Jetson, Raspberry Pi 5, arm64 servers). Build the phonon library from source once, then build the extension:
+
+```bash
+scripts/build_steam_audio_linux_arm64.sh
+scons platform=linux arch=arm64 target=template_release -j$(nproc)
+```
+
+The script builds Steam Audio v4.8.1 with its PFFFT and FlatBuffers dependencies and installs `src/lib/steamaudio/lib/linux-arm64/libphonon.so`. The extension then lands in `addons/nexus_resonance/bin/linux-arm64/`, which is what the `linux.*.arm64` entries in `nexus_resonance.gdextension` point at. Set `BUILD_ROOT` to reuse or relocate the dependency builds.
+
+The x86-only accelerators (Embree, IPP, FFTS, Radeon Rays, TrueAudio Next, MKL) are disabled in the arm64 build, so the default BVH tracer is used: keep `ResonanceRuntimeConfig.scene_type` at `0` (Default).
+
+Prerequisites: `cmake`, `ninja`, `git`, a C/C++ toolchain, and the zlib and libmysofa development headers.
 
 ## Support & Community
 

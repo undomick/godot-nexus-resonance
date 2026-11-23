@@ -5,6 +5,7 @@ Uses the official ValveSoftware/steam-audio releases.
 Run from project root: python scripts/install_steam_audio.py
 """
 import os
+import platform
 import sys
 import zipfile
 import urllib.request
@@ -86,6 +87,18 @@ def main():
         pass
 
     print("Done. Steam Audio binaries are in src/lib/steamaudio/lib/")
+
+    if sys.platform.startswith("linux") and platform.machine() in ("aarch64", "arm64"):
+        arm64_lib = os.path.join(lib_dir, "linux-arm64", "libphonon.so")
+        if os.path.isfile(arm64_lib):
+            print("Linux arm64: found src/lib/steamaudio/lib/linux-arm64/libphonon.so")
+        else:
+            print(
+                "\nNOTE: Valve does not ship a linux-arm64 binary in the SDK zip.\n"
+                "      The arm64 build must be compiled from source once:\n"
+                "        scripts/build_steam_audio_linux_arm64.sh\n"
+                "      That script writes src/lib/steamaudio/lib/linux-arm64/libphonon.so."
+            )
 
 
 if __name__ == "__main__":
