@@ -36,7 +36,11 @@ if env["platform"] == "windows":
 
 elif env["platform"] == "linux":
     env.Replace(SHLIBSUFFIX=".so")
-    arch_subdir = "linux-x64" if env["arch"] == "x86_64" else "linux-x86"
+    arch_subdir = {
+        "x86_64": "linux-x64",
+        "arm64": "linux-arm64",
+        "x86_32": "linux-x86",
+    }.get(env["arch"], "linux-x64")
     env.Append(LIBPATH=[os.path.join(steam_audio_lib, arch_subdir)])
     env.Append(LIBS=["phonon"])
     # Optional: reduce symbol export on Linux (create linux_symbols.map if needed)
@@ -77,7 +81,7 @@ elif env["platform"] == "macos":
 elif env["platform"] == "windows":
     target_path = os.path.join(target_base, "windows", "")
 elif env["platform"] == "linux":
-    target_path = os.path.join(target_base, "linux", "")
+    target_path = os.path.join(target_base, "linux-arm64" if env["arch"] == "arm64" else "linux", "")
 else:
     target_path = target_base
 
@@ -140,7 +144,7 @@ if env["platform"] == "windows":
 
 # Linux does not search the .so directory unless RUNPATH is $ORIGIN. Copy libphonon.so beside the extension.
 if env["platform"] == "linux":
-    steam_src = os.path.join(steam_audio_lib, "linux-x64" if env["arch"] == "x86_64" else "linux-x86")
+    steam_src = os.path.join(steam_audio_lib, arch_subdir)
     phonon_name = "libphonon.so"
 
     def copy_linux_phonon(target, source, env):
@@ -148,7 +152,7 @@ if env["platform"] == "linux":
         if not os.path.isfile(src_path):
             print("WARNING: %s not found. Run: python scripts/install_steam_audio.py" % src_path)
             return 0
-        dst = os.path.join(target_base, "linux")
+        dst = os.path.join(target_base, "linux-arm64" if env["arch"] == "arm64" else "linux")
         try:
             os.makedirs(dst, exist_ok=True)
             shutil.copy2(src_path, os.path.join(dst, phonon_name))

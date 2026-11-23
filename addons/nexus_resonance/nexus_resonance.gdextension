@@ -14,6 +14,10 @@ windows.release.x86_64 = "res://addons/nexus_resonance/bin/windows/nexus_resonan
 linux.debug.x86_64 = "res://addons/nexus_resonance/bin/linux/libnexus_resonance.so"
 linux.release.x86_64 = "res://addons/nexus_resonance/bin/linux/libnexus_resonance.so"
 
+; Linux (arm64)
+linux.debug.arm64 = "res://addons/nexus_resonance/bin/linux-arm64/libnexus_resonance.so"
+linux.release.arm64 = "res://addons/nexus_resonance/bin/linux-arm64/libnexus_resonance.so"
+
 ; macOS (arm64)
 macos.debug.arm64 = "res://addons/nexus_resonance/bin/macos/libnexus_resonance.dylib"
 macos.release.arm64 = "res://addons/nexus_resonance/bin/macos/libnexus_resonance.dylib"
@@ -51,6 +55,12 @@ linux.debug.x86_64 = {
 }
 linux.release.x86_64 = {
     "res://addons/nexus_resonance/bin/linux/libphonon.so": ""
+}
+linux.debug.arm64 = {
+    "res://addons/nexus_resonance/bin/linux-arm64/libphonon.so": ""
+}
+linux.release.arm64 = {
+    "res://addons/nexus_resonance/bin/linux-arm64/libphonon.so": ""
 }
 macos.debug.arm64 = {
     "res://addons/nexus_resonance/bin/macos/libphonon.dylib": ""
